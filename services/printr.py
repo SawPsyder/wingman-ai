@@ -45,7 +45,7 @@ class Printr(WebSocketUser):
         else:
             await self._connection_manager.broadcast(
                 command=LogCommand(
-                    text=text,
+                    text=str(text),
                     log_type=log_type,
                     source=source,
                     source_name=source_name,
@@ -64,7 +64,10 @@ class Printr(WebSocketUser):
         command_tag: CommandTag = None,
     ):
         # print to server (terminal)
-        self.print_colored(text, color=self.get_terminal_color(color))
+        if source == LogSource.WINGMAN:
+            self.print_colored(f"{source_name}: {text}", color=self.get_terminal_color(color))
+        else:
+            self.print_colored(text, color=self.get_terminal_color(color))
 
         if not server_only and self._connection_manager is not None:
             # send to GUI without print() having to be async
@@ -90,7 +93,10 @@ class Printr(WebSocketUser):
         command_tag: CommandTag = None,
     ):
         # print to server (terminal)
-        self.print_colored(text, color=self.get_terminal_color(color))
+        if source == LogSource.WINGMAN:
+            self.print_colored(f"{source_name}: {text}", color=self.get_terminal_color(color))
+        else:
+            self.print_colored(text, color=self.get_terminal_color(color))
 
         if not server_only and self._connection_manager is not None:
             await self.__send_to_gui(

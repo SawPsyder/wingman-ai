@@ -66,7 +66,7 @@ class XVASynth:
         return errors
 
     def play_audio(
-        self, text: str, config: XVASynthTtsConfig, sound_config: SoundConfig
+        self, text: str, config: XVASynthTtsConfig, sound_config: SoundConfig, await_completion: bool = False
     ):
         model_loaded_error = self.__load_model(
             path_to_xvasynth=config.xvasynth_path,
@@ -105,7 +105,7 @@ class XVASynth:
         audio_player = AudioPlayer()
         audio, sample_rate = audio_player.get_audio_from_file(final_voiceline_file)
         audio_player.stream_with_effects(
-            input_data=(audio, sample_rate), config=sound_config
+            input_data=(audio, sample_rate), config=sound_config, wait=await_completion
         )
 
     def __check_if_running(self, url: str):

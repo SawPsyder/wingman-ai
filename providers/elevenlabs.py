@@ -33,7 +33,7 @@ class ElevenLabs:
         return errors
 
     def play_audio(
-        self, text: str, config: ElevenlabsConfig, sound_config: SoundConfig
+        self, text: str, config: ElevenlabsConfig, sound_config: SoundConfig, await_completion: bool = False
     ):
         user = ElevenLabsUser(self.api_key)
         voice = (
@@ -43,7 +43,7 @@ class ElevenLabs:
         )
 
         # todo: add start/end callbacks to play Quindar beep even if use_sound_effects is disabled
-        playback_options = PlaybackOptions(runInBackground=True)
+        playback_options = PlaybackOptions(runInBackground=not await_completion)
         generation_options = GenerationOptions(
             model=config.model.value,
             latencyOptimizationLevel=config.latency,
@@ -64,7 +64,7 @@ class ElevenLabs:
             if audio_bytes:
                 audio_player = AudioPlayer()
                 audio_player.stream_with_effects(
-                    input_data=audio_bytes, config=sound_config
+                    input_data=audio_bytes, config=sound_config, wait=await_completion
                 )
         else:
             voice.generate_stream_audio_v2(

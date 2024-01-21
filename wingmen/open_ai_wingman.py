@@ -1,9 +1,12 @@
 import json
 import time
+import asyncio
 from typing import Mapping
+from typing import TYPE_CHECKING
 from api.interface import WingmanConfig, WingmanInitializationError
 from api.enums import (
     LogType,
+    LogSource,
     OpenAiModel,
     TtsProvider,
     SttProvider,
@@ -19,6 +22,8 @@ from wingmen.wingman import Wingman
 
 printr = Printr()
 
+if TYPE_CHECKING:
+    from services.tower import Tower
 
 class OpenAiWingman(Wingman):
     """Our OpenAI Wingman base gives you everything you need to interact with OpenAI's various APIs.
@@ -37,10 +42,12 @@ class OpenAiWingman(Wingman):
         self,
         name: str,
         config: WingmanConfig,
+        tower: 'Tower',
     ):
         super().__init__(
             name=name,
             config=config,
+            tower=tower,
         )
 
         self.edge_tts = Edge()
@@ -232,7 +239,7 @@ class OpenAiWingman(Wingman):
                 function_args = json.loads(tool_call.function.arguments)
 
                 # try to resolve function name to a command name
-                if len(function_args) == 0 and self._get_command(function_name):
+                if (len(function_args) == 0 or (len(function_args) == 1 and "command_name" in function_args and function_args.get("command_name") == function_name)) and self._get_command(function_name):
                     function_args["command_name"] = function_name
                     function_name = "execute_command"
 
@@ -616,6 +623,7 @@ class OpenAiWingman(Wingman):
             - function_response (str): The text response or result obtained after executing the function.
             - instant_response (str): An immediate response or action to be taken, if any (e.g., play audio).
         """
+
         function_response = ""
         instant_reponse = ""
         if function_name == "execute_command":
@@ -628,9 +636,12 @@ class OpenAiWingman(Wingman):
                 instant_reponse = self._select_command_response(command)
                 await self._play_to_user(instant_reponse)
 
+        if function_name == "talkToAssistant":
+            function_response = await self._talk_to_interconnected_wingman(function_args["wingman_name"], function_args["message"]) or "OK"
+
         return function_response, instant_reponse
 
-    async def _play_to_user(self, text: str):
+    async def _play_to_user(self, text: str, await_completion: bool = False):
         """Plays audio to the user using the configured TTS Provider (default: OpenAI TTS).
         Also adds sound effects if enabled in the configuration.
 
@@ -640,31 +651,34 @@ class OpenAiWingman(Wingman):
 
         if self.tts_provider == TtsProvider.EDGE_TTS:
             await self.edge_tts.play_audio(
-                text, self.config.edge_tts, self.config.sound
+                text, self.config.edge_tts, self.config.sound, await_completion=await_completion
             )
         elif self.tts_provider == TtsProvider.ELEVENLABS:
-            self.elevenlabs.play_audio(text, self.config.elevenlabs, self.config.sound)
+            self.elevenlabs.play_audio(text, self.config.elevenlabs, self.config.sound, await_completion=await_completion)
         elif self.tts_provider == TtsProvider.AZURE:
             self.openai_azure.play_audio(
                 text=text,
                 api_key=self.azure_api_keys["tts"],
                 config=self.config.azure.tts,
                 sound_config=self.config.sound,
+                await_completion=await_completion,
             )
         elif self.tts_provider == TtsProvider.XVASYNTH:
             self.xvasynth.play_audio(
                 text=text,
                 config=self.config.xvasynth,
                 sound_config=self.config.sound,
+                await_completion=await_completion,
             )
         elif self.tts_provider == TtsProvider.OPENAI:
             self.openai.play_audio(
                 text=text,
                 voice=self.config.openai.tts_voice,
                 sound_config=self.config.sound,
+                await_completion=await_completion,
             )
         else:
-            self.printr.toast_error(f"Unsupported TTS provider: {self.tts_provider}")
+            printr.toast_error(f"Unsupported TTS provider: {self.tts_provider}")
 
     async def _execute_command(self, command: dict) -> str:
         """Does what Wingman base does, but always returns "Ok" instead of a command response.
@@ -672,6 +686,103 @@ class OpenAiWingman(Wingman):
         """
         await super()._execute_command(command)
         return "Ok"
+    
+    async def _talk_to_interconnected_wingman(self, wingman_name: str, message: str) -> str:
+        # get different wingman
+        wingman = self._get_openai_wingman_by_name(wingman_name)
+        if not wingman:
+            return "Wingman unavailable."
+
+        # print out message to user
+        printr.print(
+            f"{message}",
+            color=LogType.POSITIVE,
+            source=LogSource.WINGMAN,
+            source_name=self.name,
+        )
+
+        # read out message to user
+        await self._play_to_user(message, True)
+
+        # use different wingman's GPT call to generate response
+        process_result, instant_response = await wingman._get_response_for_transcript(message)
+
+        # print out response to user
+        actual_response = instant_response or process_result
+        if actual_response:
+            printr.print(
+                f"{actual_response}",
+                color=LogType.POSITIVE,
+                source=LogSource.WINGMAN,
+                source_name=wingman.name,
+            )
+
+        # read out response to user
+        if process_result:
+            await wingman._play_to_user(str(process_result), True)
+
+        return actual_response
+
+    def _get_openai_wingman_by_name(self, wingman_name: str) -> 'OpenAiWingman':
+        """Gets a wingman by name.
+
+        Args:
+            wingman_name (str): The name of the wingman to get.
+
+        Returns:
+            Wingman: The wingman with the given name.
+        """
+        wingman_name = self._format_openai_wingman_name(wingman_name)
+
+        for wingman in self._get_loaded_openai_wingmen():
+            if self._format_openai_wingman_name(wingman.name) == wingman_name:
+                return wingman
+        return None
+    
+    def _format_openai_wingman_name(self, name: str) -> str:
+        """Formats a wingman name to be used in a GPT call.
+
+        Args:
+            name (str): The name to format.
+
+        Returns:
+            str: The formatted name.
+        """
+        # make it lowercase and remove everything thats not a number or letter
+        return "".join([char for char in name.lower() if char.isalnum()])
+    
+    def _get_loaded_openai_wingmen_names(self) -> list[str]:
+        """Gets all loaded wingmen names.
+
+        Returns:
+            list[str]: A list of all loaded wingmen names.
+        """
+        return [self._format_openai_wingman_name(wingman.name) for wingman in self._get_loaded_openai_wingmen()]
+    
+    def _get_loaded_openai_wingmen_descriptions(self) -> list[str]:
+        """Gets all loaded wingmen names and descriptions.
+
+        Returns:
+            list[str]: A list of all loaded wingmen descriptions.
+        """
+        return [f"{self._format_openai_wingman_name(wingman.name)} ({wingman.config.description})" for wingman in self._get_loaded_openai_wingmen()]
+            
+    def _get_loaded_openai_wingmen(self) -> list['OpenAiWingman']:
+        """Gets all loaded wingmen.
+
+        Returns:
+            list[Wingman]: A list of all loaded wingmen.
+        """
+        wingmen = self.tower.wingmen
+        for wingman in wingmen:
+            if wingman.name == self.name:
+                wingmen.remove(wingman)
+
+            # if wingman is not of class OpenAiWingman, or a class based on it, remove it
+            if not issubclass(type(wingman), OpenAiWingman):
+                wingmen.remove(wingman)
+
+        return wingmen
 
     def _build_tools(self) -> list[dict]:
         """
@@ -700,7 +811,30 @@ class OpenAiWingman(Wingman):
                     },
                 },
             },
+            {
+                "type": "function",
+                "function": {
+                    "name": "talkToAssistant",
+                    "description": "Sends a message or command to a different assistant/wingman. Shorten the message, just focus on the facts. Possible selections: " + " OR ".join(self._get_loaded_openai_wingmen_descriptions()),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "wingman_name": {
+                                "type": "string",
+                                "description": "The wingman name to talk to.",
+                                "enum": self._get_loaded_openai_wingmen_names(),
+                            },
+                            "message": {
+                                "type": "string",
+                                "description": "The message to send to the wingman"
+                            },
+                        },
+                        "required": ["wingman_name", "message"],
+                    },
+                },
+            },
         ]
+
         return tools
 
     async def __ask_gpt_for_locale(self, language: str) -> str:

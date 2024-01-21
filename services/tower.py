@@ -40,9 +40,10 @@ class Tower:
                     wingman = Wingman.create_dynamically(
                         name=wingman_name,
                         config=wingman_config,
+                        tower=self,
                     )
                 else:
-                    wingman = OpenAiWingman(name=wingman_name, config=wingman_config)
+                    wingman = OpenAiWingman(name=wingman_name, config=wingman_config, tower=self,)
             except Exception as e:  # pylint: disable=broad-except
                 # just in case we missed something
                 msg = str(e).strip() or type(e).__name__

@@ -11,9 +11,12 @@ from services.audio_player import AudioPlayer
 from services.secret_keeper import SecretKeeper
 from services.printr import Printr
 from services.file import get_writable_dir
+from typing import TYPE_CHECKING
 
 printr = Printr()
 
+if TYPE_CHECKING:
+    from services.tower import Tower
 
 class Wingman:
     """The "highest" Wingman base class in the chain. It does some very basic things but is meant to be 'virtual', and so are most its methods, so you'll probably never instantiate it directly.
@@ -25,6 +28,7 @@ class Wingman:
         self,
         name: str,
         config: WingmanConfig,
+        tower: 'Tower',
     ):
         """The constructor of the Wingman class. You can override it in your custom wingman.
 
@@ -35,6 +39,9 @@ class Wingman:
 
         self.config = config
         """All "general" config entries merged with the specific Wingman config settings. The Wingman takes precedence and overrides the general config. You can just add new keys to the config and they will be available here."""
+
+        self.tower = tower
+        """The Tower instance that instantiated this Wingman. Used to access other wingmen."""
 
         self.secret_keeper = SecretKeeper()
         """A service that allows you to store and retrieve secrets like API keys. It can prompt the user for secrets if necessary."""
@@ -60,6 +67,7 @@ class Wingman:
     def create_dynamically(
         name: str,
         config: WingmanConfig,
+        tower: 'Tower',
     ):
         """Dynamically creates a Wingman instance from a module path and class name
 
@@ -88,6 +96,7 @@ class Wingman:
         instance = DerivedWingmanClass(
             name=name,
             config=config,
+            tower=tower,
         )
         return instance
 

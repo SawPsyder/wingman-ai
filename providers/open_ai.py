@@ -151,6 +151,7 @@ class OpenAi(BaseOpenAi):
         text: str,
         voice: OpenAiTtsVoice,
         sound_config: SoundConfig,
+        await_completion: bool = False,
     ):
         try:
             if not voice:
@@ -164,7 +165,7 @@ class OpenAi(BaseOpenAi):
             if response is not None:
                 audio_player = AudioPlayer()
                 audio_player.stream_with_effects(
-                    input_data=response.content, config=sound_config
+                    input_data=response.content, config=sound_config, wait=await_completion
                 )
         except APIStatusError as e:
             self._handle_api_error(e)
@@ -247,6 +248,7 @@ class OpenAiAzure(BaseOpenAi):
         api_key: str,
         config: AzureTtsConfig,
         sound_config: SoundConfig,
+        await_completion: bool = False,
     ):
         speech_config = speechsdk.SpeechConfig(
             subscription=api_key,
@@ -264,7 +266,7 @@ class OpenAiAzure(BaseOpenAi):
         if result is not None:
             audio_player = AudioPlayer()
             audio_player.stream_with_effects(
-                input_data=result.audio_data, config=sound_config
+                input_data=result.audio_data, config=sound_config, wait=await_completion
             )
 
     def get_available_voices(self, api_key: str, region: AzureRegion, locale: str = ""):
