@@ -1,5 +1,6 @@
 import time
 import copy
+import asyncio
 from os import path
 from random import randrange
 from typing import TYPE_CHECKING
@@ -18,6 +19,7 @@ from api.enums import (
     SoundEffect,
 )
 from services.file import get_writable_dir
+from services.audio_player import AudioPlayer
 from skills.skill_base import Skill
 
 if TYPE_CHECKING:
@@ -39,6 +41,7 @@ class RadioChatter(Skill):
         self.last_message = None
         self.radio_status = False
         self.loaded = False
+        self.audio_player = self.wingman.audio_player
 
         self.prompt = None
         self.voices = []
@@ -55,6 +58,12 @@ class RadioChatter(Skill):
         self.volume = 1.0
         self.print_chatter = False
         self.radio_knowledge = False
+
+    async def on_playback_started(self, wingman_name):
+        pass
+
+    async def on_playback_finished(self, wingman_name):
+        pass
 
     async def validate(self) -> list[WingmanInitializationError]:
         errors = await super().validate()
@@ -344,6 +353,15 @@ class RadioChatter(Skill):
             self.force_radio_sound = False
         self.use_beeps = self.retrieve_custom_property_value("use_beeps", errors)
 
+        if self.retrieve_custom_property_value(
+            "use_custom_audioplayer", errors
+        ):
+            self.audio_player = AudioPlayer(
+                event_queue=asyncio.Queue(),
+                on_playback_started=self.on_playback_started,
+                on_playback_finished=self.on_playback_finished,
+            )
+
         return errors
 
     async def prepare(self) -> None:
@@ -461,6 +479,9 @@ class RadioChatter(Skill):
                     - The conversation/monolog must contain exactly {count_message} messages between the participants or in the monolog
                     - Each new line in your answer represents a new message
                     - Use matching call signs for the participants
+                    - Names must be consitent and simple throughout the conversation (Always just "Name" instead of "Name of the shipname" as the participants identifier)
+                    - Never give events or actions like *sytem is shutting down*, only real messages
+                    - Never give references or any other information that is not part of the conversation
 
                     ## Sample response
                     Name1: Message Content
@@ -491,11 +512,23 @@ class RadioChatter(Skill):
             if not message:
                 continue
 
-            # get name before first ":"
-            name = message.split(":")[0].strip()
-            text = message.split(":", 1)[1].strip()
+            if ":" not in message:
+                continue
+            else:
+                name = message.split(":")[0].strip()
+                text = message.split(":", 1)[1].strip()
 
+            # skip if message starts with * (these are most likely no real messages)
+            if text.startswith("*"):
+                continue
+
+            # this fixes slightly different names to the same name
+            # like identifying "Captain Vale of Caterpillar" and "Captain Vale" as the same person
             if name not in voice_participant_mapping:
+                for existing_name in voice_participant_mapping:
+                    if name.lower() in existing_name.lower() or existing_name.lower() in name.lower():
+                        name = existing_name
+                        break
                 voice_participant_mapping[name] = None
 
             clean_messages.append((name, text))
@@ -527,7 +560,7 @@ class RadioChatter(Skill):
                 return
 
             # wait for audio_player idleing
-            while self.wingman.audio_player.is_playing:
+            while self.audio_player.is_playing or self.wingman.audio_player.is_playing:
                 time.sleep(2)
 
             if not self.is_active():
@@ -543,16 +576,22 @@ class RadioChatter(Skill):
                     color=LogType.INFO,
                     source_name=self.wingman.name,
                 )
-            self.threaded_execution(self.wingman.play_to_user, text, True, sound_config)
+            self.threaded_execution(
+                self.wingman.play_to_user, # function
+                text, # text
+                True, # no interrupt
+                sound_config, # custom sound config
+                self.audio_player # custom audio player
+            )
             if self.radio_knowledge:
                 await self.wingman.add_assistant_message(
                     f"Background radio chatter: {text}"
                 )
-            while not self.wingman.audio_player.is_playing:
+            while not self.audio_player.is_playing:
                 time.sleep(0.1)
             await self._switch_voice(original_voice_setting)
 
-        while self.wingman.audio_player.is_playing:
+        while self.audio_player.is_playing:
             time.sleep(1)  # stay in function call until last message got played
 
     async def _get_random_voice_index(self, count: int) -> list[int]:

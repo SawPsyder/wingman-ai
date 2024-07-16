@@ -123,3 +123,9 @@ custom_properties:
     value: True
     required: false
     property_type: boolean
+  - id: use_custom_audioplayer
+    name: Full background audio
+    hint: When enabling this, the radio chatter will utilize its own audio player. This is recommended for VA users, as the radio chatter will no longer mute the VA on playback. But the downside is, that it will not stop, when the wingman itself is outputting audio.
+    value: False
+    required: false
+    property_type: boolean
