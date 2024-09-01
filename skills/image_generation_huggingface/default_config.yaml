@@ -2,8 +2,8 @@ name: ImageGenerationHF
 module: skills.image_generation_huggingface.main
 category: general
 description:
-  en: Use Wingamn AI to generate images based on your input. It uses a model hosted on huggingface. Its free, but also fairly slow.
-  de: Verwende Wingamn AI, um Bilder basierend auf deinen Eingaben zu generieren. Alle "warm" Models können dafür verwendet werden. Es ist zwar kostenlos, dafür aber auch recht langsam.
+  en: Use Wingamn AI to generate images based on your input. It uses a model hosted on huggingface. Its free, but can also be fairly slow.
+  de: Verwende Wingamn AI, um Bilder basierend auf deinen Eingaben zu generieren. Alle "warm" Models können dafür verwendet werden. Es ist zwar kostenlos, kann dafür aber auch recht langsam sein.
 hint:
   en: Make sure you have a registred huggingface account and a valid token -> https://huggingface.co/settings/tokens
   de: Stelle sicher, dass du ein Huggingface-Konto und ein gültigen Token hast -> https://huggingface.co/settings/tokens
@@ -19,7 +19,7 @@ prompt: |
 custom_properties:
   - id: huggingface_model_url
     name: huggingface API URL
-    hint: The API inference URL to the model on huggingface. You can find it on the model's page on the right side in the "Inference API" section. Click "View Code" there and copy the URL.
+    hint: The API inference URL to the model on huggingface. You can find it on the model's page on the right side in the "Inference API" section. Click "View Code" there and copy the URL. You can use all models listed here -> https://huggingface.co/models?inference=warm&pipeline_tag=text-to-image
     value: https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-schnell
     required: true
     property_type: string
