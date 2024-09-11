@@ -645,7 +645,7 @@ class OpenAiWingman(Wingman):
         for message in reversed(self.messages):
             index -= 1
             if (
-                self.__get_message_role(message) == "tool"
+                self.get_message_role(message) == "tool"
                 and message.get("tool_call_id") == tool_call_id
             ):
                 message["content"] = str(response)
@@ -658,7 +658,7 @@ class OpenAiWingman(Wingman):
         # find the assistant message that triggered the tool call
         for message in reversed(self.messages[:index]):
             index -= 1
-            if self.__get_message_role(message) == "assistant":
+            if self.get_message_role(message) == "assistant":
                 break
 
         # check if all tool calls are completed
@@ -674,7 +674,7 @@ class OpenAiWingman(Wingman):
         index -= 1  # skip the assistant message
         for message in reversed(self.messages[:index]):
             index -= 1
-            if self.__get_message_role(message) != "user":
+            if self.get_message_role(message) != "user":
                 index += 1
                 break
 
@@ -683,9 +683,9 @@ class OpenAiWingman(Wingman):
         end_index = start_index
         reached_tool_call = False
         for message in self.messages[start_index:]:
-            if not reached_tool_call and self.__get_message_role(message) == "tool":
+            if not reached_tool_call and self.get_message_role(message) == "tool":
                 reached_tool_call = True
-            if reached_tool_call and self.__get_message_role(message) == "user":
+            if reached_tool_call and self.get_message_role(message) == "user":
                 end_index -= 1
                 break
             end_index += 1
@@ -749,7 +749,7 @@ class OpenAiWingman(Wingman):
         cutoff_index = len(self.messages)
         user_message_count = 0
         for message in reversed(self.messages):
-            if self.__get_message_role(message) == "user":
+            if self.get_message_role(message) == "user":
                 user_message_count += 1
                 if user_message_count == remember_messages:
                     break  # Found the cutoff point.
@@ -764,7 +764,7 @@ class OpenAiWingman(Wingman):
         # Remove the pending tool calls that are no longer needed.
         for mesage in self.messages[:cutoff_index]:
             if (
-                self.__get_message_role(mesage) == "tool"
+                self.get_message_role(mesage) == "tool"
                 and mesage.get("tool_call_id") in self.pending_tool_calls
             ):
                 self.pending_tool_calls.remove(mesage.get("tool_call_id"))
@@ -1199,7 +1199,7 @@ class OpenAiWingman(Wingman):
 
         return tools
 
-    def __get_message_role(self, message):
+    def get_message_role(self, message):
         """Helper method to get the role of the message regardless of its type."""
         if isinstance(message, Mapping):
             return message.get("role")

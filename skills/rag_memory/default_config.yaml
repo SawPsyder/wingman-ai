@@ -1,0 +1,19 @@
+name: RagMemory
+module: skills.rag_memory.main
+category: general
+description:
+  en: Uses RAG memory to finetune your wingman over time. Needs a openai key and a openai model to work.
+  de: Verwendet RAG Memory, um Wingmen im Laufe der Zeit auf die eigenen Anforderungen zu tunen. Benötigt einen OpenAI API Key und ein OpenAI-Modell, um zu funktionieren.
+custom_properties:
+  - id: embedding_model
+    name: Embedding Model
+    hint: The openAI embedding model to use.
+    value: text-embedding-3-small
+    required: false
+    property_type: string
+  - id: rag_identifier
+    name: RAG Identifier
+    hint: If empty, wingman name will be used. Set this to the same of two wingmen to let them share the RAG memory.
+    value: ""
+    required: false
+    property_type: string

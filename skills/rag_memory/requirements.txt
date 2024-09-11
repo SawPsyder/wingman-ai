@@ -1,0 +1,2 @@
+# Requirements for using Chroma locally
+chromadb==0.5.5
