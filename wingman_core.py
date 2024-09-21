@@ -226,6 +226,24 @@ class WingmanCore(WebSocketUser):
         )
         self.router.add_api_route(
             methods=["POST"],
+            path="/audio-library/stop",
+            endpoint=self.stop_playback_from_audio_library,
+            tags=tags,
+        )
+        self.router.add_api_route(
+            methods=["POST"],
+            path="/audio-library/pause",
+            endpoint=self.pause_playback_from_audio_library,
+            tags=tags,
+        )
+        self.router.add_api_route(
+            methods=["POST"],
+            path="/audio-library/resume",
+            endpoint=self.resume_playback_from_audio_library,
+            tags=tags,
+        )
+        self.router.add_api_route(
+            methods=["POST"],
             path="/elevenlabs/generate-sfx",
             endpoint=self.generate_sfx_elevenlabs,
             tags=tags,
@@ -928,6 +946,30 @@ class WingmanCore(WebSocketUser):
     ):
         await self.audio_library.start_playback(
             audio_file=AudioFile(name=name, path=path), volume_modifier=volume
+        )
+
+    # POST /audio-library/stop
+    async def stop_playback_from_audio_library(
+            self, name: str, path: str
+    ):
+        await self.audio_library.stop_playback(
+            audio_file=AudioFile(name=name, path=path)
+        )
+
+    # POST /audio-library/pause
+    async def pause_playback_from_audio_library(
+            self, name: str, path: str
+    ):
+        await self.audio_library.pause_playback(
+            audio_file=AudioFile(name=name, path=path)
+        )
+
+    # POST /audio-library/resume
+    async def resume_playback_from_audio_library(
+        self, name: str, path: str
+    ):
+        await self.audio_library.resume_playback(
+            audio_file=AudioFile(name=name, path=path)
         )
 
     # POST /elevenlabs/generate-sfx

@@ -4,6 +4,9 @@ import threading
 import time
 from os import path
 from random import randint
+
+from openai import audio
+
 from api.interface import AudioFile, AudioFileConfig
 from services.printr import Printr
 from services.audio_player import AudioPlayer
@@ -31,6 +34,18 @@ class AudioLibrary:
     ##########################
     ### Playback functions ###
     ##########################
+
+    async def process_audio_configuration(
+            self, audio_config: AudioFileConfig, volume_modifier
+    ):
+        if audio_config.stop:
+            await self.stop_playback(audio_config)
+        elif audio_config.pause:
+            await self.pause_playback(audio_config)
+        elif audio_config.resume:
+            await self.resume_playback(audio_config)
+        else:
+            await self.start_playback(audio_config, volume_modifier)
 
     async def start_playback(
         self, audio_file: AudioFile | AudioFileConfig, volume_modifier: float = 1.0
@@ -122,6 +137,26 @@ class AudioLibrary:
                     await audio_player.stop_playback()
 
                 self.current_playbacks.pop(self.__get_playback_key(file), None)
+
+    def pause_playback(
+            self, audio_config: AudioFile | AudioFileConfig
+    ):
+        audio_config = self.__get_audio_file_config(audio_config)
+
+        for audio_file in audio_config.files:
+            status = self.get_playback_status(audio_file)
+            if status[0]: # is playing
+                status[1].pause_playback() # pause audio player
+
+    def resume_playback(
+        self, audio_config: AudioFile | AudioFileConfig
+    ):
+        audio_config = self.__get_audio_file_config(audio_config)
+
+        for audio_file in audio_config.files:
+            status = self.get_playback_status(audio_file)
+            if not status[0] and status[1]:  # is not playing, but player exists
+                status[1].resume_playback()  # pause audio player
 
     def get_playback_status(
         self, audio_file: AudioFile

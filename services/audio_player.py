@@ -126,9 +126,26 @@ class AudioPlayer:
         self.stream.start()
         sd.sleep(int(len(audio) / sample_rate * 1000))
 
+    async def pause_playback(self):
+        # TODO: check if stream actually exist
+        if self.stream is not None:
+            self.stream.stop()
+
+        if self.raw_stream is not None:
+            self.raw_stream.stop()
+
+    async def resume_playback(self):
+        # TODO: check if stream actually exist
+        if self.stream is not None:
+            self.stream.start()
+
+        if self.raw_stream is not None:
+            self.raw_stream.start()
+
     async def stop_playback(self):
         if self.stream is not None:
             self.stream.stop()
+            self.stream.close()
             self.stream = None
 
         if self.raw_stream is not None:

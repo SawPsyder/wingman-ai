@@ -420,6 +420,15 @@ class AudioFileConfig(BaseModel):
     wait: bool
     """Whether to wait for the audio file to finish playing before continuing."""
 
+    stop: bool
+    """If set, stops the playback of all given AudioFiles"""
+
+    pause: bool
+    """Will pause the playback at its current state"""
+
+    resume: bool
+    """Will resume playback of AudioFiles at their last state"""
+
 
 class CommandKeyboardConfig(BaseModel):
     hotkey: str

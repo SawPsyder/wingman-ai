@@ -522,7 +522,7 @@ class Wingman:
                 time.sleep(action.wait)
 
             if action.audio:
-                await self.audio_library.start_playback(action.audio, self.config.sound.volume)
+                await self.audio_library.process_audio_configuration(action.audio, self.config.sound.volume)
 
     def threaded_execution(self, function, *args) -> threading.Thread:
         """Execute a function in a separate thread."""
