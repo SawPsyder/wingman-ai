@@ -1,0 +1,25 @@
+name: ImageGenerationHF
+module: skills.image_generation_huggingface.main
+category: general
+description:
+  en: Use Wingamn AI to generate images based on your input. It uses a model hosted on huggingface. Its free, but also fairly slow.
+  de: Verwende Wingamn AI, um Bilder basierend auf deinen Eingaben zu generieren. Alle "warm" Models können dafür verwendet werden. Es ist zwar kostenlos, dafür aber auch recht langsam.
+hint:
+  en: Make sure you have a registred huggingface account and a valid token -> https://huggingface.co/settings/tokens
+  de: Stelle sicher, dass du ein Huggingface-Konto und ein gültigen Token hast -> https://huggingface.co/settings/tokens
+examples:
+  - question:
+      en: Generate an image of a cat.
+      de: Generiere ein Bild einer Katze.
+    answer:
+      en: Here is an image of a cat.
+      de: Hier ist ein Bild einer Katze.
+prompt: |
+  You can also generate images using hugginface with the generate_image_huggingface function. Just provide a prompt and the model will generate an image based on it.
+custom_properties:
+  - id: huggingface_model_url
+    name: huggingface API URL
+    hint: The API inference URL to the model on huggingface. You can find it on the model's page on the right side in the "Inference API" section. Click "View Code" there and copy the URL.
+    value: https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-schnell
+    required: true
+    property_type: string
