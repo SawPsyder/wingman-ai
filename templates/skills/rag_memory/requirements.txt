@@ -1,0 +1,4 @@
+# Requirements for using Chroma locally
+# Microsoft Visual C++ 14.0 or greater is required. Get it with "Microsoft C++ Build Tools": https://visualstudio.microsoft.com/visual-cpp-build-tools/
+chromadb==0.5.5
+sentence-transformers==3.1.0
