@@ -59,6 +59,7 @@ perplexity:
   endpoint: https://api.perplexity.ai
 groq:
   conversation_model: llama3-70b-8192
+  stt_model: whisper-large-v3
   endpoint: https://api.groq.com/openai/v1
 cerebras:
   conversation_model: llama3.1-70b

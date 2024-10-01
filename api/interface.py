@@ -21,7 +21,7 @@ from api.enums import (
     WingmanProRegion,
     WingmanProSttProvider,
     WingmanProTtsProvider,
-    PerplexityModel,
+    PerplexityModel, GroqSttModel,
 )
 
 
@@ -318,6 +318,7 @@ class PerplexityConfig(BaseModel):
 
 class GroqConfig(BaseModel):
     conversation_model: str
+    stt_model: GroqSttModel
     endpoint: str
 
 
@@ -350,6 +351,11 @@ class WingmanProConfig(BaseModel):
 class WingmanProSettings(BaseModel):
     base_url: str
     region: WingmanProRegion
+
+
+class GroqSttSettings(BaseModel):
+    base_url: str
+    model: GroqSttModel
 
 
 class SoundConfig(BaseModel):
@@ -385,6 +391,7 @@ class VoiceActivationSettings(BaseModel):
     azure: AzureSttConfig
     whispercpp: WhispercppSettings
     whispercpp_config: WhispercppSttConfig
+    groq: GroqSttSettings
 
 
 class FeaturesConfig(BaseModel):

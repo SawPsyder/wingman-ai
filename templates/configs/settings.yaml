@@ -4,7 +4,7 @@ voice_activation:
   enabled: false
   mute_toggle_key: "shift+x"
   energy_threshold: 0.01
-  stt_provider: whispercpp # azure, whispercpp, openai
+  stt_provider: whispercpp # azure, whispercpp, openai, groq
   azure:
     region: westeurope
     languages:
@@ -19,6 +19,9 @@ voice_activation:
     use_cuda: false
   whispercpp_config:
     temperature: 0.0
+  groq:
+    base_url: https://api.groq.com/openai/v1
+    model: whisper-large-v3
 wingman_pro:
   base_url: https://wingman-ai.azurewebsites.net
   region: europe
