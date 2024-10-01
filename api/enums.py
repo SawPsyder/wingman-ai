@@ -90,6 +90,12 @@ class PerplexityModel(Enum):
     LLAMA3_8B = "llama-3.1-8b-instruct"
     LLAMA3_70B = "llama-3.1-70b-instruct"
 
+class GroqSttModel(Enum):
+    """https://console.groq.com/docs/speech-text"""
+
+    WHISPER_LARGE_V3 = "whisper-large-v3"
+    DISTIL_WHISPER_LARGE_V3_EN = "distil-whisper-large-v3-en"
+
 class GoogleAiModel(Enum):
     GEMINI_1_5_FLASH = "gemini-1.5-flash"
     GEMINI_1_5_PRO = "gemini-1.5-pro"
@@ -137,6 +143,7 @@ class SttProvider(Enum):
     AZURE_SPEECH = "azure_speech"
     WHISPERCPP = "whispercpp"
     WINGMAN_PRO = "wingman_pro"
+    GROQ = "groq"
 
 
 class VoiceActivationSttProvider(Enum):
@@ -144,6 +151,7 @@ class VoiceActivationSttProvider(Enum):
     AZURE = "azure"
     WHISPERCPP = "whispercpp"
     WINGMAN_PRO = "wingman_pro"
+    GROQ = "groq"
 
 
 class ConversationProvider(Enum):
@@ -246,6 +254,9 @@ class PerplexityModelEnumModel(BaseEnumModel):
 
 class GoogleAiModelEnumModel(BaseEnumModel):
     model: GoogleAiModel
+
+class GroqSttModelEnumModel(BaseEnumModel):
+    model: GroqSttModel
 
 
 class WingmanProAzureDeploymentEnumModel(BaseEnumModel):

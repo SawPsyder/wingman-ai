@@ -138,6 +138,7 @@ class OpenAiWingman(Wingman):
                 [
                     self.config.features.conversation_provider
                     == ConversationProvider.GROQ,
+                    self.config.features.stt_provider == SttProvider.GROQ,
                 ]
             )
         elif provider_type == "cerebras":
@@ -409,6 +410,9 @@ class OpenAiWingman(Wingman):
         """
         transcript = None
 
+        print(f"Transcribing with {self.config.features.stt_provider.value} ..")
+        current_time = time.time()
+
         if self.config.features.stt_provider == SttProvider.AZURE:
             transcript = self.openai_azure.transcribe_whisper(
                 filename=audio_input_wav,
@@ -439,11 +443,17 @@ class OpenAiWingman(Wingman):
                 )
         elif self.config.features.stt_provider == SttProvider.OPENAI:
             transcript = self.openai.transcribe(filename=audio_input_wav)
+        elif self.config.features.stt_provider == SttProvider.GROQ:
+            print("Am I here?")
+            transcript = self.groq.transcribe(filename=audio_input_wav, model=self.config.groq.stt_model.value)
+
+        time_diff = time.time() - current_time
+        print(f".. transcription with {self.config.features.stt_provider.value} took {int(time_diff * 1000)} ms.")
 
         if not transcript:
             return None
 
-        # Wingman Pro might returns a serialized dict instead of a real Azure Speech transcription object
+        # Wingman Pro might return a serialized dict instead of a real Azure Speech transcription object
         if isinstance(transcript, dict):
             return transcript.get("_text")
 

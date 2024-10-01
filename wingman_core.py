@@ -7,6 +7,7 @@ from typing import Optional
 from fastapi import APIRouter, File, UploadFile
 import requests
 import sounddevice as sd
+from openai import base_url
 from showinfm import show_in_file_manager
 import azure.cognitiveservices.speech as speechsdk
 import keyboard.keyboard as keyboard
@@ -457,7 +458,7 @@ class WingmanCore(WebSocketUser):
         elif event.event_type == "up":
             self.on_release(button=event.button)
 
-    # called when AudioRecorder regonized voice
+    # called when AudioRecorder recognized voice
     def on_audio_recorder_speech_recorded(self, recording_file: str):
         def run_async_process():
             loop = asyncio.new_event_loop()
@@ -517,6 +518,17 @@ class WingmanCore(WebSocketUser):
             # TODO: can't await secret_keeper.retrieve here, so just assume the secret is there...
             openai = OpenAi(api_key=self.secret_keeper.secrets["openai"])
             transcription = openai.transcribe(filename=recording_file)
+            text = transcription.text
+        elif provider == VoiceActivationSttProvider.GROQ:
+            print("Am I here? (VA)")
+            groq = OpenAi(
+                api_key=self.secret_keeper.secrets["groq"],
+                base_url=self.settings_service.settings.voice_activation.groq_stt.base_url
+            )
+            transcription = groq.transcribe(
+                filename=recording_file,
+                model=self.settings_service.settings.voice_activation.groq_stt.model
+            )
             text = transcription.text
 
         if text:
