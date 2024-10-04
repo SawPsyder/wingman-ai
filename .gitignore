@@ -173,3 +173,9 @@ skills/**/dependencies
 whispercpp/
 whispercpp-cuda/
 whispercpp-models/
+/.idea/.gitignore
+/.idea/inspectionProfiles/profiles_settings.xml
+/.idea/misc.xml
+/.idea/modules.xml
+/.idea/vcs.xml
+/.idea/wingman-ai.iml
