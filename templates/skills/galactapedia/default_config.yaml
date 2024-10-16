@@ -1,0 +1,25 @@
+name: Galactapedia
+module: skills.galactapedia.main
+category: star_citizen
+description:
+  en: Uses the star-citizen.wiki API to retrieve Galactapedia information.
+  de: Nutzt die API von star-citizen.wiki um Informationen von Galactapedia bereitzustellen.
+examples:
+  - question:
+      en: TODO
+      de: TODO
+    answer:
+      en: TODO
+      de: TODO
+prompt: |
+  There is a new function: 'use_galactapedia_knowledgebase'
+  Use this function, if possible with the according content type, to retrieve information from Galactapedia.
+  Galactapedia is a platform that provides various information about Star Citizen and its lore.
+  This knowledgebase may be used on specific request or as an informational addition to other requests.
+#custom_properties:
+#  - id: instant_response
+#    name: Instant Response
+#    hint: If set, the Perplexity answer will be used instantly and unprocessed. This is faster but will not include format and/or language guidelines set in your wingman.
+#    value: False
+#    required: false
+#    property_type: boolean

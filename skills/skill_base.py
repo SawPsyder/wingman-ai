@@ -79,7 +79,11 @@ class Skill:
         return True
 
     async def is_waiting_response_needed(self, tool_name: str) -> bool:
-        """Returns whether a tool probably takes long and a message should be printet in between."""
+        """Returns whether a tool probably takes long and a message should be printed in between."""
+        return False
+
+    async def is_tool_rebuild_needed(self) -> bool:
+        """Returns whether the tools should be rebuilt, as there was a change."""
         return False
 
     async def llm_call(self, messages, tools: list[dict] = None) -> any:

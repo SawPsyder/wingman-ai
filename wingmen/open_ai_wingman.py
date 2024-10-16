@@ -218,11 +218,28 @@ class OpenAiWingman(Wingman):
         self.tool_skills = {}
         self.skill_tools = []
 
-    async def prepare_skill(self, skill: Skill):
-        # prepare the skill and skill tools
+    async def rebuild_skill_tools(self):
+        for skill in self.skills:
+            if await skill.is_tool_rebuild_needed():
+                tools_to_remove = []
+                for tool, tool_skill in self.tool_skills.items():
+                    if tool_skill == skill:
+                        tools_to_remove.append(tool)
+                for tool in tools_to_remove:
+                    del self.tool_skills[tool]
+                self.skill_tools = [
+                    tool for tool in self.skill_tools if tool["skill"] != skill
+                ]
+
+                await self.add_skill_tools(skill)
+
+    async def add_skill_tools(self, skill: Skill):
         for tool_name, tool in skill.get_tools():
             self.tool_skills[tool_name] = skill
             self.skill_tools.append(tool)
+
+    async def prepare_skill(self, skill: Skill):
+        await self.add_skill_tools(skill)
 
         # init skill methods
         skill.llm_call = self.actual_llm_call
@@ -956,6 +973,9 @@ class OpenAiWingman(Wingman):
         # save request time for later comparison
         thiscall = time.time()
         self.last_gpt_call = thiscall
+
+        # update skill tools
+        await self.rebuild_skill_tools()
 
         # build tools
         tools = self.build_tools() if allow_tool_calls else None
