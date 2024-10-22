@@ -617,6 +617,7 @@ class WingmanCore(WebSocketUser):
             source_name=wingman_name,
             command_tag=CommandTag.PLAYBACK_STARTED,
         )
+        return # prevent auto mute
 
         self.was_listening_before_playback = self.is_listening
         if (
@@ -631,6 +632,7 @@ class WingmanCore(WebSocketUser):
             source_name=wingman_name,
             command_tag=CommandTag.PLAYBACK_STOPPED,
         )
+        return # prevent auto mute
 
         if (
             self.settings_service.settings.voice_activation.enabled
