@@ -22,7 +22,28 @@ custom_properties:
     name: Prompt for message generation
     hint: A prompt used on voice change to generate a new personality. Leave empty to disable.
     required: false
-    value: "Generate a dialog between random pilots in the Star Citizen universe. Feel free to throw in some random details. Keep in mind that Port Olisar does no longer exist."
+    value: 'Conversations happen in the Star Citizen universe. Never mention Port
+      Olisar.
+
+      Take known facts about items, factions, manufactures, locations and ships into
+      account.
+
+      Also the missions that are available in general should influence the conversations
+      topic.
+
+      Conversations should be casual and about everyday content between people that
+      know each other for ages.
+
+      Conversations should have a clear topic and should not bounce from topic to
+      topic while staying in the lore of Star Citizen.
+
+      Things are not "new" everytime. So dont start each message with "Hey, heard
+      about that new..."
+
+
+      While the conversation is based in the Star Citizen universe, it should never
+      be mentioned, as it is in the perspective of people in the verse that see it
+      as real life.'
     property_type: textarea
   - id: voices
     name: Available voices
@@ -36,7 +57,7 @@ custom_properties:
   - id: interval_min
     name: Min interval
     hint: The minimum time in seconds between radio chatter. This is also the time used until the first chatter event occurs.
-    value: 30
+    value: 60
     required: true
     property_type: number
   - id: interval_max
@@ -70,14 +91,14 @@ custom_properties:
     required: true
     property_type: number
   - id: force_radio_sound
-    name: Force radio effect
-    hint: Overwrites wingman sound effects for radio chatter with selected radio effects. Needs at least one valid value in "Availale radio effects".
+    name: Radio effect
+    hint: Overwrites wingman sound effects for radio chatter with selected radio effects. Needs at least one valid value in "Available radio effects".
     value: True
     required: false
     property_type: boolean
   - id: radio_sounds
-    name: Availale radio effects
-    hint: A list of radio effects seperated by commas that are randomly used when "Force radio effects" is enabled. Possible values are "low", "medium" and "high".
+    name: Available radio effects
+    hint: A list of radio effects separated by commas that are randomly used when "Force radio effects" is enabled. Possible values are "low", "medium" and "high".
     value: "low, medium"
     required: false
     property_type: string
@@ -99,7 +120,20 @@ custom_properties:
       - label: "max"
         value: 1.0
       - label: "step"
-        value: 0.1
+        value: 0.05
+  - id: volume_background_modifier
+    name: Background volume modifier
+    hint: The volume (relative to the radio chatter volume) that is used when the wingman is playing back sound. Must be between 0.0 (silent) and 1.0 (same volume as radio chatter).
+    value: 0.25
+    required: false
+    property_type: slider
+    options:
+     - label: "min"
+       value: 0.0
+     - label: "max"
+       value: 1.0
+     - label: "step"
+       value: 0.05
   - id: print_chatter
     name: Print chatter
     hint: Print the generated chatter to message overview.
@@ -108,13 +142,13 @@ custom_properties:
     property_type: boolean
   - id: radio_knowledge
     name: Radio knowledge
-    hint: If enabled, the radio chatter messages will be added to the wingman conversation. This way you can talk with your wingman about the radio chatter.
+    hint: If enabled, the radio chatter messages will be added to the wingman conversation. This way you can talk with your wingman about the radio chatter and engage in a conversation.
     value: False
     required: false
     property_type: boolean
   - id: use_beeps
     name: Use beeps
     hint: Use beeps to indicate the start and end of a radio chatter messages.
-    value: True
+    value: False
     required: false
     property_type: boolean

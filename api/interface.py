@@ -362,8 +362,8 @@ class SoundConfig(BaseModel):
     effects: list[SoundEffect]
     """You can put as many sound effects here as you want. They stack and are added in the defined order here."""
 
-    volume: float
-    """The volume for playback. 0.0 - 1.0"""
+    volume: float|list[float]
+    """The volume for playback. 0.0 - 1.0. May also be a list with a single float value. This allways changes during playback."""
 
 
 class VoiceActivationSettings(BaseModel):
@@ -378,7 +378,7 @@ class VoiceActivationSettings(BaseModel):
     mute_toggle_key_codes: Optional[list[int]] = None
 
     energy_threshold: float
-    """The minimum energy threshold a recording must pass in a certain frequency band to be considererd as spoken voice."""
+    """The minimum energy threshold a recording must pass in a certain frequency band to be considered as spoken voice."""
 
     stt_provider: VoiceActivationSttProvider
 

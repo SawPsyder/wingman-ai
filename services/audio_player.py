@@ -389,6 +389,7 @@ class AudioPlayer:
             return chunk
 
         def callback(outdata, frames, time, status):
+            local_volume = config.volume[0] if isinstance(config.volume, list) else config.volume
             nonlocal buffer, stream_finished, data_received, mixed_pos
             if data_received and len(buffer) == 0:
                 stream_finished = True
@@ -421,7 +422,7 @@ class AudioPlayer:
                     )
 
                 data_chunk = data_chunk.flatten()
-                data_chunk = data_chunk * config.volume
+                data_chunk = data_chunk * local_volume
                 data_chunk_bytes = data_chunk.astype(dtype).tobytes()
                 outdata[: len(data_chunk_bytes)] = data_chunk_bytes[: len(outdata)]
                 buffer = buffer[num_elements * byte_size :]
