@@ -43,12 +43,29 @@ custom_properties:
 
       While the conversation is based in the Star Citizen universe, it should never
       be mentioned, as it is in the perspective of people in the verse that see it
-      as real life.'
+      as real life. Therefore they should reflect a local slang and may contain multiple
+      sentences in one message.'
     property_type: textarea
   - id: voices
     name: Available voices
     hint: The voices used in the radio chatter
-    value: []
+    value:
+    - provider: edge_tts
+      voice: en-US-AriaNeural
+    - provider: edge_tts
+      voice: en-US-ChristopherNeural
+    - provider: edge_tts
+      voice: en-US-EricNeural
+    - provider: edge_tts
+      voice: en-US-GuyNeural
+    - provider: edge_tts
+      voice: en-US-JennyNeural
+    - provider: edge_tts
+      voice: en-US-MichelleNeural
+    - provider: edge_tts
+      voice: en-US-RogerNeural
+    - provider: edge_tts
+      voice: en-US-SteffanNeural
     required: false
     property_type: voice_selection
     options:
@@ -69,13 +86,13 @@ custom_properties:
   - id: messages_min
     name: Min messages
     hint: The minimum number of messages to play for on chatter event.
-    value: 1
+    value: 2
     required: true
     property_type: number
   - id: messages_max
     name: Max messages
     hint: The maximum number of messages to play for on chatter event.
-    value: 5
+    value: 10
     required: true
     property_type: number
   - id: participants_min
@@ -98,7 +115,7 @@ custom_properties:
     property_type: boolean
   - id: radio_sounds
     name: Available radio effects
-    hint: A list of radio effects separated by commas that are randomly used when "Force radio effects" is enabled. Possible values are "low", "medium" and "high".
+    hint: A list of radio effects separated by commas that are randomly used when "Radio effect" is enabled. Possible values are "low", "medium" and "high".
     value: "low, medium"
     required: false
     property_type: string
@@ -123,7 +140,7 @@ custom_properties:
         value: 0.05
   - id: volume_background_modifier
     name: Background volume modifier
-    hint: The volume (relative to the radio chatter volume) that is used when the wingman is playing back sound. Must be between 0.0 (silent) and 1.0 (same volume as radio chatter).
+    hint: The volume (relative to the radio chatter's volume) that is used when the wingman is playing back sound at the same time. Must be between 0.0 (silent) and 1.0 (same volume as radio chatter).
     value: 0.25
     required: false
     property_type: slider
