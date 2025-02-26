@@ -1,3 +1,4 @@
+import copy
 import sys
 from os import path
 
@@ -12,11 +13,11 @@ from api.interface import (
     SettingsConfig,
     SkillConfig,
     VoiceSelection,
-    WingmanInitializationError, SoundConfig,
+    WingmanInitializationError, SoundConfig, ElevenlabsVoiceConfig,
 )
 from api.enums import (
     WingmanInitializationErrorType,
-    TtsProvider,
+    TtsProvider, WingmanProTtsProvider, LogType,
 )
 from services.audio_player import AudioPlayer
 from services.benchmark import Benchmark
@@ -67,6 +68,7 @@ class RadioStation(Skill):
         self.provider: AudioProvider | None = None
         self.audio_player: AudioPlayer | None = None
         self.remaining_songs: int | None = None
+        self.playback_config: dict | None = None
 
     async def validate(self) -> list[WingmanInitializationError]:
         errors = await super().validate()
@@ -199,6 +201,61 @@ class RadioStation(Skill):
             play_beep_apollo=False,
         )
 
+        # prepare voice settings
+        self.playback_config = copy.deepcopy(self.wingman.config)
+        voice = self.voice.voice
+        voice_name = None
+        error = False
+
+        if self.voice.provider == TtsProvider.WINGMAN_PRO:
+            if self.voice.subprovider == WingmanProTtsProvider.OPENAI:
+                voice_name = voice.value
+                self.playback_config.openai.tts_voice = voice
+            elif self.voice.subprovider == WingmanProTtsProvider.AZURE:
+                voice_name = voice
+                self.playback_config.azure.tts.voice = voice
+        elif self.voice.provider == TtsProvider.OPENAI:
+            voice_name = voice.value
+            self.playback_config.openai.tts_voice = voice
+        elif self.voice.provider == TtsProvider.ELEVENLABS:
+            if isinstance(voice, str):
+                voice_id = voice.split("id=")[1].strip().strip("'")
+                voice_name = (
+                        voice.split("id=")[0].strip().split("=")[1].strip("'") or voice_id
+                )
+                voice = ElevenlabsVoiceConfig(id=voice_id, name=voice_name)
+            if isinstance(voice, ElevenlabsVoiceConfig):
+                self.playback_config.elevenlabs.voice = voice
+                voice_name = voice.name or voice.id
+            else:
+                error = True
+            self.playback_config.elevenlabs.output_streaming = False
+        elif self.voice.provider == TtsProvider.AZURE:
+            voice_name = voice
+            self.playback_config.azure.tts.voice = voice
+        elif self.voice.provider == TtsProvider.XVASYNTH:
+            voice_name = voice.voice_name
+            self.playback_config.xvasynth.voice = voice
+        elif self.voice.provider == TtsProvider.EDGE_TTS:
+            voice_name = voice
+            self.playback_config.edge_tts.voice = voice
+        else:
+            error = True
+
+        if error or not voice_name or not self.voice.provider:
+            await self.printr.print_async(
+                "Voice switching failed due to an unknown voice provider/subprovider or different error.",
+                LogType.ERROR,
+            )
+            return
+
+        if self.settings.debug_mode:
+            await self.printr.print_async(
+                f"Switching voice to {voice_name} ({self.voice.provider.value})"
+            )
+
+        self.playback_config.features.tts_provider = self.voice.provider
+
     async def unload(self) -> None:
         self.loaded = False
         self.radio_station_status = False
@@ -287,7 +344,7 @@ class RadioStation(Skill):
                 function_response = "Volume is already at maximum."
             else:
                 self.song_volume[0] = new_song_volume
-                function_response = f"Volume increased by 5% to {self.song_volume[0]*100}%."
+                function_response = f"Volume increased by 5% to {new_song_volume*100}%."
 
         if tool_name == "radio_station_music_volume_down":
             new_song_volume = round(self.song_volume[0] - 0.05, 3)
@@ -296,7 +353,7 @@ class RadioStation(Skill):
                 function_response = "Volume is already at minimum."
             else:
                 self.song_volume[0] = new_song_volume
-                function_response = f"Volume decreased by 5% to {self.song_volume[0]*100}%."
+                function_response = f"Volume decreased by 5% to {new_song_volume*100}%."
 
         benchmark.finish_snapshot()
         return function_response, instant_response
@@ -343,9 +400,9 @@ class RadioStation(Skill):
                     text=announcement,
                     no_interrupt=False,
                     sound_config=self.sound_config,
-                    audio_player=self.audio_player
+                    audio_player=self.audio_player,
+                    wingman_config=self.playback_config,
                 )
-                time.sleep(1)
                 while self.audio_player.is_playing:
                     time.sleep(0.25)
 

@@ -20,7 +20,7 @@ from api.interface import (
     SettingsConfig,
     SoundConfig,
     WingmanInitializationError,
-    CommandConfig,
+    CommandConfig, WingmanConfig,
 )
 from api.enums import (
     ImageGenerationProvider,
@@ -1338,6 +1338,7 @@ class OpenAiWingman(Wingman):
         no_interrupt: bool = False,
         sound_config: Optional[SoundConfig] = None,
         audio_player: Optional[AudioPlayer] = None,
+        wingman_config: Optional[WingmanConfig] = None,
     ):
         """Plays audio to the user using the configured TTS Provider (default: OpenAI TTS).
         Also adds sound effects if enabled in the configuration.
@@ -1347,6 +1348,7 @@ class OpenAiWingman(Wingman):
             no_interrupt (bool): Whether to wait for the current audio to finish playing before starting the new one.
             sound_config (SoundConfig): The sound configuration to use for playback.
             audio_player (AudioPlayer): The audio player to use for playback.
+            wingman_config (WingmanConfig): The Wingman configuration to use for playback. (for voice overrides)
         """
         if sound_config:
             printr.print(
@@ -1371,6 +1373,13 @@ class OpenAiWingman(Wingman):
         else:
             audio_player = self.audio_player
 
+        if wingman_config:
+            printr.print(
+                "Using custom wingman config for playback", LogType.INFO, server_only=True
+            )
+        else:
+            wingman_config = self.config
+
         # remove Markdown, links, emotes and code blocks
         text, contains_links, contains_code_blocks = cleanup_text(text)
 
@@ -1380,74 +1389,74 @@ class OpenAiWingman(Wingman):
                 await asyncio.sleep(0.1)
 
         try:
-            if self.config.features.tts_provider == TtsProvider.EDGE_TTS:
+            if wingman_config.features.tts_provider == TtsProvider.EDGE_TTS:
                 await self.edge_tts.play_audio(
                     text=text,
-                    config=self.config.edge_tts,
+                    config=wingman_config.edge_tts,
                     sound_config=sound_config,
                     audio_player=audio_player,
                     wingman_name=self.name,
                 )
-            elif self.config.features.tts_provider == TtsProvider.ELEVENLABS:
+            elif wingman_config.features.tts_provider == TtsProvider.ELEVENLABS:
                 await self.elevenlabs.play_audio(
                     text=text,
-                    config=self.config.elevenlabs,
+                    config=wingman_config.elevenlabs,
                     sound_config=sound_config,
                     audio_player=audio_player,
                     wingman_name=self.name,
-                    stream=self.config.elevenlabs.output_streaming,
+                    stream=wingman_config.elevenlabs.output_streaming,
                 )
-            elif self.config.features.tts_provider == TtsProvider.AZURE:
+            elif wingman_config.features.tts_provider == TtsProvider.AZURE:
                 await self.openai_azure.play_audio(
                     text=text,
                     api_key=self.azure_api_keys["tts"],
-                    config=self.config.azure.tts,
+                    config=wingman_config.azure.tts,
                     sound_config=sound_config,
                     audio_player=audio_player,
                     wingman_name=self.name,
                 )
-            elif self.config.features.tts_provider == TtsProvider.XVASYNTH:
+            elif wingman_config.features.tts_provider == TtsProvider.XVASYNTH:
                 await self.xvasynth.play_audio(
                     text=text,
-                    config=self.config.xvasynth,
+                    config=wingman_config.xvasynth,
                     sound_config=sound_config,
                     audio_player=audio_player,
                     wingman_name=self.name,
                 )
-            elif self.config.features.tts_provider == TtsProvider.OPENAI:
+            elif wingman_config.features.tts_provider == TtsProvider.OPENAI:
                 await self.openai.play_audio(
                     text=text,
-                    voice=self.config.openai.tts_voice,
-                    model=self.config.openai.tts_model,
-                    speed=self.config.openai.tts_speed,
+                    voice=wingman_config.openai.tts_voice,
+                    model=wingman_config.openai.tts_model,
+                    speed=wingman_config.openai.tts_speed,
                     sound_config=sound_config,
                     audio_player=audio_player,
                     wingman_name=self.name,
                 )
-            elif self.config.features.tts_provider == TtsProvider.WINGMAN_PRO:
-                if self.config.wingman_pro.tts_provider == WingmanProTtsProvider.OPENAI:
+            elif wingman_config.features.tts_provider == TtsProvider.WINGMAN_PRO:
+                if wingman_config.wingman_pro.tts_provider == WingmanProTtsProvider.OPENAI:
                     await self.wingman_pro.generate_openai_speech(
                         text=text,
-                        voice=self.config.openai.tts_voice,
-                        model=self.config.openai.tts_model,
-                        speed=self.config.openai.tts_speed,
+                        voice=wingman_config.openai.tts_voice,
+                        model=wingman_config.openai.tts_model,
+                        speed=wingman_config.openai.tts_speed,
                         sound_config=sound_config,
                         audio_player=audio_player,
                         wingman_name=self.name,
                     )
                 elif (
-                    self.config.wingman_pro.tts_provider == WingmanProTtsProvider.AZURE
+                    wingman_config.wingman_pro.tts_provider == WingmanProTtsProvider.AZURE
                 ):
                     await self.wingman_pro.generate_azure_speech(
                         text=text,
-                        config=self.config.azure.tts,
+                        config=wingman_config.azure.tts,
                         sound_config=sound_config,
                         audio_player=audio_player,
                         wingman_name=self.name,
                     )
             else:
                 printr.toast_error(
-                    f"Unsupported TTS provider: {self.config.features.tts_provider}"
+                    f"Unsupported TTS provider: {wingman_config.features.tts_provider}"
                 )
         except Exception as e:
             await printr.print_async(
