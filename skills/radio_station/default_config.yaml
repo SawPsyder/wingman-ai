@@ -1,0 +1,112 @@
+module: skills.radio_station.main
+name: RadioStation
+display_name: Radio Station
+author: JayMatthew
+tags:
+  - Music
+description:
+  en: Simulates a music radio station. Plays music from a list of chosen tracks from the Wingman AI audio library.
+  de: Simuliert einen Musik-Radiosender. Spielt Musik aus einer Liste von ausgewählten Titeln aus der Wingman AI Audio-Bibliothek.
+examples:
+  - en: Turn the radio station on.
+    de: Schalte den Radiosender ein.
+  - en: Turn the radio station off.
+    de: Schalte den Radiosender aus.
+custom_properties:
+  - id: prompt
+    name: Radio station prompt
+    hint: This prompt is used to generate the radio station messages between the music tracks.
+    required: true
+    value:  'You are ''Jared Huckaby'' the host of the radio station with the name
+      ''Stanton Radio One''.
+
+      Your personality is friendly and warm and you love to make puns sometimes.
+
+      You are supportive of the Stanton star system but dont understand the concept
+      of other star systems without a proper law system, like Pyro.
+
+
+      After a section of music is played, you are allowed to make your announcements
+      and give the news for Stanton.
+
+      But keep in mind that a news sections should not always follow after a music
+      section. Sometimes you just announce the next title with clever knowledge of
+      the previous title and their connection.
+
+
+      Further notes:
+
+      - never mention Port Olisar
+
+      - keep in mind, that the radio may be started in the middle of your session
+
+      - only provide the spoken words of your character. Never mention something like
+      fading out/in music'
+    property_type: textarea
+  - id: voice
+    name: Speaker voice
+    hint: The voice used for the radio station speaker.
+    value:
+    - provider: edge_tts
+      voice: en-US-EricNeural
+    required: true
+    property_type: voice_selection
+    options:
+      - label: "multiple"
+        value: false
+  - id: voice_volume
+    name: Radio host voice volume
+    hint: The volume of the host-speaker voice.
+    value: 0.4
+    required: true
+    property_type: slider
+    options:
+      - label: "min"
+        value: 0.0
+      - label: "max"
+        value: 1.0
+      - label: "step"
+        value: 0.05
+  - id: song_volume
+    name: Music volume
+    hint: The volume of the music played.
+    value: 0.2
+    required: true
+    property_type: slider
+    options:
+      - label: "min"
+        value: 0.0
+      - label: "max"
+        value: 1.0
+      - label: "step"
+        value: 0.05
+  - id: source_local_path
+    name: Path to your local music library
+    hint: This should contain the absolute and complete path to your local music library, for example "C:\Users\>>USER<<\Music"
+    required: true
+    value: ""
+    property_type: string
+  - id: song_announcement
+    name: Announce songs
+    hint: Announce the songs before/after they are played.
+    value: true
+    required: true
+    property_type: boolean
+  - id: song_knowledge
+    name: Wingman title knowledge
+    hint: If enabled, your wingman will know the title of the currently played song.
+    value: true
+    required: true
+    property_type: boolean
+  - id: song_count_min
+    name: Min titles between announcements
+    hint: The minimum number of titles played between song announcements and news.
+    value: 2
+    required: true
+    property_type: number
+  - id: song_count_max
+    name: Max titles between announcements
+    hint: The maximum number of titles played between song announcements and news.
+    value: 5
+    required: true
+    property_type: number

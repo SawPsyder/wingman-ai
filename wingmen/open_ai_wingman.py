@@ -38,6 +38,7 @@ from providers.elevenlabs import ElevenLabs
 from providers.google import GoogleGenAI
 from providers.open_ai import OpenAi, OpenAiAzure
 from providers.wingman_pro import WingmanPro
+from services.audio_player import AudioPlayer
 from services.benchmark import Benchmark
 from services.markdown import cleanup_text
 from services.printr import Printr
@@ -1336,12 +1337,16 @@ class OpenAiWingman(Wingman):
         text: str,
         no_interrupt: bool = False,
         sound_config: Optional[SoundConfig] = None,
+        audio_player: Optional[AudioPlayer] = None,
     ):
         """Plays audio to the user using the configured TTS Provider (default: OpenAI TTS).
         Also adds sound effects if enabled in the configuration.
 
         Args:
             text (str): The text to play as audio.
+            no_interrupt (bool): Whether to wait for the current audio to finish playing before starting the new one.
+            sound_config (SoundConfig): The sound configuration to use for playback.
+            audio_player (AudioPlayer): The audio player to use for playback.
         """
         if sound_config:
             printr.print(
@@ -1350,7 +1355,8 @@ class OpenAiWingman(Wingman):
         else:
             sound_config = self.config.sound
 
-        if sound_config.volume == 0.0:
+        actual_volume = sound_config.volume if isinstance(sound_config.volume, float) else sound_config.volume[0]
+        if actual_volume == 0.0:
             printr.print(
                 "Volume modifier is set to 0, skipping TTS processing.",
                 LogType.WARNING,
@@ -1358,12 +1364,19 @@ class OpenAiWingman(Wingman):
             )
             return
 
+        if audio_player:
+            printr.print(
+                "Using custom audio player for playback", LogType.INFO, server_only=True
+            )
+        else:
+            audio_player = self.audio_player
+
         # remove Markdown, links, emotes and code blocks
         text, contains_links, contains_code_blocks = cleanup_text(text)
 
         # wait for audio player to finish playing
-        if no_interrupt and self.audio_player.is_playing:
-            while self.audio_player.is_playing:
+        if no_interrupt and audio_player.is_playing:
+            while audio_player.is_playing:
                 await asyncio.sleep(0.1)
 
         try:
@@ -1372,7 +1385,7 @@ class OpenAiWingman(Wingman):
                     text=text,
                     config=self.config.edge_tts,
                     sound_config=sound_config,
-                    audio_player=self.audio_player,
+                    audio_player=audio_player,
                     wingman_name=self.name,
                 )
             elif self.config.features.tts_provider == TtsProvider.ELEVENLABS:
@@ -1380,7 +1393,7 @@ class OpenAiWingman(Wingman):
                     text=text,
                     config=self.config.elevenlabs,
                     sound_config=sound_config,
-                    audio_player=self.audio_player,
+                    audio_player=audio_player,
                     wingman_name=self.name,
                     stream=self.config.elevenlabs.output_streaming,
                 )
@@ -1390,7 +1403,7 @@ class OpenAiWingman(Wingman):
                     api_key=self.azure_api_keys["tts"],
                     config=self.config.azure.tts,
                     sound_config=sound_config,
-                    audio_player=self.audio_player,
+                    audio_player=audio_player,
                     wingman_name=self.name,
                 )
             elif self.config.features.tts_provider == TtsProvider.XVASYNTH:
@@ -1398,7 +1411,7 @@ class OpenAiWingman(Wingman):
                     text=text,
                     config=self.config.xvasynth,
                     sound_config=sound_config,
-                    audio_player=self.audio_player,
+                    audio_player=audio_player,
                     wingman_name=self.name,
                 )
             elif self.config.features.tts_provider == TtsProvider.OPENAI:
@@ -1408,7 +1421,7 @@ class OpenAiWingman(Wingman):
                     model=self.config.openai.tts_model,
                     speed=self.config.openai.tts_speed,
                     sound_config=sound_config,
-                    audio_player=self.audio_player,
+                    audio_player=audio_player,
                     wingman_name=self.name,
                 )
             elif self.config.features.tts_provider == TtsProvider.WINGMAN_PRO:
@@ -1419,7 +1432,7 @@ class OpenAiWingman(Wingman):
                         model=self.config.openai.tts_model,
                         speed=self.config.openai.tts_speed,
                         sound_config=sound_config,
-                        audio_player=self.audio_player,
+                        audio_player=audio_player,
                         wingman_name=self.name,
                     )
                 elif (
@@ -1429,7 +1442,7 @@ class OpenAiWingman(Wingman):
                         text=text,
                         config=self.config.azure.tts,
                         sound_config=sound_config,
-                        audio_player=self.audio_player,
+                        audio_player=audio_player,
                         wingman_name=self.name,
                     )
             else:
