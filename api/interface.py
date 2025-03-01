@@ -353,6 +353,10 @@ class CerebrasConfig(BaseModel):
     endpoint: str
 
 
+class HumeAiConfig(BaseModel):
+    config_id: str
+
+
 class GoogleConfig(BaseModel):
     conversation_model: GoogleAiModel
 
@@ -683,6 +687,7 @@ class NestedConfig(BaseModel):
     perplexity: PerplexityConfig
     commands: Optional[list[CommandConfig]] = None
     skills: Optional[list[SkillConfig]] = None
+    hume: Optional[HumeAiConfig] = None
 
 
 class BasicWingmanConfig(BaseModel):

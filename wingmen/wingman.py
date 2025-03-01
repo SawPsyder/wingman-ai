@@ -607,6 +607,9 @@ class Wingman:
 
     def threaded_execution(self, function, *args) -> threading.Thread | None:
         """Execute a function in a separate thread."""
+        if function is None:
+            print("No function to execute given")
+            return None
         try:
 
             def start_thread(function, *args):
