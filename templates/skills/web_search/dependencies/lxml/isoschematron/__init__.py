@@ -191,7 +191,7 @@ class Schematron(_etree._Validator):
       ... </AAA>
       ... ''')
 
-      >>> schematron.validate(xml)
+      >>> schematron.validate
       False
 
       >>> xml = etree.XML('''
@@ -201,7 +201,7 @@ class Schematron(_etree._Validator):
       ... </AAA>
       ... ''')
 
-      >>> schematron.validate(xml)
+      >>> schematron.validate
       True
     """
 

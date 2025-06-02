@@ -15,12 +15,14 @@ examples:
     de: Was ist der Status des Funkgeräts?
   - en: Please turn the radio on.
     de: Bitte schalte das Funkgerät ein.
+prompt:
+  You have access to a radio device to play chatter of others.
 custom_properties:
   - id: prompt
     name: Prompt for message generation
     hint: A prompt used on voice change to generate a new personality. Leave empty to disable.
     required: false
-    value: "Generate a dialog between random pilots in the Star Citizen universe. Feel free to throw in some random details. Keep in mind that Port Olisar does no longer exist."
+    value: "Generate a dialog between random pilots in the Star Citizen universe. Feel free to throw in some random details and make the conversations interesting. Never mention Port Olisar."
     property_type: textarea
   - id: voices
     name: Available voices

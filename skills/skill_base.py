@@ -58,7 +58,7 @@ class Skill:
         return []
 
     async def get_prompt(self) -> str | None:
-        """Returns additional context for this skill. Will be injected into the the system prompt. Can be overridden by the skill to add dynamic data to context."""
+        """Returns additional context for this skill. Will be injected into the system prompt. Can be overridden by the skill to add dynamic data to context."""
         return self.config.prompt or None
 
     async def execute_tool(

@@ -17,6 +17,7 @@ from api.enums import (
     TtsProvider,
     WingmanProTtsProvider,
     SoundEffect,
+    ToastType,
 )
 from services.benchmark import Benchmark
 from services.file import get_writable_dir
@@ -41,9 +42,11 @@ class RadioChatter(Skill):
         self.last_message = None
         self.radio_status = False
         self.loaded = False
+        self.topic = None
+        self.topic_timestamp = time.time()
 
         self.prompt = None
-        self.voices = list[VoiceSelection]
+        self.voices: list[VoiceSelection] = []
         self.interval_min = None
         self.interval_max = None
         self.messages_min = None
@@ -106,6 +109,9 @@ class RadioChatter(Skill):
 
             if not initiate_provider_error:
                 self.voices = voices
+        else:
+            self.voices = []
+            await self.missing_voices_reminder()
 
         self.interval_min = self.retrieve_custom_property_value("interval_min", errors)
         if self.interval_min is not None and self.interval_min < 1:
@@ -182,13 +188,16 @@ class RadioChatter(Skill):
             )
 
         if not self.voices or self.participants_max > len(self.voices):
-            errors.append(
-                WingmanInitializationError(
-                    wingman_name=self.wingman.name,
-                    message="Not enough voices available for the configured number of max participants.",
-                    error_type=WingmanInitializationErrorType.INVALID_CONFIG,
-                )
-            )
+            pass
+            # paused this error as it caused confusion in initial setup (always appeared)
+            # But I rather force the user to select good voices manually instead of preselecting always available bad voices (Edge TTS)
+            # errors.append(
+            #     WingmanInitializationError(
+            #         wingman_name=self.wingman.name,
+            #         message="Not enough voices available for the configured number of max participants.",
+            #         error_type=WingmanInitializationErrorType.INVALID_CONFIG,
+            #     )
+            # )
 
         self.force_radio_sound = self.retrieve_custom_property_value(
             "force_radio_sound", errors
@@ -242,6 +251,15 @@ class RadioChatter(Skill):
         random = randrange(start, stop)
         return random
 
+    async def missing_voices_reminder(self, warning: bool = False) -> None:
+        await self.printr.print_async(
+            "Make sure to add voices to the Radio Chatter skill :)",
+            LogType.WARNING if warning else LogType.INFO,
+            source_name=self.wingman.name,
+            toast=ToastType.INFO,
+            skill_name=self.__class__.__name__
+        )
+
     def get_tools(self) -> list[tuple[str, dict]]:
         tools = [
             (
@@ -250,7 +268,14 @@ class RadioChatter(Skill):
                     "type": "function",
                     "function": {
                         "name": "turn_on_radio",
-                        "description": "Turn the radio on to pick up some chatter on open frequencies.",
+                        "description": "Turn the radio on to pick up some chatter on open frequencies. You may silently add a topic you think is relevant, this is optional.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "topic": {"type": "string"},
+                            },
+                            "required": [],
+                        },
                     },
                 },
             ),
@@ -265,12 +290,19 @@ class RadioChatter(Skill):
                 },
             ),
             (
-                "radio_status",
+                "change_radio_topic",
                 {
                     "type": "function",
                     "function": {
-                        "name": "radio_status",
-                        "description": "Get the status (on/off) of the radio.",
+                        "name": "change_radio_topic",
+                        "description": "Silently change the radio topic to a new topic. This can be used to influence future radio chatter. Leave the topic empty to reset to neutral topics.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "topic": {"type": "string"},
+                            },
+                            "required": [],
+                        },
                     },
                 },
             ),
@@ -283,7 +315,7 @@ class RadioChatter(Skill):
         function_response = ""
         instant_response = ""
 
-        if tool_name in ["turn_on_radio", "turn_off_radio", "radio_status"]:
+        if tool_name in ["turn_on_radio", "turn_off_radio", "change_radio_topic"]:
             benchmark.start_snapshot(f"Radio Chatter: {tool_name}")
 
             if self.settings.debug_mode:
@@ -294,7 +326,7 @@ class RadioChatter(Skill):
 
             if tool_name == "turn_on_radio":
                 if self.radio_status:
-                    function_response = "Radio is already on."
+                    function_response = "Radio was already on."
                 else:
                     self.threaded_execution(self._init_chatter)
                     function_response = "Radio is now on."
@@ -303,12 +335,19 @@ class RadioChatter(Skill):
                     self.radio_status = False
                     function_response = "Radio is now off."
                 else:
-                    function_response = "Radio is already off."
-            elif tool_name == "radio_status":
-                if self.radio_status:
-                    function_response = "Radio is on."
+                    function_response = "Radio was already off."
+            elif tool_name == "change_radio_topic":
+                if "topic" in parameters:
+                    topic = parameters["topic"]
+                    if topic is None or topic.strip() == "":
+                        self.set_topic(None)
+                        function_response = "Radio topic reset to neutral."
+                    else:
+                        self.set_topic(topic)
+                        function_response = f"Radio topic changed to: {self.topic}"
                 else:
-                    function_response = "Radio is off."
+                    self.set_topic(None)
+                    function_response = "Radio topic reset to neutral."
 
             benchmark.finish_snapshot()
         return function_response, instant_response
@@ -320,12 +359,40 @@ class RadioChatter(Skill):
         time.sleep(max(5, self.interval_min))  # sleep for min 5s else min interval
 
         while self.is_active():
-            await self._generate_chatter()
+            if not self.voices:
+                await self.missing_voices_reminder()
+            else:
+                await self._generate_chatter()
             interval = self.randrange(self.interval_min, self.interval_max)
             time.sleep(interval)
 
     def is_active(self) -> bool:
         return self.radio_status and self.loaded
+
+    def set_topic(self, topic: str|None) -> None:
+        """Set the current topic for the radio chatter."""
+        print(f"Setting radio topic to: {topic}")
+        if topic is None or topic.strip() == "":
+            self.topic = None
+            self.topic_timestamp = None
+        else:
+            self.topic = topic.strip()
+            self.topic_timestamp = time.time()
+
+    def get_topic_age(self) -> int:
+        """Returns the age of the current topic in minutes."""
+        return int((time.time() - self.topic_timestamp) / 60)
+
+    async def get_prompt(self) -> str | None:
+        prompt = await super().get_prompt() or ""
+        prompt += f"\n\nRadio Status: {'On' if self.radio_status else 'Off'}"
+        prompt += f"\nCurrent Topic: {self.topic if self.topic else 'Neutral'}"
+        prompt += f"\nTopic age: {self.get_topic_age()} minutes"
+
+        print("=============== PROMPT ===============")
+        print(prompt)
+        print("======================================")
+        return prompt
 
     async def _generate_chatter(self):
         if not self.is_active():
@@ -343,6 +410,7 @@ class RadioChatter(Skill):
                     ## Must follow these rules ##
                     - There are {count_participants} participant(s) in the conversation/monolog
                     - The conversation/monolog must contain exactly {count_message} messages between the participants or in the monolog
+                    {'- The messages may include the topic '+self.topic+' if it is relevant to the conversation' if self.topic else ''}
                     - You may always and only return a valid json string without formatting in the following format:
 
                     ## JSON format ##
@@ -368,6 +436,9 @@ class RadioChatter(Skill):
                 "content": str(self.prompt),
             },
         ]
+        print("=============== MESSAGES ==============")
+        print(messages)
+        print("=======================================")
         completion = await self.llm_call(messages)
         messages = (
             completion.choices[0].message.content
