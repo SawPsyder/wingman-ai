@@ -151,20 +151,69 @@ class OpenAi(BaseOpenAi):
         sound_config: SoundConfig,
         audio_player: AudioPlayer,
         wingman_name: str,
+        stream: bool,
     ):
+        # instructions = config.instructions # Instructions are for gpt-4o-mini-tts model only
         try:
-            response = self.client.audio.speech.create(
-                model=model,
-                voice=voice,
-                speed=speed,
-                input=text,
-            )
-            if response is not None:
-                await audio_player.play_with_effects(
-                    input_data=response.content,
-                    config=sound_config,
-                    wingman_name=wingman_name,
+            if not stream:
+                # Non-streaming implementation
+                response = self.client.audio.speech.create(
+                    input=text,
+                    model=model,
+                    voice=voice,
+                    speed=speed,
+                    # instructions=instructions,
                 )
+                if response is not None:
+                    await audio_player.play_with_effects(
+                        input_data=response.content,
+                        config=sound_config,
+                        wingman_name=wingman_name,
+                    )
+            else:
+                # Streaming implementation
+                with self.client.audio.speech.with_streaming_response.create(
+                    input=text,
+                    model=model,
+                    voice=voice,
+                    speed=speed,
+                    response_format="pcm",
+                    # instructions=instructions,
+                ) as response:
+                    # Create an iterator for the audio chunks. We can set the chunk size here.
+                    audio_stream_iterator = response.iter_bytes(chunk_size=1024)
+
+                    # This callback is passed to the audio_player and called repeatedly to fill its buffer.
+                    def buffer_callback(audio_buffer):
+                        """
+                        Fetches the next chunk from the audio stream and loads it
+                        into the player's buffer.
+                        """
+                        try:
+                            # Get the next chunk of audio data from the iterator
+                            chunk = next(audio_stream_iterator)
+                            chunk_size = len(chunk)
+
+                            # Copy the received audio data into the buffer provided by the audio player
+                            audio_buffer[:chunk_size] = chunk
+
+                            # Return the number of bytes written
+                            return chunk_size
+                        except StopIteration:
+                            # When the iterator is exhausted, it raises StopIteration.
+                            # We catch it and return 0 to signal the end of the stream.
+                            return 0
+
+                    # OpenAI's PCM output is 24kHz, 16-bit, single-channel.
+                    await audio_player.stream_with_effects(
+                        buffer_callback=buffer_callback,
+                        config=sound_config,
+                        wingman_name=wingman_name,
+                        sample_rate=24000,
+                        dtype="int16",
+                        channels=1,
+                    )
+
         except APIStatusError as e:
             self._handle_api_error(e)
         except UnicodeEncodeError:
@@ -328,27 +377,80 @@ class OpenAiCompatibleTts:
         sound_config: SoundConfig,
         audio_player: AudioPlayer,
         wingman_name: str,
+        stream: bool,
         speed: float | NotGiven = NOT_GIVEN,
         response_format: (
             NotGiven | Literal["mp3", "opus", "aac", "flac", "wav", "pcm"]
         ) = NOT_GIVEN,
         extra_headers: Mapping[str, Union[str, Omit]] | None = None,
     ):
+        # instructions = config.instructions # No current open source model supports this but adding for full compatibility
+
+        # Should sample rate and response format be configurable in UI to ensure widest compatibilty?
+
         try:
-            response = self.client.audio.speech.create(
-                input=text,
-                model=model,
-                voice=voice,
-                speed=speed,
-                response_format=response_format,
-                extra_headers=extra_headers,
-            )
-            if response is not None:
-                await audio_player.play_with_effects(
-                    input_data=response.content,
-                    config=sound_config,
-                    wingman_name=wingman_name,
+            if not stream:
+                # Non-streaming implementation
+                response = self.client.audio.speech.create(
+                    input=text,
+                    model=model,
+                    voice=voice,
+                    speed=speed,
+                    response_format=response_format,
+                    # instructions=instructions,
+                    extra_headers=extra_headers,
                 )
+                if response is not None:
+                    await audio_player.play_with_effects(
+                        input_data=response.content,
+                        config=sound_config,
+                        wingman_name=wingman_name,
+                    )
+            else:
+                # Streaming implementation
+                with self.client.audio.speech.with_streaming_response.create(
+                    input=text,
+                    model=model,
+                    voice=voice,
+                    speed=speed,
+                    response_format="pcm",
+                    # instructions=instructions,
+                    extra_headers=extra_headers,
+                ) as response:
+                    # Create an iterator for the audio chunks. We can set the chunk size here.
+                    audio_stream_iterator = response.iter_bytes(chunk_size=1024)
+
+                    # This callback is passed to the audio_player and called repeatedly
+                    # to fill its buffer.
+                    def buffer_callback(audio_buffer):
+                        """
+                        Fetches the next chunk from the audio stream and loads it
+                        into the player's buffer.
+                        """
+                        try:
+                            # Get the next chunk of audio data from the iterator
+                            chunk = next(audio_stream_iterator)
+                            chunk_size = len(chunk)
+
+                            # Copy the received audio data into the buffer provided by the audio player
+                            audio_buffer[:chunk_size] = chunk
+
+                            # Return the number of bytes written
+                            return chunk_size
+                        except StopIteration:
+                            # When the iterator is exhausted, it raises StopIteration.
+                            # We catch it and return 0 to signal the end of the stream.
+                            return 0
+
+                    await audio_player.stream_with_effects(
+                        buffer_callback=buffer_callback,
+                        config=sound_config,
+                        wingman_name=wingman_name,
+                        sample_rate=22050,  # OpenAI TTS default for PCM is 24000 so potential incompatibility here specifically with XTTS2
+                        dtype="int16",
+                        channels=1,
+                    )
+
         except APIStatusError as e:
             printr.toast_error(
                 f"OpenAI-compatible TTS error: {e.status_code} ({e.type})"
@@ -364,5 +466,5 @@ class OpenAiCompatibleTts:
                 printr.toast_error(e.message)
             else:
                 printr.toast_error(
-                    "An unknown OpenAI-compatible TTS error has occured."
+                    "An unknown OpenAI-compatible TTS error has occurred."
                 )
