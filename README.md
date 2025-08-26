@@ -23,7 +23,7 @@ The idea is simple, but the possibilities are endless. For example, you could:
 <img src="assets/wingman-ui-1.png"></img> <img src="assets/wingman-ui-2.png"></img> <img src="assets/wingman-ui-3.png"></img> <img src="assets/wingman-ui-4.png"></img>
 </div>
 
-Since version 2.0, Wingman AI Core acts as a "backend" API (using FastAPI and Pydantic) with the following features:
+Wingman AI Core acts as a "backend" API (using FastAPI and Pydantic) with the following features:
 
 - **Push-to-talk or voice activation** to capture user audio
 - **AI providers** with different models:
