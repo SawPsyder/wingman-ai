@@ -56,7 +56,11 @@ def handle_provider_api_error(api_response):
     Handle API errors from OpenAI-compatible providers.
     
     Args:
-        api_response: The API error response object
+        api_response: The API error response object from OpenAI/compatible providers.
+                     Expected to have attributes:
+                     - status_code: HTTP status code (int)
+                     - type: Error type (str)
+                     - message: Error message (str)
     """
     printr.toast_error(
         f"The API sent the following error code {api_response.status_code} ({api_response.type})"

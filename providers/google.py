@@ -27,6 +27,10 @@ class GoogleGenAI:
     def get_minimal_reasoning_by_model(self, model_name: str) -> dict:
         """Return minimal allowed `reasoning_effort` parameter for Gemini models.
 
+        Note: This is Gemini-specific and differs from the OpenAI utility function.
+        Gemini's OpenAI-compatible endpoint has different reasoning rules than native
+        OpenAI models.
+
         Gemini's OpenAI-compatible endpoint supports thinking controls that map to 
         OpenAI's `reasoning_effort` parameter. We always send the lowest allowed 
         value to minimize latency.
