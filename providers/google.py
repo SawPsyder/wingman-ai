@@ -1,7 +1,7 @@
-import re
 from google import genai
 from google.genai import types
 from openai import APIStatusError, OpenAI
+from services.openai_utils import handle_provider_key_error, handle_provider_api_error
 from services.printr import Printr
 
 printr = Printr()
@@ -19,25 +19,10 @@ class GoogleGenAI:
         )
 
     def _handle_key_error(self):
-        printr.toast_error(
-            "The Gemini API key you provided is invalid. Please check the GUI settings or your 'secrets.yaml'"
-        )
+        handle_provider_key_error("Gemini")
 
     def _handle_api_error(self, api_response):
-        printr.toast_error(
-            f"The OpenAI API sent the following error code {api_response.status_code} ({api_response.type})"
-        )
-        m = re.search(
-            r"'message': (?P<quote>['\"])(?P<message>.+?)(?P=quote)",
-            api_response.message,
-        )
-        if m is not None:
-            message = m["message"].replace(". ", ".\n")
-            printr.toast_error(message)
-        elif api_response.message:
-            printr.toast_error(api_response.message)
-        else:
-            printr.toast_error("The API did not provide further information.")
+        handle_provider_api_error(api_response)
 
     def get_minimal_reasoning_by_model(self, model_name: str) -> dict:
         """Return minimal allowed OpenAI `reasoning_effort` for Gemini models.

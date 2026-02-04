@@ -1,6 +1,10 @@
 """
 Utility functions for OpenAI API interactions.
 """
+import re
+from services.printr import Printr
+
+printr = Printr()
 
 
 def get_minimal_reasoning_by_model(model_name: str) -> dict:
@@ -33,3 +37,38 @@ def get_minimal_reasoning_by_model(model_name: str) -> dict:
 
     # Other models don't support reasoning effort
     return {}
+
+
+def handle_provider_key_error(provider_name: str):
+    """
+    Handle invalid API key errors for providers.
+    
+    Args:
+        provider_name: The name of the provider (e.g., "OpenAI", "Gemini")
+    """
+    printr.toast_error(
+        f"The {provider_name} API key you provided is invalid. Please check the GUI settings or your 'secrets.yaml'"
+    )
+
+
+def handle_provider_api_error(api_response):
+    """
+    Handle API errors from OpenAI-compatible providers.
+    
+    Args:
+        api_response: The API error response object
+    """
+    printr.toast_error(
+        f"The OpenAI API sent the following error code {api_response.status_code} ({api_response.type})"
+    )
+    m = re.search(
+        r"'message': (?P<quote>['\"])(?P<message>.+?)(?P=quote)",
+        api_response.message,
+    )
+    if m is not None:
+        message = m["message"].replace(". ", ".\n")
+        printr.toast_error(message)
+    elif api_response.message:
+        printr.toast_error(api_response.message)
+    else:
+        printr.toast_error("The API did not provide further information.")
