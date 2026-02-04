@@ -59,7 +59,7 @@ def handle_provider_api_error(api_response):
         api_response: The API error response object
     """
     printr.toast_error(
-        f"The OpenAI API sent the following error code {api_response.status_code} ({api_response.type})"
+        f"The API sent the following error code {api_response.status_code} ({api_response.type})"
     )
     m = re.search(
         r"'message': (?P<quote>['\"])(?P<message>.+?)(?P=quote)",
