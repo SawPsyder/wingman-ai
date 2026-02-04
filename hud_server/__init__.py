@@ -8,10 +8,11 @@ Included modules:
 - server.py: FastAPI HTTP server
 - hud_manager.py: State management for HUD groups
 - http_client.py: HTTP client for skills to use
+- models.py: Pydantic models for API requests/responses
 - overlay/overlay.py: PIL-based overlay renderer (Windows)
 - rendering/markdown.py: Markdown rendering
 - platform/win32.py: Win32 API definitions
-- hud_types.py: Type definitions for HUD elements
+- layout/manager.py: Automatic window layout and positioning
 """
 
 from hud_server.server import HudServer

@@ -324,12 +324,9 @@ class HudManager:
         duration: Optional[float] = None
     ) -> bool:
         """Show a message in a group."""
-        import sys
         with self._lock:
             if group_name not in self._groups:
                 self.create_group(group_name)
-            else:
-                sys.stderr.write(f"[HUD Manager] show_message: using existing group '{group_name}'\n")
 
             self._groups[group_name].current_message = HudMessage(
                 title=title,

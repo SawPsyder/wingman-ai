@@ -200,7 +200,6 @@ class LayoutManager:
 
         Returns True if window exists and was updated.
         """
-        import sys
         with self._lock:
             window = self._windows.get(name)
             if not window:
