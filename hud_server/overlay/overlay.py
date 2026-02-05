@@ -15,8 +15,7 @@ import queue
 import math
 import re
 import ctypes
-from ctypes import wintypes
-from typing import Tuple, Dict, List, Optional
+from typing import Tuple, Dict, Optional
 import traceback
 
 # PIL for rendering
@@ -31,11 +30,10 @@ except ImportError:
     ImageChops = None
 
 from hud_server.rendering.markdown import MarkdownRenderer
-from hud_server.platform import win32
 from hud_server.platform.win32 import (
     user32, gdi32, kernel32,
-    WNDCLASSEXW, BITMAPINFOHEADER, BITMAPINFO, MSG, POINT,
-    GWL_EXSTYLE, WS_POPUP, WS_EX_LAYERED, WS_EX_TRANSPARENT, WS_EX_TOPMOST, WS_EX_TOOLWINDOW,
+    BITMAPINFOHEADER, BITMAPINFO, MSG,
+    WS_POPUP, WS_EX_LAYERED, WS_EX_TRANSPARENT, WS_EX_TOPMOST, WS_EX_TOOLWINDOW,
     WS_EX_NOACTIVATE, LWA_ALPHA, LWA_COLORKEY, SWP_SHOWWINDOW,
     SWP_NOACTIVATE, SRCCOPY, DIB_RGB_COLORS, BI_RGB,
     SW_SHOWNOACTIVATE, HWND_TOPMOST, PM_REMOVE,
@@ -468,12 +466,18 @@ class HeadsUpOverlay:
 
     def _destroy_group_windows(self, group: str):
         """Destroy all windows for a group."""
+        # Handle unified windows (message, persistent)
         names_to_destroy = [
             name for name in self._windows
             if self._windows[name].get('group') == group
         ]
         for name in names_to_destroy:
             self._destroy_window(name)
+
+        # Handle chat windows - chat windows use the group name as the chat name
+        if group in self._chat_windows:
+            self._cleanup_chat_window(group)
+            self._cleanup_chat_window(group)
 
     # =========================================================================
     # UNIFIED WINDOW UPDATE AND RENDER LOOP
@@ -502,7 +506,10 @@ class HeadsUpOverlay:
                     self._draw_persistent_window(name, win)
                     # Don't blit yet - wait for collision check
 
-                # Note: Chat windows use the legacy system for now
+                elif win_type == self.WINDOW_TYPE_CHAT:
+                    self._update_chat_window(name, win)
+                    self._draw_chat_window(name, win)
+                    self._blit_window(name, win)
 
             except Exception as e:
                 self._report_exception(f"update_window_{name}", e)
@@ -1683,17 +1690,9 @@ class HeadsUpOverlay:
                         pass
 
                     # =========================================================
-                    # UPDATE AND RENDER ALL UNIFIED WINDOWS
+                    # UPDATE AND RENDER ALL UNIFIED WINDOWS (includes chat windows now)
                     # =========================================================
                     self._update_all_windows()
-
-                    # Update and draw chat windows
-                    if self._chat_windows:
-                        try:
-                            self._update_chat_windows()
-                            self._draw_chat_windows()
-                        except Exception as e:
-                            self._report_exception("draw_chat_windows", e)
 
                     # Note: Removed repeated z-order updates (bringing windows to front every 0.1s)
                     # HUD windows are set to topmost once during creation and when properties change
@@ -2090,15 +2089,37 @@ class HeadsUpOverlay:
                         if key in msg and msg[key] is not None:
                             default_props[key] = msg[key]
 
-                    self._chat_windows[chat_name] = {
-                        'messages': [],
+                    # Create unified window for chat
+                    window_name = f"chat_{chat_name}"
+                    self._windows[window_name] = {
+                        'type': self.WINDOW_TYPE_CHAT,
+                        'group': chat_name,  # Chat window name is also the group name
                         'props': default_props,
+                        'messages': [],
                         'last_message_time': 0,
                         'visible': True,
                         'opacity': 0,
-                        'fade_state': 0,  # hidden
+                        'target_opacity': int(default_props.get('opacity', 0.85) * 255),
+                        'fade_state': 0,  # 0=hidden, 1=fade_in, 2=visible, 3=fade_out
+                        'canvas_dirty': True,
+                        'hwnd': None,
+                        'window_dc': None,
+                        'mem_dc': None,
+                        'canvas': None,
+                        'dib_bitmap': None,
+                        'dib_bits': None,
+                        'old_bitmap': None,
+                        'dib_width': 0,
+                        'dib_height': 0,
+                        'last_render_state': None,
                     }
-                    self._chat_window_dirty[chat_name] = True
+
+                    # Register with layout manager using same name as other windows
+                    layout_name = window_name
+                    anchor = default_props.get('anchor', 'top_left')
+                    priority = default_props.get('priority', 5)
+                    layout_mode = default_props.get('layout_mode', 'auto')
+                    self._layout_manager.register_window(layout_name, anchor, priority, layout_mode)
 
                     # Create window for this chat
                     w = int(default_props.get('width', 400))
@@ -2169,11 +2190,14 @@ class HeadsUpOverlay:
             elif t == 'delete_chat_window':
                 chat_name = msg.get('name')
                 if chat_name:
-                    self._cleanup_chat_window(chat_name)
+                    window_name = f"chat_{chat_name}"
+                    if window_name in self._windows:
+                        self._destroy_window(window_name)
 
             elif t == 'chat_message':
                 chat_name = msg.get('name')
-                if chat_name and chat_name in self._chat_windows:
+                window_name = f"chat_{chat_name}"
+                if chat_name and window_name in self._windows:
                     now = time.time()
                     message = {
                         'sender': msg.get('sender', ''),
@@ -2181,23 +2205,23 @@ class HeadsUpOverlay:
                         'color': msg.get('color'),
                         'timestamp': now,
                     }
-                    chat = self._chat_windows[chat_name]
-                    chat['messages'].append(message)
-                    chat['last_message_time'] = now
+                    win = self._windows[window_name]
+                    win['messages'].append(message)
+                    win['last_message_time'] = now
 
                     # Trim old messages if over limit
-                    max_messages = chat['props'].get('max_messages', 50)
-                    if len(chat['messages']) > max_messages:
-                        chat['messages'] = chat['messages'][-max_messages:]
+                    max_messages = win['props'].get('max_messages', 50)
+                    if len(win['messages']) > max_messages:
+                        win['messages'] = win['messages'][-max_messages:]
 
                     # Show window if auto-hide was triggered
-                    if chat['fade_state'] == 0 or chat['fade_state'] == 3:
-                        chat['fade_state'] = 1  # fade in
-                        chat['visible'] = True
+                    if win['fade_state'] == 0 or win['fade_state'] == 3:
+                        win['fade_state'] = 1  # fade in
+                        win['visible'] = True
                         # Immediately notify layout manager
-                        self._layout_manager.set_window_visible(f"chat_{chat_name}", True)
+                        self._layout_manager.set_window_visible(window_name, True)
 
-                    self._chat_window_dirty[chat_name] = True
+                    win['canvas_dirty'] = True
 
             elif t == 'clear_chat_window':
                 chat_name = msg.get('name')
