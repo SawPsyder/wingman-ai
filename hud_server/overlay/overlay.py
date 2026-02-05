@@ -45,6 +45,12 @@ from hud_server.platform.win32 import (
     _ensure_window_class, _class_name
 )
 from hud_server.layout import LayoutManager, Anchor, LayoutMode
+from hud_server.constants import (
+    MAX_PROGRESS_TRACK_CACHE_SIZE,
+    MAX_PROGRESS_GRADIENT_CACHE_SIZE,
+    MAX_CORNER_CACHE_SIZE,
+    MAX_LOADING_BAR_CACHE_SIZE,
+)
 
 class HeadsUpOverlay:
     """HUD Overlay with sophisticated Markdown rendering.
@@ -199,6 +205,53 @@ class HeadsUpOverlay:
         self._chat_last_render_state: Dict[str, tuple] = {}
 
         # =====================================================================
+        # RENDER CACHING SYSTEM
+        # =====================================================================
+        # Cache for pre-rendered components to reduce CPU load
+        # Each cache entry contains: {'image': PIL.Image, 'params': tuple}
+        #
+        # Progress bar track cache: stores empty progress bar backgrounds
+        # Key: (width, height, bg_color) -> cached track image
+        self._progress_track_cache: Dict[tuple, Image.Image] = {}
+        # Max cache entries for progress tracks
+        self._max_progress_track_cache = MAX_PROGRESS_TRACK_CACHE_SIZE
+
+        # Progress bar fill gradient cache: stores gradient overlays
+        # Key: (width, height, fill_color) -> cached gradient overlay
+        self._progress_gradient_cache: Dict[tuple, Image.Image] = {}
+        # Max cache entries for gradients
+        self._max_progress_gradient_cache = MAX_PROGRESS_GRADIENT_CACHE_SIZE
+
+        # Rounded rectangle corner cache: stores pre-rendered corners at various radii
+        # Key: (radius, scale, bg_color) -> cached corner images
+        self._corner_cache: Dict[tuple, Dict[str, Image.Image]] = {}
+        # Max cache entries for corners
+        self._max_corner_cache = MAX_CORNER_CACHE_SIZE
+
+        # Loading bar element cache: stores pre-rendered loading bar elements
+        # Key: (bar_width, max_height, color) -> cached bar surface
+        self._loading_bar_cache: Dict[tuple, Image.Image] = {}
+        # Max cache entries for loading bars
+        self._max_loading_bar_cache = MAX_LOADING_BAR_CACHE_SIZE
+
+        # Reusable image buffers for supersampling operations
+        # These are pre-allocated to avoid repeated allocations
+        self._progress_bar_buffer: Optional[Image.Image] = None
+        self._progress_bar_buffer_size: Tuple[int, int] = (0, 0)
+
+        # Render statistics for monitoring (optional debugging)
+        self._render_stats = {
+            'track_cache_hits': 0,
+            'track_cache_misses': 0,
+            'gradient_cache_hits': 0,
+            'gradient_cache_misses': 0,
+            'corner_cache_hits': 0,
+            'corner_cache_misses': 0,
+            'loading_cache_hits': 0,
+            'loading_cache_misses': 0,
+        }
+
+        # =====================================================================
         # LAYOUT MANAGER
         # =====================================================================
         # Automatic positioning and stacking to prevent window overlap
@@ -208,6 +261,47 @@ class HeadsUpOverlay:
             default_margin=self._layout_margin,
             default_spacing=self._layout_spacing,
         )
+
+    # =========================================================================
+    # RENDER CACHE MANAGEMENT
+    # =========================================================================
+
+    def get_render_cache_stats(self) -> Dict[str, int]:
+        """Get render cache statistics for monitoring performance.
+
+        Returns a dictionary with cache hit/miss counts for each cache type.
+        Useful for debugging and performance monitoring.
+        """
+        return dict(self._render_stats)
+
+    def clear_render_caches(self):
+        """Clear all render caches.
+
+        Call this when memory pressure is high or when visual styles change
+        significantly. Normally caches auto-evict when full.
+        """
+        self._progress_track_cache.clear()
+        self._progress_gradient_cache.clear()
+        self._corner_cache.clear()
+        self._loading_bar_cache.clear()
+        self._progress_bar_buffer = None
+        self._progress_bar_buffer_size = (0, 0)
+
+        # Reset statistics
+        for key in self._render_stats:
+            self._render_stats[key] = 0
+
+    def get_render_cache_sizes(self) -> Dict[str, int]:
+        """Get current sizes of render caches.
+
+        Returns a dictionary with the number of entries in each cache.
+        """
+        return {
+            'progress_track_cache': len(self._progress_track_cache),
+            'progress_gradient_cache': len(self._progress_gradient_cache),
+            'corner_cache': len(self._corner_cache),
+            'loading_bar_cache': len(self._loading_bar_cache),
+        }
 
     # =========================================================================
     # UNIFIED WINDOW MANAGEMENT
@@ -1395,8 +1489,46 @@ class HeadsUpOverlay:
                     text_w, _ = self._get_text_size(text_segment, font)
                     current_x += text_w
 
+    def _get_cached_loading_bar(self, bar_w: int, bar_h: int, color: Tuple) -> Image.Image:
+        """Get or create a cached loading bar element.
+
+        Caches pre-rendered loading bar pill shapes to avoid recreating
+        them every frame for each bar in the loading animation.
+        """
+        # Ensure color is just RGB for cache key (ignore alpha variations)
+        color_key = color[:3]
+        cache_key = (bar_w, bar_h, color_key)
+
+        if cache_key in self._loading_bar_cache:
+            self._render_stats['loading_cache_hits'] += 1
+            return self._loading_bar_cache[cache_key]
+
+        self._render_stats['loading_cache_misses'] += 1
+
+        # Create the bar surface
+        bar_surf = Image.new('RGBA', (bar_w, max(1, bar_h)), (0, 0, 0, 0))
+        bar_draw = ImageDraw.Draw(bar_surf)
+
+        radius = min(bar_w // 2, bar_h // 2)
+        if radius < 1:
+            radius = 1
+
+        bar_color = color_key + (255,)
+        bar_draw.rounded_rectangle([0, 0, bar_w - 1, bar_h - 1], radius=radius, fill=bar_color)
+
+        # Limit cache size
+        if len(self._loading_bar_cache) >= self._max_loading_bar_cache:
+            oldest_key = next(iter(self._loading_bar_cache))
+            del self._loading_bar_cache[oldest_key]
+
+        self._loading_bar_cache[cache_key] = bar_surf
+        return bar_surf
+
     def _draw_loading(self, draw, canvas, x: int, y: int, width: int, color: Tuple):
-        """Modern animated loading bars with full width wave."""
+        """Modern animated loading bars with full width wave.
+
+        OPTIMIZED: Uses caching for bar element surfaces.
+        """
         # Initialize loading phase if not exists
         if not hasattr(self, '_loading_phase'):
             self._loading_phase = 0.0
@@ -1437,18 +1569,8 @@ class HeadsUpOverlay:
             bar_x = start_x + i * (bar_w + spacing)
             bar_y = int(center_y - (h / 2))
 
-            # Solid color without alpha
-            bar_color = color[:3] + (255,)
-
-            # Draw rounded bar (pill shape)
-            radius = min(bar_w // 2, h // 2)
-            if radius < 1:
-                radius = 1
-
-            # Create small surface for the bar
-            bar_surf = Image.new('RGBA', (bar_w, max(1, h)), (0, 0, 0, 0))
-            bar_draw = ImageDraw.Draw(bar_surf)
-            bar_draw.rounded_rectangle([0, 0, bar_w - 1, h - 1], radius=radius, fill=bar_color)
+            # Get cached bar surface (or create if height not cached)
+            bar_surf = self._get_cached_loading_bar(bar_w, h, color)
             canvas.paste(bar_surf, (bar_x, bar_y), bar_surf)
 
     def _draw_main_frame(self):
@@ -2670,6 +2792,103 @@ class HeadsUpOverlay:
         mem_dc = gdi32.CreateCompatibleDC(window_dc)
         return window_dc, mem_dc
 
+    def _get_cached_progress_track(self, width: int, height: int, bg_color: Tuple[int, int, int],
+                                   scale: int = 2) -> Image.Image:
+        """Get or create a cached progress bar background track.
+
+        Caches the empty progress bar background to avoid recreating it every frame.
+        The track includes the rounded rectangle with antialiasing.
+        """
+        cache_key = (width, height, bg_color, scale)
+
+        if cache_key in self._progress_track_cache:
+            self._render_stats['track_cache_hits'] += 1
+            return self._progress_track_cache[cache_key].copy()
+
+        self._render_stats['track_cache_misses'] += 1
+
+        # Create the track at scaled resolution
+        scaled_width = width * scale
+        scaled_height = height * scale
+        radius = scaled_height // 2
+
+        track = Image.new('RGBA', (scaled_width, scaled_height), (0, 0, 0, 0))
+        track_draw = ImageDraw.Draw(track)
+
+        track_color = tuple(max(0, c - 30) for c in bg_color)
+        outline_color = tuple(max(0, c - 50) for c in bg_color) + (150,)
+        track_draw.rounded_rectangle(
+            [0, 0, scaled_width - 1, scaled_height - 1],
+            radius=radius,
+            fill=track_color + (255,),
+            outline=outline_color
+        )
+
+        # Limit cache size using simple FIFO eviction
+        if len(self._progress_track_cache) >= self._max_progress_track_cache:
+            oldest_key = next(iter(self._progress_track_cache))
+            del self._progress_track_cache[oldest_key]
+
+        self._progress_track_cache[cache_key] = track
+        return track.copy()
+
+    def _get_cached_gradient_overlay(self, fill_width: int, fill_height: int,
+                                      highlight_height: int, shadow_height: int) -> Image.Image:
+        """Get or create a cached gradient overlay for progress bar fills.
+
+        The gradient provides the depth effect (top highlight, bottom shadow).
+        Cached because the gradient pattern is the same for same dimensions.
+        """
+        cache_key = (fill_width, fill_height, highlight_height, shadow_height)
+
+        if cache_key in self._progress_gradient_cache:
+            self._render_stats['gradient_cache_hits'] += 1
+            return self._progress_gradient_cache[cache_key].copy()
+
+        self._render_stats['gradient_cache_misses'] += 1
+
+        gradient = Image.new('RGBA', (fill_width + 1, fill_height + 1), (0, 0, 0, 0))
+        gradient_draw = ImageDraw.Draw(gradient)
+
+        # Top highlight (lighter)
+        for i in range(highlight_height):
+            alpha = int(60 * (1 - i / highlight_height))
+            gradient_draw.line([(0, i), (fill_width, i)], fill=(255, 255, 255, alpha))
+
+        # Bottom shadow (darker)
+        for i in range(shadow_height):
+            alpha = int(40 * (i / shadow_height))
+            gradient_draw.line(
+                [(0, fill_height - shadow_height + i), (fill_width, fill_height - shadow_height + i)],
+                fill=(0, 0, 0, alpha)
+            )
+
+        # Limit cache size
+        if len(self._progress_gradient_cache) >= self._max_progress_gradient_cache:
+            oldest_key = next(iter(self._progress_gradient_cache))
+            del self._progress_gradient_cache[oldest_key]
+
+        self._progress_gradient_cache[cache_key] = gradient
+        return gradient.copy()
+
+    def _get_reusable_buffer(self, width: int, height: int) -> Image.Image:
+        """Get or create a reusable image buffer for progress bar rendering.
+
+        Reuses a pre-allocated buffer to avoid repeated allocations.
+        The buffer is cleared before returning.
+        """
+        if (self._progress_bar_buffer is None or
+            self._progress_bar_buffer_size[0] < width or
+            self._progress_bar_buffer_size[1] < height):
+            # Need a larger buffer
+            self._progress_bar_buffer = Image.new('RGBA', (width, height), (0, 0, 0, 0))
+            self._progress_bar_buffer_size = (width, height)
+        else:
+            # Clear the existing buffer (only the area we'll use)
+            self._progress_bar_buffer.paste((0, 0, 0, 0), (0, 0, width, height))
+
+        return self._progress_bar_buffer
+
     def _draw_progress_bar(self, draw: ImageDraw.Draw, img: Image.Image, x: int, y: int,
                           width: int, height: int, percentage: float,
                           bg_color: Tuple[int, int, int],
@@ -2679,6 +2898,7 @@ class HeadsUpOverlay:
         Draw a modern, sleek progress bar with antialiasing via supersampling.
 
         Uses 2x supersampling for smooth edges on rounded corners.
+        OPTIMIZED: Uses caching for track backgrounds and gradient overlays.
 
         Args:
             draw: ImageDraw object
@@ -2699,28 +2919,18 @@ class HeadsUpOverlay:
 
         # Supersampling scale factor for antialiasing
         scale = 2
-
-        # Create high-resolution buffer for the progress bar
-        bar_buffer = Image.new('RGBA', (width * scale, height * scale), (0, 0, 0, 0))
-        bar_draw = ImageDraw.Draw(bar_buffer)
-
         scaled_height = height * scale
         scaled_width = width * scale
-        radius = scaled_height // 2  # Fully rounded ends at scaled size
+        radius = scaled_height // 2
 
-        # Draw background track
-        track_color = tuple(max(0, c - 30) for c in bg_color)
-        bar_draw.rounded_rectangle(
-            [0, 0, scaled_width - 1, scaled_height - 1],
-            radius=radius,
-            fill=track_color + (255,),
-            outline=tuple(max(0, c - 50) for c in bg_color) + (150,)
-        )
+        # Get cached track background (or create if not cached)
+        bar_buffer = self._get_cached_progress_track(width, height, bg_color, scale)
 
         # Calculate fill width at scaled size
         fill_width = int((scaled_width - 2 * scale) * percentage / 100)
 
         if fill_width > radius:  # Only draw if there's meaningful progress
+            bar_draw = ImageDraw.Draw(bar_buffer)
             fill_x = scale
             fill_y = scale
             fill_h = scaled_height - 2 * scale
@@ -2733,23 +2943,12 @@ class HeadsUpOverlay:
                 fill=fill_color + (255,)
             )
 
-            # Create gradient overlay for depth effect
-            gradient_overlay = Image.new('RGBA', (fill_width + 1, fill_h + 1), (0, 0, 0, 0))
-            gradient_draw = ImageDraw.Draw(gradient_overlay)
-
-            # Top highlight (lighter)
+            # Get cached gradient overlay
             highlight_height = fill_h // 3
-            for i in range(highlight_height):
-                alpha = int(60 * (1 - i / highlight_height))
-                highlight_color = (255, 255, 255, alpha)
-                gradient_draw.line([(0, i), (fill_width, i)], fill=highlight_color)
-
-            # Bottom shadow (darker)
             shadow_height = fill_h // 4
-            for i in range(shadow_height):
-                alpha = int(40 * (i / shadow_height))
-                shadow_color = (0, 0, 0, alpha)
-                gradient_draw.line([(0, fill_h - shadow_height + i), (fill_width, fill_h - shadow_height + i)], fill=shadow_color)
+            gradient_overlay = self._get_cached_gradient_overlay(
+                fill_width, fill_h, highlight_height, shadow_height
+            )
 
             # Create a mask from the fill shape to apply gradient only within the bar
             mask = Image.new('L', (scaled_width, scaled_height), 0)
