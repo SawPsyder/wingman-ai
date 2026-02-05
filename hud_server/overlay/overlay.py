@@ -142,16 +142,6 @@ class HeadsUpOverlay:
         self.md_renderer = None
 
         # =====================================================================
-        # CHAT WINDOW STATE (needed for future features)
-        # =====================================================================
-        self._chat_windows: Dict[str, Dict] = {}
-        self._chat_window_dirty: Dict[str, bool] = {}
-        self._chat_canvases: Dict[str, Image.Image] = {}
-        self._chat_hwnds: Dict[str, int] = {}
-        self._chat_window_dcs: Dict[str, tuple] = {}
-        self._chat_last_render_state: Dict[str, tuple] = {}
-
-        # =====================================================================
         # RENDER CACHING SYSTEM
         # =====================================================================
         # Cache for pre-rendered components to reduce CPU load
@@ -466,18 +456,14 @@ class HeadsUpOverlay:
 
     def _destroy_group_windows(self, group: str):
         """Destroy all windows for a group."""
-        # Handle unified windows (message, persistent)
+        # Handle all unified windows (message, persistent, chat)
+        # Chat windows use the group name as the chat name
         names_to_destroy = [
             name for name in self._windows
             if self._windows[name].get('group') == group
         ]
         for name in names_to_destroy:
             self._destroy_window(name)
-
-        # Handle chat windows - chat windows use the group name as the chat name
-        if group in self._chat_windows:
-            self._cleanup_chat_window(group)
-            self._cleanup_chat_window(group)
 
     # =========================================================================
     # UNIFIED WINDOW UPDATE AND RENDER LOOP
@@ -1163,6 +1149,165 @@ class HeadsUpOverlay:
                 y_pos = int(props.get('y', 20))
             user32.MoveWindow(hwnd, x, y_pos, width, final_h, True)
 
+    def _update_chat_window(self, name: str, win: Dict):
+        """Update chat window state (fade logic and auto-hide)."""
+        now = time.time()
+        props = win.get('props', {})
+        auto_hide = props.get('auto_hide', False)
+        auto_hide_delay = props.get('auto_hide_delay', 10.0)
+
+        # Check auto-hide
+        if auto_hide and win.get('messages') and win['fade_state'] == 2:
+            if now - win.get('last_message_time', 0) > auto_hide_delay:
+                win['fade_state'] = 3  # Start fade out
+
+        # Use common fade logic with messages as content indicator
+        has_content = bool(win.get('messages')) or win.get('visible', False)
+        self._update_window_fade(win, has_content=has_content)
+
+    def _draw_chat_window(self, name: str, win: Dict):
+        """Draw content for a chat window."""
+        messages = win.get('messages', [])
+        if not messages:
+            # Clear render state and canvas when there are no messages
+            if win.get('last_render_state') is not None:
+                win['last_render_state'] = None
+                win['canvas'] = None
+                win['canvas_dirty'] = False
+            return
+
+        props = win.get('props', {})
+        bg = self._hex_to_rgb(props.get('bg_color', '#1e212b'))
+        text_color = self._hex_to_rgb(props.get('text_color', '#f0f0f0'))
+        accent = self._hex_to_rgb(props.get('accent_color', '#00aaff'))
+
+        width = int(props.get('width', 400))
+        max_height = int(props.get('max_height', 400))
+        radius = int(props.get('border_radius', 12))
+        padding = int(props.get('content_padding', 12))
+        message_spacing = int(props.get('message_spacing', 8))
+        fade_old = props.get('fade_old_messages', True)
+        sender_colors = props.get('sender_colors', {})
+
+        # Build state hash for caching
+        msg_state = tuple((m['sender'], m['text'], m.get('color')) for m in messages[-50:])
+        props_hash = (
+            width, max_height, radius, padding,
+            bg, text_color, accent,
+            props.get('opacity', 0.85),
+            props.get('font_size', 14),
+            message_spacing, fade_old,
+        )
+        current_state = (msg_state, win.get('opacity', 0), props_hash)
+
+        if win.get('last_render_state') == current_state and win.get('canvas'):
+            return
+
+        win['last_render_state'] = current_state
+        win['canvas_dirty'] = True
+
+        # Get fonts
+        font_bold = self.fonts.get('bold', self.fonts.get('normal', self.fonts.get('regular')))
+        font_normal = self.fonts.get('normal', self.fonts.get('regular'))
+
+        # Update markdown renderer colors
+        if self.md_renderer:
+            self.md_renderer.set_colors(text_color, accent, bg)
+
+        # Render messages to temp canvas
+        temp_h = max(2000, max_height * 3)
+        temp = Image.new('RGBA', (width, temp_h), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(temp)
+
+        content_width = width - (padding * 2)
+        y = padding
+
+        # Render each message
+        for i, msg in enumerate(messages):
+            # Apply fade to older messages
+            if fade_old and i < len(messages) - 3:
+                # Fade factor: older = more faded
+                position_from_end = len(messages) - i
+                fade_factor = max(0.3, 1.0 - (position_from_end * 0.05))
+                msg_alpha = int(255 * fade_factor)
+            else:
+                msg_alpha = 255
+
+            sender = msg.get('sender', '')
+            text = msg.get('text', '')
+            msg_color = msg.get('color')
+
+            # Determine sender color
+            if msg_color:
+                sender_color = self._hex_to_rgb(msg_color) if isinstance(msg_color, str) else msg_color
+            elif sender in sender_colors:
+                sender_color = self._hex_to_rgb(sender_colors[sender]) if isinstance(sender_colors[sender], str) else sender_colors[sender]
+            else:
+                sender_color = accent
+
+            # Draw sender name
+            if sender:
+                if font_bold:
+                    draw.text((padding, y), sender + ":", fill=sender_color + (msg_alpha,), font=font_bold)
+                    try:
+                        bbox = font_bold.getbbox(sender + ":")
+                        y += bbox[3] - bbox[1] + 4
+                    except:
+                        y += 20
+
+            # Draw message text with markdown
+            if text and self.md_renderer:
+                y = self.md_renderer.render(draw, temp, text, padding, y, content_width, max_chars=None)
+            elif text and font_normal:
+                # Fallback simple text rendering
+                draw.text((padding, y), text, fill=text_color + (msg_alpha,), font=font_normal)
+                try:
+                    lines = text.split('\n')
+                    for line in lines:
+                        bbox = font_normal.getbbox(line)
+                        y += bbox[3] - bbox[1] + 4
+                except:
+                    y += len(text.split('\n')) * 20
+
+            y += message_spacing
+
+        # Calculate final height
+        bottom_padding = padding - 4
+        final_h = min(max(60, y + bottom_padding), max_height)
+
+        # Create final canvas
+        old_canvas = win.get('canvas')
+        if old_canvas is None or old_canvas.width != width or old_canvas.height != final_h:
+            canvas = Image.new('RGBA', (width, final_h), (255, 0, 255, 255))
+            win['canvas'] = canvas
+        else:
+            canvas = old_canvas
+            canvas.paste(Image.new('RGBA', (width, final_h), (255, 0, 255, 255)), (0, 0))
+
+        final_draw = ImageDraw.Draw(canvas)
+        final_draw.rectangle([0, 0, width, final_h], fill=(255, 0, 255, 255))
+        final_draw.rounded_rectangle([0, 0, width - 1, final_h - 1], radius=radius,
+                                    fill=bg + (255,), outline=(55, 62, 74))
+
+        # Composite content
+        crop = temp.crop((0, 0, width, min(final_h, temp.height)))
+        canvas_region = canvas.crop((0, 0, width, min(final_h, canvas.height)))
+        composited = Image.alpha_composite(canvas_region, crop)
+        canvas.paste(composited, (0, 0))
+
+        # Update layout manager and position
+        self._layout_manager.update_window_height(name, final_h)
+        pos = self._layout_manager.get_position(name)
+
+        hwnd = win.get('hwnd')
+        if hwnd:
+            if pos:
+                x, y_pos = pos
+            else:
+                x = int(props.get('x', 20))
+                y_pos = int(props.get('y', 20))
+            user32.MoveWindow(hwnd, x, y_pos, width, final_h, True)
+
     def _blit_window(self, name: str, win: Dict):
         """Blit a window's canvas to its Win32 window."""
         if win.get('opacity', 0) <= 0:
@@ -1552,31 +1697,14 @@ class HeadsUpOverlay:
 
     def _cleanup_chat_window(self, chat_name: str):
         """Clean up resources for a specific chat window."""
+        window_name = f"chat_{chat_name}"
+
         # Unregister from layout manager
-        self._layout_manager.unregister_window(f"chat_{chat_name}")
+        self._layout_manager.unregister_window(window_name)
 
-        # Cleanup DCs
-        if chat_name in self._chat_window_dcs:
-            window_dc, mem_dc = self._chat_window_dcs[chat_name]
-            hwnd = self._chat_hwnds.get(chat_name)
-            if mem_dc:
-                gdi32.DeleteDC(mem_dc)
-            if window_dc and hwnd:
-                user32.ReleaseDC(hwnd, window_dc)
-            del self._chat_window_dcs[chat_name]
-
-        # Destroy window
-        if chat_name in self._chat_hwnds:
-            hwnd = self._chat_hwnds[chat_name]
-            if hwnd:
-                user32.DestroyWindow(hwnd)
-            del self._chat_hwnds[chat_name]
-
-        # Clean up state
-        self._chat_windows.pop(chat_name, None)
-        self._chat_window_dirty.pop(chat_name, None)
-        self._chat_canvases.pop(chat_name, None)
-        self._chat_last_render_state.pop(chat_name, None)
+        # Clean up unified window if it exists
+        if window_name in self._windows:
+            self._destroy_window(window_name)
 
     def _safe_report(self, payload):
         if not self.error_queue:
@@ -1718,12 +1846,9 @@ class HeadsUpOverlay:
         except Exception as e:
             self._report_exception("run_crash", e)
         finally:
-            # Cleanup unified windows
+            # Cleanup unified windows (including chat windows)
             for name in list(self._windows.keys()):
                 self._destroy_window(name)
-            # Cleanup chat windows
-            for chat_name in list(self._chat_windows.keys()):
-                self._cleanup_chat_window(chat_name)
 
     def _handle_message(self, msg):
         try:
@@ -2173,22 +2298,26 @@ class HeadsUpOverlay:
 
                     hwnd = self._create_overlay_window(f"HeadsUpChat_{chat_name}", x, y, w, h)
                     if hwnd:
-                        self._chat_hwnds[chat_name] = hwnd
+                        # Store hwnd in the unified window state
+                        self._windows[window_name]['hwnd'] = hwnd
                         window_dc, mem_dc = self._init_gdi(hwnd)
-                        self._chat_window_dcs[chat_name] = (window_dc, mem_dc)
+                        self._windows[window_name]['window_dc'] = window_dc
+                        self._windows[window_name]['mem_dc'] = mem_dc
 
             elif t == 'update_chat_window':
                 chat_name = msg.get('name')
-                if chat_name and chat_name in self._chat_windows:
+                window_name = f"chat_{chat_name}"
+                if chat_name and window_name in self._windows:
+                    win = self._windows[window_name]
                     props = msg.get('props', {})
-                    self._chat_windows[chat_name]['props'].update(props)
-                    self._chat_window_dirty[chat_name] = True
+                    win['props'].update(props)
+                    win['canvas_dirty'] = True
 
                     # Update window position if changed
                     if 'x' in props or 'y' in props or 'width' in props or 'max_height' in props:
-                        hwnd = self._chat_hwnds.get(chat_name)
+                        hwnd = win.get('hwnd')
                         if hwnd:
-                            chat_props = self._chat_windows[chat_name]['props']
+                            chat_props = win['props']
                             x = int(chat_props.get('x', 20))
                             y = int(chat_props.get('y', 20))
                             w = int(chat_props.get('width', 400))
@@ -2233,28 +2362,31 @@ class HeadsUpOverlay:
 
             elif t == 'clear_chat_window':
                 chat_name = msg.get('name')
-                if chat_name and chat_name in self._chat_windows:
-                    self._chat_windows[chat_name]['messages'] = []
-                    self._chat_window_dirty[chat_name] = True
+                window_name = f"chat_{chat_name}"
+                if chat_name and window_name in self._windows:
+                    self._windows[window_name]['messages'] = []
+                    self._windows[window_name]['canvas_dirty'] = True
 
             elif t == 'show_chat_window':
                 chat_name = msg.get('name')
-                if chat_name and chat_name in self._chat_windows:
-                    chat = self._chat_windows[chat_name]
-                    chat['visible'] = True
-                    chat['fade_state'] = 1  # fade in
+                window_name = f"chat_{chat_name}"
+                if chat_name and window_name in self._windows:
+                    win = self._windows[window_name]
+                    win['visible'] = True
+                    win['fade_state'] = 1  # fade in
                     # Immediately notify layout manager
-                    self._layout_manager.set_window_visible(f"chat_{chat_name}", True)
-                    self._chat_window_dirty[chat_name] = True
+                    self._layout_manager.set_window_visible(window_name, True)
+                    win['canvas_dirty'] = True
 
             elif t == 'hide_chat_window':
                 chat_name = msg.get('name')
-                if chat_name and chat_name in self._chat_windows:
-                    chat = self._chat_windows[chat_name]
-                    chat['fade_state'] = 3  # fade out
+                window_name = f"chat_{chat_name}"
+                if chat_name and window_name in self._windows:
+                    win = self._windows[window_name]
+                    win['fade_state'] = 3  # fade out
                     # Note: Don't release layout slot yet - window still visible during fade-out
                     # Layout slot will be released when fade completes (opacity reaches 0)
-                    self._chat_window_dirty[chat_name] = True
+                    win['canvas_dirty'] = True
 
         except Exception as e:
             self._report_exception("handle_message", e)
@@ -2476,310 +2608,6 @@ class HeadsUpOverlay:
                     pass
             except:
                 break
-
-    # =========================================================================
-    # Chat Window Rendering
-    # =========================================================================
-
-    def _update_chat_windows(self):
-        """Update all chat windows (fade logic and auto-hide)."""
-        now = time.time()
-        fade_speed = 600  # opacity units per second
-
-        for chat_name, chat in list(self._chat_windows.items()):
-            props = chat['props']
-            auto_hide = props.get('auto_hide', False)
-            auto_hide_delay = props.get('auto_hide_delay', 10.0)
-            old_fade_state = chat['fade_state']
-
-            # Check auto-hide
-            if auto_hide and chat['messages'] and chat['fade_state'] == 2:
-                if now - chat['last_message_time'] > auto_hide_delay:
-                    chat['fade_state'] = 3  # Start fade out
-
-            # Handle fade states
-            if chat['fade_state'] == 1:  # Fade in
-                chat['opacity'] = min(255, chat['opacity'] + fade_speed * self.dt)
-                if chat['opacity'] >= 255:
-                    chat['opacity'] = 255
-                    chat['fade_state'] = 2  # Visible
-                self._chat_window_dirty[chat_name] = True
-
-            elif chat['fade_state'] == 3:  # Fade out
-                chat['opacity'] = max(0, chat['opacity'] - fade_speed * self.dt)
-                if chat['opacity'] <= 0:
-                    chat['opacity'] = 0
-                    chat['fade_state'] = 0  # Hidden
-                    chat['visible'] = False
-                self._chat_window_dirty[chat_name] = True
-
-            # Update layout manager visibility when fade state changes
-            if old_fade_state != chat['fade_state']:
-                layout_name = f"chat_{chat_name}"
-                # Window is visible for layout purposes when fading in (1), fully visible (2), OR fading out (3)
-                # This prevents new windows from taking a slot while fade-out animation is in progress
-                # Slot is only released when fully hidden (0)
-                is_visible = chat['fade_state'] in (1, 2, 3)
-                self._layout_manager.set_window_visible(layout_name, is_visible)
-
-            # Update position from layout manager for visible windows
-            if chat['fade_state'] in (1, 2, 3):  # Include fading out
-                layout_mode = props.get('layout_mode', 'auto')
-                if layout_mode == 'auto':
-                    layout_name = f"chat_{chat_name}"
-                    pos = self._layout_manager.get_position(layout_name)
-                    if pos:
-                        hwnd = self._chat_hwnds.get(chat_name)
-                        if hwnd:
-                            x, y = pos
-                            w = int(props.get('width', 400))
-                            h = int(props.get('max_height', 400))
-                            # Check if position changed
-                            old_x = chat.get('_last_x', -1)
-                            old_y = chat.get('_last_y', -1)
-                            if x != old_x or y != old_y:
-                                user32.MoveWindow(hwnd, x, y, w, h, True)
-                                chat['_last_x'] = x
-                                chat['_last_y'] = y
-                                self._chat_window_dirty[chat_name] = True
-
-    def _draw_chat_windows(self):
-        """Draw all visible chat windows."""
-        for chat_name, chat in self._chat_windows.items():
-            if chat['opacity'] <= 0:
-                continue
-
-            try:
-                self._draw_chat_frame(chat_name, chat)
-            except Exception as e:
-                self._report_exception("draw_chat_windows", e)
-
-    def _draw_chat_frame(self, chat_name: str, chat: Dict):
-        """Draw a single chat window frame with full markdown support."""
-        props = chat['props']
-        messages = chat['messages']
-
-        # Build state hash for caching
-        msg_state = tuple((m['sender'], m['text'], m.get('color')) for m in messages[-50:])
-        props_hash = (
-            props.get('width'), props.get('max_height'),
-            props.get('bg_color'), props.get('text_color'),
-            props.get('accent_color'), props.get('font_size'),
-            props.get('message_spacing'), props.get('fade_old_messages'),
-        )
-        current_state = (msg_state, props_hash, int(chat['opacity']))
-
-        # Skip redraw if unchanged
-        if chat_name in self._chat_last_render_state:
-            if self._chat_last_render_state[chat_name] == current_state:
-                if chat_name in self._chat_canvases and not self._chat_window_dirty.get(chat_name, False):
-                    # Just update opacity and position
-                    hwnd = self._chat_hwnds.get(chat_name)
-                    if hwnd:
-                        user32.SetLayeredWindowAttributes(
-                            hwnd, 0x00FF00FF, int(chat['opacity']), LWA_ALPHA | LWA_COLORKEY
-                        )
-                        # Also update position from layout manager
-                        layout_mode = props.get('layout_mode', 'auto')
-                        if layout_mode == 'auto':
-                            layout_name = f"chat_{chat_name}"
-                            pos = self._layout_manager.get_position(layout_name)
-                            if pos:
-                                canvas = self._chat_canvases[chat_name]
-                                w, h = canvas.size
-                                x, y = pos
-                                old_x = chat.get('_last_x', -1)
-                                old_y = chat.get('_last_y', -1)
-                                if x != old_x or y != old_y:
-                                    user32.MoveWindow(hwnd, x, y, w, h, True)
-                                    chat['_last_x'] = x
-                                    chat['_last_y'] = y
-                    return
-
-        self._chat_last_render_state[chat_name] = current_state
-        self._chat_window_dirty[chat_name] = True
-
-        # Extract props
-        width = int(props.get('width', 400))
-        max_height = int(props.get('max_height', 400))
-        bg = self._hex_to_rgb(props.get('bg_color', '#1e212b'))
-        text_color = self._hex_to_rgb(props.get('text_color', '#f0f0f0'))
-        accent = self._hex_to_rgb(props.get('accent_color', '#00aaff'))
-        radius = int(props.get('border_radius', 12))
-        padding = int(props.get('content_padding', 12))
-        message_spacing = int(props.get('message_spacing', 8))
-        fade_old = props.get('fade_old_messages', True)
-        sender_colors = props.get('sender_colors', {})
-
-        # Get fonts
-        font_bold = self.fonts.get('bold', self.fonts['normal'])
-        font_normal = self.fonts['normal']
-
-        # Update markdown renderer colors for this chat
-        if self.md_renderer:
-            self.md_renderer.set_colors(text_color, accent, bg)
-
-        # Render messages to temp canvas
-        temp_h = max(2000, max_height * 3)
-        temp = Image.new('RGBA', (width, temp_h), (0, 0, 0, 0))
-        draw = ImageDraw.Draw(temp)
-
-        content_width = width - (padding * 2)
-        y = padding
-
-        for msg in messages:
-            sender = msg.get('sender', '')
-            text = msg.get('text', '')
-            msg_color = msg.get('color')
-
-            # Determine sender color
-            if msg_color:
-                sender_color = self._hex_to_rgb(msg_color)
-            elif sender in sender_colors:
-                sender_color = self._hex_to_rgb(sender_colors[sender])
-            else:
-                sender_color = accent
-
-            # Draw sender name with emoji support
-            sender_display = sender + ":"
-            self._render_text_with_emoji(draw, sender_display, padding, y, sender_color + (255,), font_bold, emoji_y_offset=3)
-            y += 20
-
-            # Render message text with full markdown support
-            if self.md_renderer and text.strip():
-                # Use the markdown renderer for full formatting
-                y = self.md_renderer.render(draw, temp, text, padding, y, content_width)
-            else:
-                # Fallback: simple text
-                draw.text((padding, y), text, fill=text_color + (255,), font=font_normal)
-                y += 20
-
-            y += message_spacing
-
-        # Calculate final height
-        total_content_height = y + padding
-        final_h = min(total_content_height, max_height)
-        fade_zone = 60  # pixels at top that fade out
-
-        # Create final canvas
-        canvas = Image.new('RGBA', (width, final_h), (255, 0, 255, 255))
-        canvas_draw = ImageDraw.Draw(canvas)
-
-        # Draw background
-        canvas_draw.rounded_rectangle(
-            [0, 0, width - 1, final_h - 1],
-            radius=radius,
-            fill=bg + (255,),
-            outline=(55, 62, 74)
-        )
-
-        # If content overflows, show from bottom (newest messages visible)
-        if total_content_height > max_height:
-            # Crop from bottom of temp
-            crop_y = y + padding - final_h
-            if crop_y < 0:
-                crop_y = 0
-            crop = temp.crop((0, crop_y, width, crop_y + final_h))
-
-            # Apply fade gradient at top if enabled
-            if fade_old and crop_y > 0:
-                # Create gradient mask for fading old content at top
-                gradient = Image.new('L', (width, final_h), 255)
-                gradient_draw = ImageDraw.Draw(gradient)
-
-                for gy in range(fade_zone):
-                    alpha = int(255 * (gy / fade_zone))
-                    gradient_draw.line([(0, gy), (width, gy)], fill=alpha)
-
-                # Apply gradient to crop alpha
-                crop_rgba = crop.split()
-                if len(crop_rgba) == 4:
-                    r, g, b, a = crop_rgba
-                    # Multiply alpha by gradient
-                    from PIL import ImageChops
-                    new_alpha = ImageChops.multiply(a, gradient)
-                    crop.putalpha(new_alpha)
-
-            canvas.paste(crop, (0, 0), crop)
-        else:
-            # Content fits, just paste
-            crop = temp.crop((0, 0, width, final_h))
-            canvas.paste(crop, (0, 0), crop)
-
-        self._chat_canvases[chat_name] = canvas
-
-        # Update layout manager with actual rendered height
-        layout_name = f"chat_{chat_name}"
-        self._layout_manager.update_window_height(layout_name, final_h)
-
-        # Blit to window
-        hwnd = self._chat_hwnds.get(chat_name)
-        if hwnd and chat_name in self._chat_window_dcs:
-            window_dc, mem_dc = self._chat_window_dcs[chat_name]
-
-            # Get position from layout manager if in auto mode
-            layout_mode = props.get('layout_mode', 'auto')
-            if layout_mode == 'auto':
-                pos = self._layout_manager.get_position(layout_name)
-                if pos:
-                    x, y_pos = pos
-                else:
-                    x = int(props.get('x', 20))
-                    y_pos = int(props.get('y', 20))
-            else:
-                x = int(props.get('x', 20))
-                y_pos = int(props.get('y', 20))
-
-            user32.MoveWindow(hwnd, x, y_pos, width, final_h, True)
-
-            # Blit
-            self._blit_to_window_chat(hwnd, canvas, window_dc, mem_dc, chat_name)
-
-            # Set opacity
-            user32.SetLayeredWindowAttributes(
-                hwnd, 0x00FF00FF, int(chat['opacity']), LWA_ALPHA | LWA_COLORKEY
-            )
-
-        self._chat_window_dirty[chat_name] = False
-
-    def _blit_to_window_chat(self, hwnd, canvas, window_dc, mem_dc, chat_name: str):
-        """Blit a chat canvas to its window using DIB."""
-        if not canvas or not hwnd:
-            return
-
-        w, h = canvas.size
-
-        # Create DIB for this blit
-        bmi = BITMAPINFO()
-        bmi.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)
-        bmi.bmiHeader.biWidth = w
-        bmi.bmiHeader.biHeight = -h  # Top-down
-        bmi.bmiHeader.biPlanes = 1
-        bmi.bmiHeader.biBitCount = 32
-        bmi.bmiHeader.biCompression = BI_RGB
-
-        dib_bits = ctypes.c_void_p()
-        dib_bitmap = gdi32.CreateDIBSection(
-            mem_dc, ctypes.byref(bmi), DIB_RGB_COLORS,
-            ctypes.byref(dib_bits), None, 0
-        )
-
-        if not dib_bitmap or not dib_bits:
-            return
-
-        old_bitmap = gdi32.SelectObject(mem_dc, dib_bitmap)
-
-        try:
-            # Copy pixel data
-            raw = canvas.tobytes("raw", "BGRA")
-            ctypes.memmove(dib_bits, raw, len(raw))
-
-            # Blit to window
-            gdi32.BitBlt(window_dc, 0, 0, w, h, mem_dc, 0, 0, SRCCOPY)
-
-        finally:
-            gdi32.SelectObject(mem_dc, old_bitmap)
-            gdi32.DeleteObject(dib_bitmap)
 
 
 def run_overlay_in_subprocess(command_queue, error_queue=None):
