@@ -1568,7 +1568,20 @@ class HeadsUpOverlay:
             bar_surf = self._get_cached_loading_bar(bar_w, h, color)
             canvas.paste(bar_surf, (bar_x, bar_y), bar_surf)
 
+    # =========================================================================
+    # DEPRECATED LEGACY METHODS
+    # =========================================================================
+    # The following methods are legacy code from before the unified window system.
+    # They are kept for reference but are NOT called - the unified system uses:
+    # - _draw_message_window() instead of _draw_main_frame()
+    # - _draw_persistent_window() instead of _draw_persistent_frame()
+    # - _update_message_window() instead of _update_logic_main()
+    # - _update_persistent_window() instead of _update_logic_persistent()
+    # - _check_window_collision() instead of _check_collision()
+    # =========================================================================
+
     def _draw_main_frame(self):
+        """DEPRECATED: Legacy method - use _draw_message_window() instead."""
         if not self.current_message and not self.is_loading:
             return
 
@@ -1953,6 +1966,7 @@ class HeadsUpOverlay:
         })
 
     def _update_logic_main(self):
+        """DEPRECATED: Legacy method - use _update_message_window() instead."""
         if not self.hwnd:
             return
 
@@ -2014,7 +2028,7 @@ class HeadsUpOverlay:
                 self.fade_state = 3
 
     def _check_collision(self) -> bool:
-        """Check if main window overlaps with persistent window."""
+        """DEPRECATED: Legacy method - use _check_window_collision() instead."""
         if not self.current_message or not self.persistent_infos:
             return False
 
@@ -2042,6 +2056,7 @@ class HeadsUpOverlay:
                     pers_y + pers_h <= main_y)
 
     def _update_logic_persistent(self, collision_detected=False):
+        """DEPRECATED: Legacy method - use _update_persistent_window() instead."""
         if not self.hwnd_persistent:
             return
 
@@ -2990,6 +3005,7 @@ class HeadsUpOverlay:
                 break
 
     def _draw_persistent_frame(self):
+        """DEPRECATED: Legacy method - use _draw_persistent_window() instead."""
         if not self.persistent_infos:
             return
 
