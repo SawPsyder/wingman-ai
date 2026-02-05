@@ -484,9 +484,35 @@ class MarkdownRenderer:
                 end = text.find('**', i + 2)
                 if end != -1:
                     content = text[i+2:end]
+
+                    # Parse content for emojis to support emoji rendering in bold text
+                    sub_tokens = []
+                    j = 0
+                    while j < len(content):
+                        emoji_len = self._get_emoji_length(content, j)
+                        if emoji_len > 0:
+                            # Found an emoji - add it as a sub-token
+                            emoji_text = content[j:j+emoji_len]
+                            sub_tokens.append({
+                                'type': 'emoji',
+                                'text': emoji_text
+                            })
+                            j += emoji_len
+                        else:
+                            # Regular text
+                            if sub_tokens and sub_tokens[-1].get('type') == 'text':
+                                sub_tokens[-1]['text'] += content[j]
+                            else:
+                                sub_tokens.append({
+                                    'type': 'text',
+                                    'text': content[j]
+                                })
+                            j += 1
+
                     tokens.append({
                         'type': 'bold',
                         'text': content,
+                        'sub_tokens': sub_tokens if len(sub_tokens) > 1 else None,  # Only include if there are mixed tokens
                         'start': start_pos,
                         'end': end + 2,
                         'content_start': start_pos + 2,  # After **
@@ -1656,6 +1682,71 @@ class MarkdownRenderer:
             else:
                 display_text = token.get('text', '')
 
+            # Check if this token has sub-tokens (e.g., bold with emojis inside)
+            sub_tokens = token.get('sub_tokens')
+            if sub_tokens and ttype == 'bold':
+                # Render sub-tokens with bold font for text and emoji font for emojis
+                bold_font = tfont
+                emoji_font = self.fonts.get('emoji', base_font)
+                space_w, _ = self._get_text_size(' ', bold_font)
+
+                for sub_idx, sub_token in enumerate(sub_tokens):
+                    sub_type = sub_token.get('type')
+                    sub_text = sub_token.get('text', '')
+
+                    if not sub_text:
+                        continue
+
+                    # Choose font based on sub-token type
+                    if sub_type == 'emoji':
+                        sub_font = emoji_font
+                        is_emoji_token = True
+                    else:
+                        sub_font = bold_font
+                        is_emoji_token = False
+
+                    # Render word by word
+                    words = sub_text.split(' ')
+                    for i, word in enumerate(words):
+                        if not word and i > 0:
+                            render_x += space_w
+                            continue
+
+                        # Handle space before word
+                        if i > 0:
+                            if render_x + space_w > x + max_width and render_x > x:
+                                render_y += line_h + 4
+                                render_x = x
+                            else:
+                                render_x += space_w
+
+                        word_w, word_h = self._get_text_size(word, sub_font)
+
+                        # Check if word fits on current line
+                        if render_x + word_w > x + max_width and render_x > x:
+                            render_y += line_h + 4
+                            render_x = x
+
+                        # Draw word with emoji support
+                        emoji_y_offset = 7 if is_emoji_token else 0
+                        if is_emoji_token and self.color_emojis:
+                            draw.text((render_x, render_y + emoji_y_offset), word, fill=tcolor, font=sub_font, embedded_color=True)
+                        else:
+                            draw.text((render_x, render_y), word, fill=tcolor, font=sub_font)
+
+                        render_x += word_w
+
+                        # Add automatic space after emoji if next sub-token is text and doesn't start with space
+                        if is_emoji_token and sub_idx + 1 < len(sub_tokens):
+                            next_token = sub_tokens[sub_idx + 1]
+                            next_text = next_token.get('text', '')
+                            if next_token.get('type') == 'text' and next_text and not next_text.startswith(' '):
+                                render_x += space_w
+
+                continue  # Skip the normal rendering below
+
+            # Normal rendering for tokens without sub-tokens
+
             # Calculate visible portion
             visible_chars = len(display_text)
             if typewriter_pos != float('inf'):
@@ -1720,6 +1811,18 @@ class MarkdownRenderer:
                     draw.line([(render_x, sy), (render_x + word_w, sy)], fill=tcolor, width=1)
 
                 render_x += word_w
+
+                # Add automatic space after emoji to maintain consistent spacing
+                # Only if this is the last word in the emoji token and there are more tokens to render
+                if is_emoji and i == len(words) - 1:
+                    # Check if there's a next token that's not whitespace-only
+                    token_idx = tokens.index(token) if token in tokens else -1
+                    if token_idx >= 0 and token_idx + 1 < len(tokens):
+                        next_token = tokens[token_idx + 1]
+                        next_text = next_token.get('text', '')
+                        # Add space only if next token is not already whitespace-only
+                        if next_text and not next_text.isspace():
+                            render_x += space_w
 
     def _count_wrapped_lines_breaking(self, text: str, font, max_width: int) -> int:
         """Count lines needed when breaking mid-word is allowed but word-wrap is preferred."""

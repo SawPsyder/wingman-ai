@@ -800,7 +800,8 @@ class HeadsUpOverlay:
                 title = self._strip_emotions(title)
                 font_bold = self.fonts.get('bold', self.fonts.get('normal', self.fonts.get('regular')))
                 if font_bold:
-                    draw.text((padding, y), title, fill=accent + (255,), font=font_bold)
+                    # Use emoji-aware rendering for title
+                    self._render_text_with_emoji(draw, title, padding, y, accent + (255,), font_bold, emoji_y_offset=3)
                     try:
                         bbox = font_bold.getbbox(title)
                         y += bbox[3] - bbox[1] + 12
@@ -1071,7 +1072,7 @@ class HeadsUpOverlay:
             title_text = info.get('title', title)
             max_title_w = width - (padding * 2) - timer_w
             if font_bold:
-                self._render_text_with_emoji(draw, title_text, padding, y, accent + (255,), font_bold)
+                self._render_text_with_emoji(draw, title_text, padding, y, accent + (255,), font_bold, emoji_y_offset=3)
             y += 22
 
             # Progress bar
@@ -1408,6 +1409,8 @@ class HeadsUpOverlay:
     def _render_text_with_emoji(self, draw, text: str, x: int, y: int, color: Tuple, font, emoji_y_offset: int = 5):
         """Render text with inline emoji support for titles and labels.
 
+        Automatically adds a space after emojis if not already present.
+
         Args:
             draw: ImageDraw object
             text: Text to render (may contain emojis)
@@ -1423,6 +1426,7 @@ class HeadsUpOverlay:
         current_x = x
         i = 0
         emoji_font = self.fonts.get('emoji', font)
+        space_w, _ = self._get_text_size(' ', font)
 
         while i < len(text):
             # Check for emoji at current position
@@ -1442,6 +1446,10 @@ class HeadsUpOverlay:
                 else:
                     current_x += int(emoji_w * 0.85)
                 i += emoji_len
+
+                # Add automatic space after emoji if next character is not a space or end of text
+                if i < len(text) and text[i] != ' ':
+                    current_x += space_w
             else:
                 # Find the next emoji or end of text
                 text_start = i
