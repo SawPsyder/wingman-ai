@@ -1391,9 +1391,9 @@ class HeadsUpOverlay:
         clean = color_str.strip().lstrip('#')
         char_count = len(clean)
 
-        # Expand shorthand #RGB to #RRGGBB
+        # Expand shorthand #RGB to #RRGGBB using same pattern as _hex_to_rgb
         if char_count == 3:
-            clean = clean[0] + clean[0] + clean[1] + clean[1] + clean[2] + clean[2]
+            clean = ''.join([ch * 2 for ch in clean])
             char_count = 6
 
         # Validate length - must be 6 (RRGGBB) or 8 (RRGGBBAA)
@@ -1410,11 +1410,12 @@ class HeadsUpOverlay:
             except (ValueError, TypeError):
                 return fallback_color
 
-        # Add default alpha if not present
-        if len(components) == 3:
-            components.append(255)
+        # Ensure we always return exactly 4 components (RGBA)
+        while len(components) < 4:
+            components.append(255)  # Default alpha to full opacity
 
-        return tuple(components)
+        # Return exactly 4 values as a tuple
+        return (components[0], components[1], components[2], components[3])
 
     def _strip_emotions(self, text: str) -> str:
         """Remove emotion tags like [happy], [sad], [breathe] but preserve markdown links and checkboxes."""
