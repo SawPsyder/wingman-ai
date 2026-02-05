@@ -39,8 +39,8 @@ from hud_server.platform.win32 import (
     user32, gdi32, kernel32,
     WNDCLASSEXW, BITMAPINFOHEADER, BITMAPINFO, MSG, POINT,
     GWL_EXSTYLE, WS_POPUP, WS_EX_LAYERED, WS_EX_TRANSPARENT, WS_EX_TOPMOST, WS_EX_TOOLWINDOW,
-    WS_EX_NOACTIVATE, LWA_ALPHA, LWA_COLORKEY, SWP_NOSIZE, SWP_NOMOVE, SWP_SHOWWINDOW,
-    SWP_NOACTIVATE, SWP_ASYNCWINDOWPOS, SRCCOPY, DIB_RGB_COLORS, BI_RGB,
+    WS_EX_NOACTIVATE, LWA_ALPHA, LWA_COLORKEY, SWP_SHOWWINDOW,
+    SWP_NOACTIVATE, SRCCOPY, DIB_RGB_COLORS, BI_RGB,
     SW_SHOWNOACTIVATE, HWND_TOPMOST, PM_REMOVE,
     _ensure_window_class, _class_name
 )
@@ -2181,7 +2181,7 @@ class HeadsUpOverlay:
 
             self._init_fonts()
 
-            last_z = time.time()
+            # Note: Removed last_z tracking since we no longer repeatedly bring windows to front
             self.last_update_time = time.time()
 
             # Signal successful start
@@ -2224,19 +2224,8 @@ class HeadsUpOverlay:
                         except Exception as e:
                             self._report_exception("draw_chat_windows", e)
 
-                    now = time.time()
-                    if now - last_z > 0.1:
-                        # Bring all windows to top
-                        flags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS
-                        # Unified windows
-                        for win in self._windows.values():
-                            if win.get('hwnd'):
-                                user32.SetWindowPos(win['hwnd'], HWND_TOPMOST, 0, 0, 0, 0, flags)
-                        # Chat windows
-                        for chat_hwnd in self._chat_hwnds.values():
-                            if chat_hwnd:
-                                user32.SetWindowPos(chat_hwnd, HWND_TOPMOST, 0, 0, 0, 0, flags)
-                        last_z = now
+                    # Note: Removed repeated z-order updates (bringing windows to front every 0.1s)
+                    # HUD windows are set to topmost once during creation and when properties change
 
                     self._emit_heartbeat()
 
