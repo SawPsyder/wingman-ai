@@ -718,7 +718,9 @@ class HeadsUpOverlay:
             return
 
         props = win.get('props', {})
-        bg = self._hex_to_rgb(props.get('bg_color', '#1e212b'))
+        bg_rgba = self._parse_hex_color_with_alpha(props.get('bg_color', '#1e212b'))
+        bg = bg_rgba[:3]  # RGB portion for compatibility
+        bg_alpha = bg_rgba[3]  # Alpha channel from hex color
         text_color = self._hex_to_rgb(props.get('text_color', '#f0f0f0'))
         accent = self._hex_to_rgb(props.get('accent_color', '#00aaff'))
 
@@ -901,9 +903,9 @@ class HeadsUpOverlay:
         final_draw = ImageDraw.Draw(canvas)
         # Draw solid background first (covers everything)
         final_draw.rectangle([0, 0, width, final_h], fill=(255, 0, 255, 255))
-        # Then draw the rounded rectangle on top
+        # Then draw the rounded rectangle on top with user-specified alpha
         final_draw.rounded_rectangle([0, 0, width - 1, final_h - 1], radius=radius,
-                                    fill=bg + (255,), outline=(55, 62, 74))
+                                    fill=bg + (bg_alpha,), outline=(55, 62, 74))
 
         crop_height = min(final_h, temp.height)
         crop = temp.crop((0, 0, width, crop_height))
@@ -943,7 +945,9 @@ class HeadsUpOverlay:
             return
 
         props = win.get('props', {})
-        bg = self._hex_to_rgb(props.get('bg_color', '#1e212b'))
+        bg_rgba = self._parse_hex_color_with_alpha(props.get('bg_color', '#1e212b'))
+        bg = bg_rgba[:3]  # RGB portion for compatibility
+        bg_alpha = bg_rgba[3]  # Alpha channel from hex color
         text_color = self._hex_to_rgb(props.get('text_color', '#f0f0f0'))
         accent = self._hex_to_rgb(props.get('accent_color', '#00aaff'))
 
@@ -965,7 +969,7 @@ class HeadsUpOverlay:
         # Include visual props in state hash for real-time config updates
         visual_props_hash = (
             width, radius, padding,
-            bg, text_color, accent,
+            bg, bg_alpha, text_color, accent,
             props.get('opacity', 0.85),
             props.get('font_size', 16),
             props.get('font_family', ''),
@@ -1123,9 +1127,9 @@ class HeadsUpOverlay:
         final_draw = ImageDraw.Draw(canvas)
         # Draw solid background first (covers everything)
         final_draw.rectangle([0, 0, width, final_h], fill=(255, 0, 255, 255))
-        # Then draw the rounded rectangle on top
+        # Then draw the rounded rectangle on top with user-specified alpha
         final_draw.rounded_rectangle([0, 0, width - 1, final_h - 1], radius=radius,
-                                    fill=bg + (255,), outline=(55, 62, 74))
+                                    fill=bg + (bg_alpha,), outline=(55, 62, 74))
 
         crop = temp.crop((0, 0, width, final_h))
         # Composite the content onto the background properly
@@ -1177,7 +1181,9 @@ class HeadsUpOverlay:
             return
 
         props = win.get('props', {})
-        bg = self._hex_to_rgb(props.get('bg_color', '#1e212b'))
+        bg_rgba = self._parse_hex_color_with_alpha(props.get('bg_color', '#1e212b'))
+        bg = bg_rgba[:3]  # RGB portion for compatibility
+        bg_alpha = bg_rgba[3]  # Alpha channel from hex color
         text_color = self._hex_to_rgb(props.get('text_color', '#f0f0f0'))
         accent = self._hex_to_rgb(props.get('accent_color', '#00aaff'))
 
@@ -1193,7 +1199,7 @@ class HeadsUpOverlay:
         msg_state = tuple((m['sender'], m['text'], m.get('color')) for m in messages[-50:])
         props_hash = (
             width, max_height, radius, padding,
-            bg, text_color, accent,
+            bg, bg_alpha, text_color, accent,
             props.get('opacity', 0.85),
             props.get('font_size', 14),
             message_spacing, fade_old,
@@ -1287,7 +1293,7 @@ class HeadsUpOverlay:
         final_draw = ImageDraw.Draw(canvas)
         final_draw.rectangle([0, 0, width, final_h], fill=(255, 0, 255, 255))
         final_draw.rounded_rectangle([0, 0, width - 1, final_h - 1], radius=radius,
-                                    fill=bg + (255,), outline=(55, 62, 74))
+                                    fill=bg + (bg_alpha,), outline=(55, 62, 74))
 
         # Composite content
         crop = temp.crop((0, 0, width, min(final_h, temp.height)))
@@ -1368,13 +1374,47 @@ class HeadsUpOverlay:
             pass
 
     def _hex_to_rgb(self, hex_color: str) -> Tuple[int, int, int]:
-        try:
-            hex_color = hex_color.lstrip('#')
-            if len(hex_color) == 3:
-                hex_color = ''.join([c*2 for c in hex_color])
-            return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
-        except:
-            return (0, 170, 255)
+        """Parse hex color string to RGB tuple. Supports #RGB, #RRGGBB, #RRGGBBAA formats."""
+        result = self._parse_hex_color_with_alpha(hex_color)
+        return result[:3]  # Return only RGB portion
+
+    def _parse_hex_color_with_alpha(self, color_str: str) -> Tuple[int, int, int, int]:
+        """Parse hex color string to RGBA tuple. Alpha defaults to 255 if not specified.
+
+        Supports formats: #RGB, #RRGGBB, #RRGGBBAA
+        Returns: (red, green, blue, alpha) tuple with values 0-255
+        """
+        fallback_color = (0, 170, 255, 255)
+        if not color_str or not isinstance(color_str, str):
+            return fallback_color
+
+        clean = color_str.strip().lstrip('#')
+        char_count = len(clean)
+
+        # Expand shorthand #RGB to #RRGGBB
+        if char_count == 3:
+            clean = clean[0] + clean[0] + clean[1] + clean[1] + clean[2] + clean[2]
+            char_count = 6
+
+        # Validate length - must be 6 (RRGGBB) or 8 (RRGGBBAA)
+        if char_count not in (6, 8):
+            return fallback_color
+
+        # Parse each component
+        components = []
+        for offset in range(0, char_count, 2):
+            segment = clean[offset:offset + 2]
+            try:
+                val = int(segment, 16)
+                components.append(val)
+            except (ValueError, TypeError):
+                return fallback_color
+
+        # Add default alpha if not present
+        if len(components) == 3:
+            components.append(255)
+
+        return tuple(components)
 
     def _strip_emotions(self, text: str) -> str:
         """Remove emotion tags like [happy], [sad], [breathe] but preserve markdown links and checkboxes."""
