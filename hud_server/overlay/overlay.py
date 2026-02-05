@@ -18,10 +18,6 @@ import ctypes
 from ctypes import wintypes
 from typing import Tuple, Dict, List, Optional
 import traceback
-import io
-import urllib.request
-import urllib.error
-import warnings
 
 # PIL for rendering
 try:
@@ -141,63 +137,15 @@ class HeadsUpOverlay:
         self._progress_transition_duration = 0.5
 
         # =====================================================================
-        # LEGACY COMPATIBILITY LAYER
+        # SHARED RESOURCES (used by unified window system)
         # =====================================================================
-        # These are kept for backward compatibility with code that doesn't use groups.
-        # They point to the "_default" group windows.
-        self.is_loading = False
-        self.loading_color = (0, 170, 255)
-        self.current_message = None
-        self.display_props = dict(self._default_props)
-        self.target_opacity = 216
-        self.current_opacity = 0
-        self.fade_state = 0
-        self.min_display_time = 0
-        self.typewriter_active = False
-        self.typewriter_char_count = 0
-        self.last_typewriter_update = 0
-
-        # Legacy persistent infos (global, merged from all groups for backward compat)
-        self.persistent_infos = {}
-        self.persistent_fade_state = 0
-        self.persistent_opacity = 0
-        self._progress_animations = {}
-        self._persistent_render_time = 0.0
-
-        # Legacy Win32 resources (for _default group, created in run())
-        self.hwnd = None
-        self.window_dc = None
-        self.mem_dc = None
-        self.dib_bitmap = None
-        self.dib_bits = None
-        self.old_bitmap = None
-        self.dib_width = 0
-        self.dib_height = 0
-
-        self.hwnd_persistent = None
-        self.window_dc_persistent = None
-        self.mem_dc_persistent = None
-        self.dib_bitmap_persistent = None
-        self.dib_bits_persistent = None
-        self.old_bitmap_persistent = None
-        self.dib_width_persistent = 0
-        self.dib_height_persistent = 0
-
-        # Legacy PIL resources
-        self.canvas = None
-        self.canvas_persistent = None
-        self.temp_image = None
-        self.temp_draw = None
         self.fonts = {}
         self.image_cache = {}
         self.md_renderer = None
-        self.last_render_state = None
-        self.last_render_state_persistent = None
-        self.current_blocks = None
-        self.canvas_dirty = False
-        self.canvas_persistent_dirty = False
 
-        # Legacy chat window state (will be migrated to unified system)
+        # =====================================================================
+        # CHAT WINDOW STATE (needed for future features)
+        # =====================================================================
         self._chat_windows: Dict[str, Dict] = {}
         self._chat_window_dirty: Dict[str, bool] = {}
         self._chat_canvases: Dict[str, Image.Image] = {}
@@ -768,6 +716,12 @@ class HeadsUpOverlay:
         is_loading = win.get('is_loading', False)
 
         if not current_message and not is_loading:
+            # Clear render state and canvas when there's no content
+            # This ensures old content doesn't persist
+            if win.get('last_render_state') is not None:
+                win['last_render_state'] = None
+                win['canvas'] = None
+                win['canvas_dirty'] = False
             return
 
         props = win.get('props', {})
@@ -986,6 +940,12 @@ class HeadsUpOverlay:
         """Draw content for a persistent window."""
         items = win.get('items', {})
         if not items:
+            # Clear render state and canvas when there are no items
+            # This ensures old content doesn't persist
+            if win.get('last_render_state') is not None:
+                win['last_render_state'] = None
+                win['canvas'] = None
+                win['canvas_dirty'] = False
             return
 
         props = win.get('props', {})
@@ -1308,9 +1268,15 @@ class HeadsUpOverlay:
 
         return text
 
-    def _init_fonts(self):
-        size = int(self.display_props.get('font_size', 16))
-        font_family = self.display_props.get('font_family', 'Segoe UI')
+    def _init_fonts(self, font_size: int = None, font_family: str = None):
+        """Initialize fonts for rendering.
+
+        Args:
+            font_size: Font size in pixels. Defaults to value from _default_props (16).
+            font_family: Font family name. Defaults to value from _default_props ('Segoe UI').
+        """
+        size = font_size if font_size is not None else int(self._default_props.get('font_size', 16))
+        family = font_family if font_family is not None else self._default_props.get('font_family', 'Segoe UI')
 
         # Map font family names to Windows font files
         font_map = {
@@ -1326,7 +1292,7 @@ class HeadsUpOverlay:
         }
 
         # Get font files for the specified family (case-insensitive)
-        family_lower = font_family.lower()
+        family_lower = family.lower()
         font_files = font_map.get(family_lower, font_map['segoe ui'])
 
         fonts_dir = "C:/Windows/Fonts/"
@@ -1398,19 +1364,19 @@ class HeadsUpOverlay:
             # Fallback: try loading font by name directly (for custom fonts)
             try:
                 self.fonts = {
-                    'normal': ImageFont.truetype(font_family, pil_size),
-                    'bold': ImageFont.truetype(font_family, pil_size),
-                    'italic': ImageFont.truetype(font_family, pil_size),
-                    'bold_italic': ImageFont.truetype(font_family, pil_size),
+                    'normal': ImageFont.truetype(family, pil_size),
+                    'bold': ImageFont.truetype(family, pil_size),
+                    'italic': ImageFont.truetype(family, pil_size),
+                    'bold_italic': ImageFont.truetype(family, pil_size),
                     'code': ImageFont.truetype("consola.ttf", pil_code_size),
-                    'h1': ImageFont.truetype(font_family, pil_size + 10),
-                    'h2': ImageFont.truetype(font_family, pil_size + 6),
-                    'h3': ImageFont.truetype(font_family, pil_size + 3),
-                    'h4': ImageFont.truetype(font_family, pil_size + 1),
-                    'h5': ImageFont.truetype(font_family, pil_size),
-                    'h6': ImageFont.truetype(font_family, pil_size - 1),
-                    'header': ImageFont.truetype(font_family, pil_size + 4),
-                    'emoji': emoji_font if emoji_font else ImageFont.truetype(font_family, pil_size),
+                    'h1': ImageFont.truetype(family, pil_size + 10),
+                    'h2': ImageFont.truetype(family, pil_size + 6),
+                    'h3': ImageFont.truetype(family, pil_size + 3),
+                    'h4': ImageFont.truetype(family, pil_size + 1),
+                    'h5': ImageFont.truetype(family, pil_size),
+                    'h6': ImageFont.truetype(family, pil_size - 1),
+                    'header': ImageFont.truetype(family, pil_size + 4),
+                    'emoji': emoji_font if emoji_font else ImageFont.truetype(family, pil_size),
                 }
             except:
                 # Final fallback to default
@@ -1418,11 +1384,11 @@ class HeadsUpOverlay:
                 self.fonts = {k: default for k in ['normal', 'bold', 'italic', 'bold_italic', 'code', 'header', 'emoji']}
 
         colors = {
-            'text': self._hex_to_rgb(self.display_props.get('text_color', '#f0f0f0')),
-            'accent': self._hex_to_rgb(self.display_props.get('accent_color', '#00aaff')),
-            'bg': self._hex_to_rgb(self.display_props.get('bg_color', '#1e212b'))
+            'text': self._hex_to_rgb(self._default_props.get('text_color', '#f0f0f0')),
+            'accent': self._hex_to_rgb(self._default_props.get('accent_color', '#00aaff')),
+            'bg': self._hex_to_rgb(self._default_props.get('bg_color', '#1e212b'))
         }
-        color_emojis = self.display_props.get('color_emojis', True)
+        color_emojis = self._default_props.get('color_emojis', True)
         self.md_renderer = MarkdownRenderer(self.fonts, colors, color_emojis)
 
     def _get_text_size(self, text: str, font) -> Tuple[int, int]:
@@ -1569,360 +1535,6 @@ class HeadsUpOverlay:
             bar_surf = self._get_cached_loading_bar(bar_w, h, color)
             canvas.paste(bar_surf, (bar_x, bar_y), bar_surf)
 
-    # =========================================================================
-    # DEPRECATED LEGACY METHODS
-    # =========================================================================
-    # The following methods are from the original implementation before the
-    # unified window system was introduced. They are NOT called internally by
-    # the overlay but are retained with deprecation warnings in case external
-    # code or plugins attempt to use them. The unified system methods should
-    # be used instead:
-    # - _draw_message_window() instead of _draw_main_frame()
-    # - _draw_persistent_window() instead of _draw_persistent_frame()
-    # - _update_message_window() instead of _update_logic_main()
-    # - _update_persistent_window() instead of _update_logic_persistent()
-    # - _check_window_collision() instead of _check_collision()
-    # =========================================================================
-
-    def _draw_main_frame(self):
-        """DEPRECATED: Legacy method - use _draw_message_window() instead."""
-        warnings.warn(
-            "_draw_main_frame is deprecated, use _draw_message_window instead",
-            DeprecationWarning,
-            stacklevel=2
-        )
-        if not self.current_message and not self.is_loading:
-            return
-
-        # Check if redraw is needed
-        # We include display_props in state because it affects rendering (colors, size) and window position
-        # We convert display_props to a tuple of items for hashing
-        try:
-            props_hash = tuple(sorted((k, v) for k, v in self.display_props.items() if isinstance(v, (str, int, float, bool, tuple))))
-        except:
-            props_hash = str(self.display_props)
-
-        current_msg_id = self.current_message.get('id') if self.current_message else None
-        current_msg_content = self.current_message.get('message') if self.current_message else None
-
-        # Quantize typewriter position to whole characters for state comparison
-        # This prevents unnecessary redraws for sub-character movements
-        typewriter_state = int(self.typewriter_char_count) if self.typewriter_active else -1
-
-        # For loading animation, use current time to ensure redraw every frame
-        # This keeps the animation smooth at configured FPS
-        loading_frame = time.time() if self.is_loading else -1
-
-        current_state = (
-            current_msg_id,
-            current_msg_content,
-            typewriter_state,
-            loading_frame,
-            props_hash
-        )
-
-        # Skip render if state unchanged
-        if self.last_render_state == current_state and self.canvas:
-            return
-
-        self.last_render_state = current_state
-        self.canvas_dirty = True  # Mark canvas as needing blit
-
-        props = self.display_props
-        bg = self._hex_to_rgb(props.get('bg_color', '#1e212b'))
-        text_color = self._hex_to_rgb(props.get('text_color', '#f0f0f0'))
-        accent = self._hex_to_rgb(props.get('accent_color', '#00aaff'))
-        width = int(props.get('width', 400))
-        radius = int(props.get('border_radius', 12))
-        padding = int(props.get('content_padding', 16))
-        max_height = int(props.get('max_height', 600))
-
-        # Update renderer colors
-        if self.md_renderer:
-            self.md_renderer.set_colors(text_color, accent, bg)
-
-        # Reuse temp canvas if possible
-        temp_h = 2000
-        if self.temp_image is None or self.temp_image.width != width or self.temp_image.height < temp_h:
-            self.temp_image = Image.new('RGBA', (width, temp_h), (0, 0, 0, 0))
-            self.temp_draw = ImageDraw.Draw(self.temp_image)
-        else:
-            # Clear existing canvas
-            self.temp_draw.rectangle([(0, 0), (width, temp_h)], fill=(0, 0, 0, 0))
-
-        temp = self.temp_image
-        draw = self.temp_draw
-
-        y = padding
-
-        # Determine if we should draw message components
-        should_draw_message = self.current_message is not None
-
-        # Title pill
-        if should_draw_message:
-            title = self.current_message.get('title', '')
-            if title:
-                title_color = self._hex_to_rgb(self.current_message.get('color', '#00aaff'))
-                font = self.fonts.get('bold', self.fonts['normal'])
-
-                # Get text bounding box for accurate sizing
-                bbox = font.getbbox(title)
-                tw = bbox[2] - bbox[0]  # width
-                th = bbox[3] - bbox[1]  # height
-
-                # Pill dimensions - fixed height for consistency
-                pill_padding_x = 14
-                pill_h = 28  # Fixed pill height for consistent look
-                pill_w = tw + pill_padding_x * 2
-
-                # Modern pill with subtle shadow
-                shadow_offset = 2
-                draw.rounded_rectangle([padding + shadow_offset, y + shadow_offset,
-                                       padding + pill_w + shadow_offset, y + pill_h + shadow_offset],
-                                      radius=pill_h//2, fill=(0, 0, 0, 40))
-                draw.rounded_rectangle([padding, y, padding + pill_w, y + pill_h],
-                                      radius=pill_h//2, fill=title_color)
-
-                # Center text using anchor='mm' (middle-middle) for true centering
-                center_x = padding + pill_w // 2
-                center_y = y + pill_h // 2
-                draw.text((center_x, center_y), title, fill=bg, font=font, anchor='mm')
-                y += pill_h + 10  # Spacing after title pill
-
-            # Message content with Markdown
-            msg = self.current_message.get('message', '')
-            if msg:
-                msg = self._strip_emotions(msg)
-                max_chars = self.typewriter_char_count if self.typewriter_active else None
-
-                # Use cached blocks if available and message hasn't changed
-                if self.current_blocks is None or self.current_blocks.get('msg') != msg:
-                    self.current_blocks = {
-                        'msg': msg,
-                        'blocks': self.md_renderer.parse_blocks(msg)
-                    }
-
-                y = self.md_renderer.render(
-                    draw, temp, msg, padding, y, width - padding * 2, max_chars,
-                    pre_parsed_blocks=self.current_blocks['blocks']
-                )
-
-            # Tool chips
-            tools = self.current_message.get('tools', [])
-            if tools:
-                y += 10
-                tx = padding
-                th = 30
-
-                # Group by source
-                counts = {}
-                for t in tools:
-                    key = (t.get('source', 'System'), t.get('icon'))
-                    counts[key] = counts.get(key, 0) + 1
-
-                for (src, icon), cnt in counts.items():
-                    font = self.fonts.get('code', self.fonts['normal'])
-                    sw, sh = self._get_text_size(src, font)
-                    icon_w = 24 if icon and os.path.exists(str(icon)) else 0
-                    badge_w = 26 if cnt > 1 else 0
-                    chip_w = sw + icon_w + badge_w + 26
-
-                    if tx + chip_w > width - padding:
-                        tx = padding
-                        y += th + 10
-
-                    # Modern chip with gradient-like effect
-                    chip_bg = (42, 48, 60, 235)
-                    draw.rounded_rectangle([tx, y, tx + chip_w, y + th], radius=th//2,
-                                          fill=chip_bg, outline=accent)
-
-                    ix = tx + 12
-                    if icon and os.path.exists(str(icon)):
-                        try:
-                            if icon not in self.image_cache:
-                                img = Image.open(icon).convert('RGBA').resize((18, 18), Image.Resampling.LANCZOS)
-                                self.image_cache[icon] = img
-                            temp.paste(self.image_cache[icon], (ix, y + 6), self.image_cache[icon])
-                            ix += 22
-                        except:
-                            pass
-
-                    draw.text((ix, y + (th - sh) // 2), src, fill=text_color, font=font)
-
-                    if cnt > 1:
-                        bw, bh = self._get_text_size(str(cnt), font)
-                        bx = tx + chip_w - bw - 16
-                        draw.ellipse([bx - 4, y + 5, bx + bw + 8, y + th - 5], fill=accent)
-                        draw.text((bx + 2, y + 7), str(cnt), fill=bg, font=font)
-
-                    tx += chip_w + 10
-
-                y += th + 10
-
-        # Loading animation
-        if self.is_loading:
-            y += 6
-            self._draw_loading(draw, temp, padding, y, width - padding * 2, self.loading_color)
-            y += 24
-
-        # Calculate final height with configured bottom padding
-        # Add extra padding at bottom to match visual balance with top/sides
-        bottom_padding = padding - 4
-        final_h = min(max(60, y + bottom_padding), max_height)
-
-        # Create final canvas with background (reuse if possible)
-        if self.canvas is None or self.canvas.width != width or self.canvas.height != final_h:
-            self.canvas = Image.new('RGBA', (width, final_h), (255, 0, 255, 255))
-        else:
-            # Clear canvas (fill with transparent or background color)
-            # Actually we draw a full rounded rectangle over it so clearing might not be strictly needed
-            # if the rounded rect covers everything, but for safety (corners):
-             self.canvas.paste((255, 0, 255, 255), (0, 0, width, final_h))
-
-        final_draw = ImageDraw.Draw(self.canvas)
-
-        # Modern background with subtle gradient feel
-        final_draw.rounded_rectangle([0, 0, width - 1, final_h - 1], radius=radius,
-                                    fill=bg + (255,), outline=(55, 62, 74))
-
-        # Composite content
-        content_height = y + bottom_padding
-        crop_height = min(final_h, temp.height)
-        crop = temp.crop((0, 0, width, crop_height))
-
-        # Apply fade out if content exceeds max height
-        if content_height > max_height:
-            fade_height = 60
-            if crop_height > fade_height:
-                # Create alpha mask
-                mask = Image.new('L', (width, crop_height), 255)
-                mask_draw = ImageDraw.Draw(mask)
-
-                # Draw gradient at the bottom
-                for i in range(fade_height):
-                    alpha = int(255 * (1 - (i / fade_height)))
-                    line_y = crop_height - fade_height + i
-                    mask_draw.line([(0, line_y), (width, line_y)], fill=alpha)
-
-                # Apply mask to crop's alpha channel
-                r, g, b, a = crop.split()
-                new_alpha = ImageChops.multiply(a, mask)
-                crop.putalpha(new_alpha)
-
-        self.canvas.paste(crop, (0, 0), crop)
-
-        # Update window
-        if self.hwnd:
-            user32.MoveWindow(self.hwnd, int(props.get('x', 20)), int(props.get('y', 20)), width, final_h, True)
-            user32.SetLayeredWindowAttributes(self.hwnd, 0x00FF00FF, self.current_opacity, LWA_ALPHA | LWA_COLORKEY)
-
-    def _blit_to_window(self, hwnd, canvas, wdc, mdc, is_persistent=False):
-        if not hwnd or not canvas or not wdc or not mdc:
-            return
-
-        w, h = canvas.size
-
-        # Check if DIB needs resize
-        if is_persistent:
-            if w != self.dib_width_persistent or h != self.dib_height_persistent:
-                # Cleanup old
-                if self.old_bitmap_persistent: gdi32.SelectObject(mdc, self.old_bitmap_persistent)
-                if self.dib_bitmap_persistent: gdi32.DeleteObject(self.dib_bitmap_persistent)
-                # Create new
-                self.dib_width_persistent = w
-                self.dib_height_persistent = h
-                bmi = BITMAPINFO(); bmi.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)
-                bmi.bmiHeader.biWidth = w; bmi.bmiHeader.biHeight = -h
-                bmi.bmiHeader.biPlanes = 1; bmi.bmiHeader.biBitCount = 32
-                bmi.bmiHeader.biCompression = BI_RGB
-                self.dib_bits_persistent = ctypes.c_void_p()
-                self.dib_bitmap_persistent = gdi32.CreateDIBSection(mdc, ctypes.byref(bmi), DIB_RGB_COLORS,
-                                                          ctypes.byref(self.dib_bits_persistent), None, 0)
-                if self.dib_bitmap_persistent: self.old_bitmap_persistent = gdi32.SelectObject(mdc, self.dib_bitmap_persistent)
-
-            dib_bits = self.dib_bits_persistent
-        else:
-            if w != self.dib_width or h != self.dib_height:
-                if self.old_bitmap: gdi32.SelectObject(mdc, self.old_bitmap)
-                if self.dib_bitmap: gdi32.DeleteObject(self.dib_bitmap)
-                self.dib_width = w
-                self.dib_height = h
-                bmi = BITMAPINFO(); bmi.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)
-                bmi.bmiHeader.biWidth = w; bmi.bmiHeader.biHeight = -h
-                bmi.bmiHeader.biPlanes = 1; bmi.bmiHeader.biBitCount = 32
-                bmi.bmiHeader.biCompression = BI_RGB
-                self.dib_bits = ctypes.c_void_p()
-                self.dib_bitmap = gdi32.CreateDIBSection(mdc, ctypes.byref(bmi), DIB_RGB_COLORS,
-                                                          ctypes.byref(self.dib_bits), None, 0)
-                if self.dib_bitmap: self.old_bitmap = gdi32.SelectObject(mdc, self.dib_bitmap)
-
-            dib_bits = self.dib_bits
-
-        if not dib_bits:
-            return
-
-        try:
-            rgba = canvas.tobytes('raw', 'BGRA')
-            ctypes.memmove(dib_bits, rgba, len(rgba))
-            gdi32.BitBlt(wdc, 0, 0, w, h, mdc, 0, 0, SRCCOPY)
-        except:
-            pass
-
-    def _create_dib(self, w, h):
-        self.dib_width = w
-        self.dib_height = h
-        bmi = BITMAPINFO()
-        bmi.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)
-        bmi.bmiHeader.biWidth = w
-        bmi.bmiHeader.biHeight = -h
-        bmi.bmiHeader.biPlanes = 1
-        bmi.bmiHeader.biBitCount = 32
-        bmi.bmiHeader.biCompression = BI_RGB
-        self.dib_bits = ctypes.c_void_p()
-        self.dib_bitmap = gdi32.CreateDIBSection(self.mem_dc, ctypes.byref(bmi), DIB_RGB_COLORS,
-                                                  ctypes.byref(self.dib_bits), None, 0)
-        if self.dib_bitmap:
-            self.old_bitmap = gdi32.SelectObject(self.mem_dc, self.dib_bitmap)
-
-    def _cleanup_dib(self):
-        if self.old_bitmap:
-            gdi32.SelectObject(self.mem_dc, self.old_bitmap)
-            self.old_bitmap = None
-        if self.dib_bitmap:
-            gdi32.DeleteObject(self.dib_bitmap)
-            self.dib_bitmap = None
-        self.dib_bits = None
-        self.dib_width = self.dib_height = 0
-
-    def _cleanup_gdi(self):
-        self._cleanup_dib()
-
-        # Cleanup persistent DIB
-        if self.old_bitmap_persistent and self.mem_dc_persistent:
-            gdi32.SelectObject(self.mem_dc_persistent, self.old_bitmap_persistent)
-            self.old_bitmap_persistent = None
-        if self.dib_bitmap_persistent:
-            gdi32.DeleteObject(self.dib_bitmap_persistent)
-            self.dib_bitmap_persistent = None
-
-        if self.mem_dc:
-            gdi32.DeleteDC(self.mem_dc)
-            self.mem_dc = None
-        if self.mem_dc_persistent:
-            gdi32.DeleteDC(self.mem_dc_persistent)
-            self.mem_dc_persistent = None
-
-        if self.window_dc and self.hwnd:
-            user32.ReleaseDC(self.hwnd, self.window_dc)
-            self.window_dc = None
-        if self.window_dc_persistent and self.hwnd_persistent:
-            user32.ReleaseDC(self.hwnd_persistent, self.window_dc_persistent)
-            self.window_dc_persistent = None
-
-        # Cleanup chat windows
-        for chat_name in list(self._chat_windows.keys()):
-            self._cleanup_chat_window(chat_name)
-
     def _cleanup_chat_window(self, chat_name: str):
         """Clean up resources for a specific chat window."""
         # Unregister from layout manager
@@ -1973,158 +1585,6 @@ class HeadsUpOverlay:
             "trace": traceback.format_exc(),
             "ts": time.time(),
         })
-
-    def _update_logic_main(self):
-        """DEPRECATED: Legacy method - use _update_message_window() instead."""
-        warnings.warn(
-            "_update_logic_main is deprecated, use _update_message_window instead",
-            DeprecationWarning,
-            stacklevel=2
-        )
-        if not self.hwnd:
-            return
-
-        # Typewriter progression (only affects main message)
-        if self.typewriter_active and self.current_message:
-            now = time.time()
-            chars = (now - self.last_typewriter_update) * 200
-            if chars > 0:
-                self.typewriter_char_count += chars
-                self.last_typewriter_update = now
-                msg_len = len(self.current_message.get('message', ''))
-                if self.typewriter_char_count >= msg_len:
-                    self.typewriter_active = False
-                    self.typewriter_char_count = float(msg_len)
-
-        key = 0x00FF00FF
-        fade_amount = int(1080 * self.dt)
-        if fade_amount < 1: fade_amount = 1
-
-        # Fade logic for main window
-        if self.fade_state == 1:  # Fade in
-            self.current_opacity = min(self.target_opacity, self.current_opacity + fade_amount)
-            user32.SetLayeredWindowAttributes(self.hwnd, key, self.current_opacity, LWA_ALPHA | LWA_COLORKEY)
-            if self.current_opacity >= self.target_opacity:
-                self.fade_state = 2
-
-        elif self.fade_state == 3:  # Fade out
-            self.current_opacity = max(0, self.current_opacity - fade_amount)
-            user32.SetLayeredWindowAttributes(self.hwnd, key, self.current_opacity, LWA_ALPHA | LWA_COLORKEY)
-            if self.current_opacity <= 0:
-                self.fade_state = 0
-                self.current_message = None
-
-        if self.fade_state == 2:
-            # Tracking opacity target
-            if self.current_opacity != self.target_opacity:
-                if self.current_opacity < self.target_opacity:
-                    self.current_opacity = min(self.target_opacity, self.current_opacity + fade_amount)
-                else:
-                    self.current_opacity = max(self.target_opacity, self.current_opacity - fade_amount)
-                user32.SetLayeredWindowAttributes(self.hwnd, key, self.current_opacity, LWA_ALPHA | LWA_COLORKEY)
-
-            # Auto fade out check
-            should_fade_out = True
-
-            # Don't fade out if loading
-            if self.is_loading:
-                should_fade_out = False
-            # Check if message duration has passed
-            elif self.current_message:
-                now = time.time()
-                if now <= self.min_display_time:
-                    should_fade_out = False
-            else:
-                # No message, no loading -> fade out
-                should_fade_out = True
-
-            if should_fade_out:
-                self.fade_state = 3
-
-    def _check_collision(self) -> bool:
-        """DEPRECATED: Legacy method - use _check_window_collision() instead."""
-        warnings.warn(
-            "_check_collision is deprecated, use _check_window_collision instead",
-            DeprecationWarning,
-            stacklevel=2
-        )
-        if not self.current_message or not self.persistent_infos:
-            return False
-
-        # Get Main Window Rect
-        main_x = int(self.display_props.get('x', 20))
-        main_y = int(self.display_props.get('y', 20))
-        main_w = int(self.display_props.get('width', 400))
-        # Use existing canvas height if available, otherwise estimate or assume max
-        # It's safer to rely on canvas if _draw_main_frame ran at least once for this content
-        main_h = self.canvas.height if self.canvas else 200
-
-        # Get Persistent Window Rect
-        pers_x = int(self.display_props.get('persistent_x', 20))
-        pers_y = int(self.display_props.get('persistent_y', 300))
-        pers_w = int(self.display_props.get('persistent_width', 300))
-        pers_h = self.canvas_persistent.height if self.canvas_persistent else 200
-
-        # Check intersection
-        # Rect1: (main_x, main_y, main_x + main_w, main_y + main_h)
-        # Rect2: (pers_x, pers_y, pers_x + pers_w, pers_y + pers_h)
-
-        return not (main_x + main_w <= pers_x or
-                    pers_x + pers_w <= main_x or
-                    main_y + main_h <= pers_y or
-                    pers_y + pers_h <= main_y)
-
-    def _update_logic_persistent(self, collision_detected=False):
-        """DEPRECATED: Legacy method - use _update_persistent_window() instead."""
-        warnings.warn(
-            "_update_logic_persistent is deprecated, use _update_persistent_window instead",
-            DeprecationWarning,
-            stacklevel=2
-        )
-        if not self.hwnd_persistent:
-            return
-
-        now = time.time()
-
-        # Check expiry
-        expired = [k for k, v in self.persistent_infos.items() if v.get('expiry') and now > v['expiry']]
-        for k in expired:
-            del self.persistent_infos[k]
-
-        # Determine target state
-        has_content = bool(self.persistent_infos)
-
-        # If collision detected, force hide irrespective of content
-        should_show = has_content and not collision_detected
-
-        if should_show and self.persistent_fade_state in (0, 3):
-            self.persistent_fade_state = 1 # Start Fade in
-        elif not should_show and self.persistent_fade_state in (1, 2):
-            self.persistent_fade_state = 3 # Start Fade out
-
-        key = 0x00FF00FF
-        fade_amount = int(1080 * self.dt)
-        if fade_amount < 1: fade_amount = 1
-
-        if self.persistent_fade_state == 1: # Fade in
-            self.persistent_opacity = min(self.target_opacity, self.persistent_opacity + fade_amount)
-            user32.SetLayeredWindowAttributes(self.hwnd_persistent, key, self.persistent_opacity, LWA_ALPHA | LWA_COLORKEY)
-            if self.persistent_opacity >= self.target_opacity:
-                self.persistent_fade_state = 2
-
-        elif self.persistent_fade_state == 3: # Fade out
-            self.persistent_opacity = max(0, self.persistent_opacity - fade_amount)
-            user32.SetLayeredWindowAttributes(self.hwnd_persistent, key, self.persistent_opacity, LWA_ALPHA | LWA_COLORKEY)
-            if self.persistent_opacity <= 0:
-                self.persistent_fade_state = 0
-
-        elif self.persistent_fade_state == 2: # Visible
-             if self.persistent_opacity != self.target_opacity:
-                if self.persistent_opacity < self.target_opacity:
-                    self.persistent_opacity = min(self.target_opacity, self.persistent_opacity + fade_amount)
-                else:
-                    self.persistent_opacity = max(self.target_opacity, self.persistent_opacity - fade_amount)
-                user32.SetLayeredWindowAttributes(self.hwnd_persistent, key, self.persistent_opacity, LWA_ALPHA | LWA_COLORKEY)
 
     def _check_window_collision(self, msg_win: Optional[Dict], pers_win: Dict) -> bool:
         """Check if message window overlaps with persistent window (unified system)."""
@@ -2190,34 +1650,6 @@ class HeadsUpOverlay:
                 self._report_exception("init", RuntimeError("Failed to register window class"))
                 return
 
-            # Initialize Main Window
-            w = int(self.display_props.get('width', 400))
-            h = 100
-            x = int(self.display_props.get('x', 20))
-            y = int(self.display_props.get('y', 20))
-
-            self.hwnd = self._create_overlay_window("HeadsUp", x, y, w, h)
-            if not self.hwnd:
-                self._report_exception("init", RuntimeError("Failed to create main window"))
-                return
-
-            self.window_dc, self.mem_dc = self._init_gdi(self.hwnd)
-
-            # Initialize Persistent Window
-            pw = int(self.display_props.get('persistent_width', 300))
-            ph = 100
-            px = int(self.display_props.get('persistent_x', 20))
-            py = int(self.display_props.get('persistent_y', 300))
-
-            try:
-                self.hwnd_persistent = self._create_overlay_window("HeadsUpPersistent", px, py, pw, ph)
-                if self.hwnd_persistent:
-                    self.window_dc_persistent, self.mem_dc_persistent = self._init_gdi(self.hwnd_persistent)
-            except Exception as e:
-                self._report_exception("init_persistent", e)
-                # Continue without persistent window if it fails?
-                pass
-
             self._init_fonts()
 
             # Note: Removed last_z tracking since we no longer repeatedly bring windows to front
@@ -2282,12 +1714,9 @@ class HeadsUpOverlay:
             # Cleanup unified windows
             for name in list(self._windows.keys()):
                 self._destroy_window(name)
-            # Cleanup legacy windows
-            self._cleanup_gdi()
-            if self.hwnd:
-                user32.DestroyWindow(self.hwnd)
-            if self.hwnd_persistent:
-                user32.DestroyWindow(self.hwnd_persistent)
+            # Cleanup chat windows
+            for chat_name in list(self._chat_windows.keys()):
+                self._cleanup_chat_window(chat_name)
 
     def _handle_message(self, msg):
         try:
@@ -3016,321 +2445,6 @@ class HeadsUpOverlay:
                     pass
             except:
                 break
-
-    def _draw_persistent_frame(self):
-        """DEPRECATED: Legacy method - use _draw_persistent_window() instead."""
-        warnings.warn(
-            "_draw_persistent_frame is deprecated, use _draw_persistent_window instead",
-            DeprecationWarning,
-            stacklevel=2
-        )
-        if not self.persistent_infos:
-            return
-
-        # Check render state
-        try:
-            props_hash = tuple(sorted((k, v) for k, v in self.display_props.items() if isinstance(v, (str, int, float, bool, tuple))))
-        except:
-            props_hash = str(self.display_props)
-
-        # Synchronize ALL timer updates to the same tick
-        now = time.time()
-        current_second = int(now)
-        sync_time = float(current_second)
-        self._persistent_render_time = sync_time
-
-        # Update progress animations and check if any are active
-        animations_active = False
-        items_to_remove = []
-
-        for title, anim in list(self._progress_animations.items()):
-            if title not in self.persistent_infos:
-                continue
-
-            info = self.persistent_infos[title]
-
-            # Handle timer-based progress bars
-            if anim.get('is_timer'):
-                timer_elapsed = now - anim['timer_start']
-                timer_duration = anim['timer_duration']
-                timer_progress = min(100, (timer_elapsed / timer_duration) * 100)
-
-                # Update both animation current and target for timer
-                anim['current'] = timer_progress
-                anim['target'] = timer_progress
-                info['progress_current'] = timer_progress
-
-                if timer_elapsed < timer_duration:
-                    # Optimization: For timers > 100s, changes are <1% per second
-                    # No need for smooth animation, just update once per second
-                    if timer_duration <= 100:
-                        animations_active = True  # Short timers get smooth animation
-                elif info.get('auto_close') and not info.get('auto_close_triggered'):
-                    # Timer completed, schedule auto-close
-                    info['auto_close_triggered'] = True
-                    info['auto_close_time'] = now + 2.0  # 2 second delay
-                    animations_active = True  # Keep animating for auto-close
-            else:
-                # Regular progress bar animation
-                elapsed = now - anim.get('start_time', now)
-                duration = self._progress_transition_duration
-
-                if duration > 0 and elapsed < duration:
-                    # Easing function (ease-out cubic)
-                    t = elapsed / duration
-                    t = 1 - (1 - t) ** 3
-                    anim['current'] = anim['start_value'] + (anim['target'] - anim['start_value']) * t
-                    animations_active = True
-                else:
-                    anim['current'] = anim['target']
-
-                # Check for auto-close on 100%
-                percentage = (anim['current'] / info.get('progress_maximum', 100)) * 100
-                if percentage >= 100 and info.get('auto_close') and not info.get('auto_close_triggered'):
-                    info['auto_close_triggered'] = True
-                    info['auto_close_time'] = now + 2.0  # 2 second delay
-                    animations_active = True
-
-            # Handle auto-close removal
-            if info.get('auto_close_triggered') and info.get('auto_close_time'):
-                if now >= info['auto_close_time']:
-                    items_to_remove.append(title)
-                else:
-                    animations_active = True
-
-        # Remove items scheduled for auto-close
-        for title in items_to_remove:
-            if title in self.persistent_infos:
-                del self.persistent_infos[title]
-            if title in self._progress_animations:
-                del self._progress_animations[title]
-
-        persistent_state_list = []
-        has_active_timers = False
-        for k, v in sorted(self.persistent_infos.items()):
-            if v.get('expiry'):
-                rem = max(0, int(v['expiry'] - sync_time + 0.999))
-            else:
-                rem = -1
-            progress_state = None
-            if v.get('is_progress'):
-                # Check if this is an active timer
-                if v.get('is_timer'):
-                    timer_elapsed = now - v.get('timer_start', now)
-                    if timer_elapsed < v.get('timer_duration', 0):
-                        has_active_timers = True
-                # Use animated value for state hash if animating
-                if k in self._progress_animations:
-                    animated_value = self._progress_animations[k]['current']
-                    progress_state = (animated_value, v.get('progress_maximum', 100))
-                else:
-                    progress_state = (v.get('progress_current', 0), v.get('progress_maximum', 100))
-            persistent_state_list.append((k, v['description'], rem, progress_state))
-        persistent_state = tuple(persistent_state_list)
-
-        # Determine render frequency based on what's active:
-        # - Smooth animations (progress bar transitions) need configured framerate
-        # - Timers only need 1fps (once per second) since we show whole seconds only
-        configured_fps = int(self.display_props.get('framerate', 60))
-        if animations_active:
-            # Smooth transitions need configured framerate
-            anim_frame = int(now * configured_fps)
-            needs_continuous_render = True
-        elif has_active_timers:
-            # Timers only need to update once per second (whole seconds display)
-            anim_frame = current_second
-            needs_continuous_render = True
-        else:
-            anim_frame = 0
-            needs_continuous_render = False
-
-        current_state = (persistent_state, props_hash, current_second, anim_frame)
-
-        # Skip re-render if state unchanged
-        if not needs_continuous_render and self.last_render_state_persistent == current_state and self.canvas_persistent:
-            return
-
-        self.last_render_state_persistent = current_state
-        self.canvas_persistent_dirty = True
-
-        props = self.display_props
-        bg = self._hex_to_rgb(props.get('bg_color', '#1e212b'))
-        text_color = self._hex_to_rgb(props.get('text_color', '#f0f0f0'))
-        accent = self._hex_to_rgb(props.get('accent_color', '#00aaff'))
-
-        width = int(props.get('persistent_width', 300))
-        radius = int(props.get('border_radius', 12))
-        padding = int(props.get('content_padding', 16))
-
-        # Update renderer colors
-        if self.md_renderer:
-            self.md_renderer.set_colors(text_color, accent, bg)
-
-        # We need a temp canvas
-        temp_h = 2000
-        temp = Image.new('RGBA', (width, temp_h), (0, 0, 0, 0))
-        draw = ImageDraw.Draw(temp)
-
-        y = padding
-        font_bold = self.fonts.get('bold', self.fonts['normal'])
-        font_normal = self.fonts['normal']
-
-        for title, info in sorted(self.persistent_infos.items(), key=lambda x: x[1]['added_at']):
-             # Check expiry but don't delete (logic does that)
-             if info.get('expiry') and self._persistent_render_time > info['expiry']:
-                 continue
-
-             # Calculate timer width/draw timer for expiry OR progress timer
-             timer_w = 0
-             timer_text = None
-
-             # For progress items with timer, calculate remaining time
-             if info.get('is_progress') and info.get('is_timer'):
-                 timer_start = info.get('timer_start', self._persistent_render_time)
-                 timer_duration = info.get('timer_duration', 0)
-                 elapsed_time = self._persistent_render_time - timer_start
-                 remaining_seconds = max(0, timer_duration - elapsed_time)
-                 remaining = int(remaining_seconds + 0.999)
-
-                 r = remaining
-                 d = r // 86400
-                 r %= 86400
-                 h = r // 3600
-                 r %= 3600
-                 m = r // 60
-                 s = r % 60
-
-                 parts = []
-                 if d > 0: parts.append(f"{d}d")
-                 if h > 0: parts.append(f"{h}h")
-                 if m > 0: parts.append(f"{m}m")
-                 parts.append(f"{s}s")
-
-                 timer_text = " ".join(parts)
-             elif info.get('expiry'):
-                 remaining = max(0, int(info['expiry'] - self._persistent_render_time + 0.999))
-                 r = remaining
-                 d = r // 86400
-                 r %= 86400
-                 h = r // 3600
-                 r %= 3600
-                 m = r // 60
-                 s = r % 60
-
-                 parts = []
-                 if d > 0: parts.append(f"{d}d")
-                 if h > 0: parts.append(f"{h}h")
-                 if m > 0: parts.append(f"{m}m")
-                 parts.append(f"{s}s")
-
-                 timer_text = " ".join(parts)
-
-             if timer_text:
-                 timer_w, _ = self._get_text_size(timer_text, font_bold)
-                 draw.text((width - padding - timer_w, y), timer_text, fill=text_color + (255,), font=font_bold)
-                 timer_w += 10
-
-             # Title Row - render with emoji support
-             max_title_w = width - (padding * 2) - timer_w
-             title_lines = title.split('\n')
-             final_lines = []
-             for line in title_lines:
-                 if self.md_renderer:
-                     wrapped = self.md_renderer._wrap_text(line, font_bold, max_title_w)
-                     final_lines.extend(wrapped)
-                 else:
-                     final_lines.append(line)
-
-             for i, line in enumerate(final_lines):
-                 # Render title with emoji support
-                 self._render_text_with_emoji(draw, line, padding, y, accent + (255,), font_bold)
-                 y += 20
-
-             if final_lines:
-                 y += 8
-             else:
-                 y += 20
-
-             # Check if this is a progress bar item
-             if info.get('is_progress'):
-                 progress_maximum = float(info.get('progress_maximum', 100))
-                 if title in self._progress_animations:
-                     progress_current = self._progress_animations[title]['current']
-                 else:
-                     progress_current = float(info.get('progress_current', 0))
-
-                 if progress_maximum <= 0:
-                     progress_maximum = 100
-
-                 percentage = min(100, max(0, (progress_current / progress_maximum) * 100))
-                 progress_color = accent
-                 if info.get('progress_color'):
-                     progress_color = self._hex_to_rgb(info['progress_color'])
-
-                 bar_height = 16
-                 bar_width = width - (padding * 2)
-
-                 y += 4  # Margin above progress bar
-                 y = self._draw_progress_bar(
-                     draw, temp, padding, y, bar_width, bar_height,
-                     percentage, bg, progress_color, text_color
-                 )
-
-                 # Draw percentage below progress bar
-                 values_text = f"{percentage:.0f}%"
-
-                 values_font = self.fonts.get('normal', font_normal)
-                 try:
-                     bbox = values_font.getbbox(values_text)
-                     values_width = bbox[2] - bbox[0]
-                 except:
-                     values_width = len(values_text) * 7
-
-                 values_x = padding + (bar_width - values_width) // 2
-                 values_color = tuple(c - 40 if c > 40 else c for c in text_color) + (200,)
-                 draw.text((values_x, y), values_text, fill=values_color, font=values_font)
-                 y += 18
-
-                 desc = info.get('description', '')
-                 if desc:
-                     desc = self._strip_emotions(desc)
-                     y += 4
-                     y = self.md_renderer.render(
-                        draw, temp, desc, padding, y, width - padding * 2
-                     )
-             else:
-                 desc = info.get('description', '')
-                 if desc:
-                     desc = self._strip_emotions(desc)
-                     y = self.md_renderer.render(
-                        draw, temp, desc, padding, y, width - padding * 2
-                     )
-
-             # Add spacing after item
-             y += 8
-
-        # Finish
-        bottom_padding = padding - 4
-        final_h = max(60, y + bottom_padding)
-
-        if self.canvas_persistent is None or self.canvas_persistent.width != width or self.canvas_persistent.height != final_h:
-            self.canvas_persistent = Image.new('RGBA', (width, final_h), (255, 0, 255, 255))
-        else:
-            self.canvas_persistent.paste((255, 0, 255, 255), (0, 0, width, final_h))
-
-        final_draw = ImageDraw.Draw(self.canvas_persistent)
-        final_draw.rounded_rectangle([0, 0, width - 1, final_h - 1], radius=radius,
-                                    fill=bg + (255,), outline=(55, 62, 74))
-
-        crop = temp.crop((0, 0, width, final_h))
-        self.canvas_persistent.paste(crop, (0, 0), crop)
-
-        if self.hwnd_persistent:
-            user32.MoveWindow(self.hwnd_persistent,
-                            int(props.get('persistent_x', 20)),
-                            int(props.get('persistent_y', 300)),
-                            width, final_h, True)
-            user32.SetLayeredWindowAttributes(self.hwnd_persistent, 0x00FF00FF, self.persistent_opacity, LWA_ALPHA | LWA_COLORKEY)
 
     # =========================================================================
     # Chat Window Rendering
