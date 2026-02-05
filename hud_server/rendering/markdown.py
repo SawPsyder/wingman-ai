@@ -6,6 +6,7 @@ This implementation uses ONLY:
 - Win32 API for window management
 """
 
+import copy
 import os
 import re
 from typing import Tuple, Dict, List
@@ -400,8 +401,7 @@ class MarkdownRenderer:
         # Check cache first - tokens are immutable once parsed
         if text in self._inline_token_cache:
             self._cache_stats['token_cache_hits'] += 1
-            # Return a deep copy to prevent modification of cached data
-            import copy
+            # Deep copy required: callers modify token positions for typewriter effect
             return copy.deepcopy(self._inline_token_cache[text])
 
         self._cache_stats['token_cache_misses'] += 1
@@ -414,10 +414,9 @@ class MarkdownRenderer:
             oldest_key = next(iter(self._inline_token_cache))
             del self._inline_token_cache[oldest_key]
 
-        self._inline_token_cache[text] = tokens
-        # Return a deep copy to prevent modification of cached data
-        import copy
-        return copy.deepcopy(tokens)
+        # Cache a deep copy, return the original (saves one copy on cache miss)
+        self._inline_token_cache[text] = copy.deepcopy(tokens)
+        return tokens
 
     def _tokenize_inline_uncached(self, text: str) -> List[Dict]:
         """Internal tokenization without caching. Called by tokenize_inline."""

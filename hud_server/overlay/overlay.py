@@ -234,11 +234,6 @@ class HeadsUpOverlay:
         # Max cache entries for loading bars
         self._max_loading_bar_cache = MAX_LOADING_BAR_CACHE_SIZE
 
-        # Reusable image buffers for supersampling operations
-        # These are pre-allocated to avoid repeated allocations
-        self._progress_bar_buffer: Optional[Image.Image] = None
-        self._progress_bar_buffer_size: Tuple[int, int] = (0, 0)
-
         # Render statistics for monitoring (optional debugging)
         self._render_stats = {
             'track_cache_hits': 0,
@@ -284,8 +279,6 @@ class HeadsUpOverlay:
         self._progress_gradient_cache.clear()
         self._corner_cache.clear()
         self._loading_bar_cache.clear()
-        self._progress_bar_buffer = None
-        self._progress_bar_buffer_size = (0, 0)
 
         # Reset statistics
         for key in self._render_stats:
@@ -1494,6 +1487,8 @@ class HeadsUpOverlay:
 
         Caches pre-rendered loading bar pill shapes to avoid recreating
         them every frame for each bar in the loading animation.
+
+        Note: bar_h is already guaranteed >= 1 by the caller.
         """
         # Ensure color is just RGB for cache key (ignore alpha variations)
         color_key = color[:3]
@@ -1505,8 +1500,8 @@ class HeadsUpOverlay:
 
         self._render_stats['loading_cache_misses'] += 1
 
-        # Create the bar surface
-        bar_surf = Image.new('RGBA', (bar_w, max(1, bar_h)), (0, 0, 0, 0))
+        # Create the bar surface (bar_h >= 1 guaranteed by caller)
+        bar_surf = Image.new('RGBA', (bar_w, bar_h), (0, 0, 0, 0))
         bar_draw = ImageDraw.Draw(bar_surf)
 
         radius = min(bar_w // 2, bar_h // 2)
@@ -2798,11 +2793,14 @@ class HeadsUpOverlay:
 
         Caches the empty progress bar background to avoid recreating it every frame.
         The track includes the rounded rectangle with antialiasing.
+
+        Note: Returns a copy because callers modify the returned image (draw fill on it).
         """
         cache_key = (width, height, bg_color, scale)
 
         if cache_key in self._progress_track_cache:
             self._render_stats['track_cache_hits'] += 1
+            # Copy required: callers draw the progress fill onto this image
             return self._progress_track_cache[cache_key].copy()
 
         self._render_stats['track_cache_misses'] += 1
@@ -2838,11 +2836,14 @@ class HeadsUpOverlay:
 
         The gradient provides the depth effect (top highlight, bottom shadow).
         Cached because the gradient pattern is the same for same dimensions.
+
+        Note: Returns a copy because gradient is pasted/composited onto other images.
         """
         cache_key = (fill_width, fill_height, highlight_height, shadow_height)
 
         if cache_key in self._progress_gradient_cache:
             self._render_stats['gradient_cache_hits'] += 1
+            # Copy required: gradient is composited onto the progress bar buffer
             return self._progress_gradient_cache[cache_key].copy()
 
         self._render_stats['gradient_cache_misses'] += 1
@@ -2870,24 +2871,6 @@ class HeadsUpOverlay:
 
         self._progress_gradient_cache[cache_key] = gradient
         return gradient.copy()
-
-    def _get_reusable_buffer(self, width: int, height: int) -> Image.Image:
-        """Get or create a reusable image buffer for progress bar rendering.
-
-        Reuses a pre-allocated buffer to avoid repeated allocations.
-        The buffer is cleared before returning.
-        """
-        if (self._progress_bar_buffer is None or
-            self._progress_bar_buffer_size[0] < width or
-            self._progress_bar_buffer_size[1] < height):
-            # Need a larger buffer
-            self._progress_bar_buffer = Image.new('RGBA', (width, height), (0, 0, 0, 0))
-            self._progress_bar_buffer_size = (width, height)
-        else:
-            # Clear the existing buffer (only the area we'll use)
-            self._progress_bar_buffer.paste((0, 0, 0, 0), (0, 0, width, height))
-
-        return self._progress_bar_buffer
 
     def _draw_progress_bar(self, draw: ImageDraw.Draw, img: Image.Image, x: int, y: int,
                           width: int, height: int, percentage: float,
