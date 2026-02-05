@@ -589,9 +589,8 @@ class HeadsUpOverlay:
                 win['fade_state'] = 3
                 # Clear message so has_content becomes False and fade-out can proceed
                 win['current_message'] = None
-                # Notify layout manager immediately
-                window_name = self._get_window_name(self.WINDOW_TYPE_MESSAGE, win.get('group', 'default'))
-                self._layout_manager.set_window_visible(window_name, False)
+                # Note: Don't release layout slot yet - window still visible during fade-out
+                # Layout slot will be released when fade completes (opacity reaches 0)
 
     def _update_persistent_window(self, name: str, win: Dict):
         """Update persistent window state (progress animations, expiry, etc.)."""
@@ -681,9 +680,10 @@ class HeadsUpOverlay:
         # Update layout manager visibility when fade state changes
         window_name = self._get_window_name(win.get('type', 'message'), win.get('group', 'default'))
         if old_fade_state != win['fade_state']:
-            # Window is visible for layout purposes only when fading in (1) or fully visible (2)
-            # When fading out (3) or hidden (0), it should NOT take up layout space
-            is_visible = win['fade_state'] in (1, 2)
+            # Window is visible for layout purposes when fading in (1), fully visible (2), OR fading out (3)
+            # This prevents new windows from taking a slot while fade-out animation is in progress
+            # Slot is only released when fully hidden (0)
+            is_visible = win['fade_state'] in (1, 2, 3)
             self._layout_manager.set_window_visible(window_name, is_visible)
 
         if win['fade_state'] == 1:  # Fade in
@@ -1830,9 +1830,8 @@ class HeadsUpOverlay:
                     win['fade_state'] = 3
                     win['current_message'] = None
                     win['is_loading'] = False
-                    # Immediately notify layout manager that this window is now hidden
-                    window_name = self._get_window_name(self.WINDOW_TYPE_MESSAGE, group)
-                    self._layout_manager.set_window_visible(window_name, False)
+                    # Note: Don't release layout slot yet - window still visible during fade-out
+                    # Layout slot will be released when fade completes (opacity reaches 0)
 
             elif t == 'draw':
                 # Get or create message window for this group
@@ -2221,8 +2220,8 @@ class HeadsUpOverlay:
                 if chat_name and chat_name in self._chat_windows:
                     chat = self._chat_windows[chat_name]
                     chat['fade_state'] = 3  # fade out
-                    # Immediately notify layout manager
-                    self._layout_manager.set_window_visible(f"chat_{chat_name}", False)
+                    # Note: Don't release layout slot yet - window still visible during fade-out
+                    # Layout slot will be released when fade completes (opacity reaches 0)
                     self._chat_window_dirty[chat_name] = True
 
         except Exception as e:
@@ -2485,11 +2484,14 @@ class HeadsUpOverlay:
             # Update layout manager visibility when fade state changes
             if old_fade_state != chat['fade_state']:
                 layout_name = f"chat_{chat_name}"
-                is_visible = chat['fade_state'] in (1, 2)  # Visible when fading in or fully visible
+                # Window is visible for layout purposes when fading in (1), fully visible (2), OR fading out (3)
+                # This prevents new windows from taking a slot while fade-out animation is in progress
+                # Slot is only released when fully hidden (0)
+                is_visible = chat['fade_state'] in (1, 2, 3)
                 self._layout_manager.set_window_visible(layout_name, is_visible)
 
             # Update position from layout manager for visible windows
-            if chat['fade_state'] in (1, 2):
+            if chat['fade_state'] in (1, 2, 3):  # Include fading out
                 layout_mode = props.get('layout_mode', 'auto')
                 if layout_mode == 'auto':
                     layout_name = f"chat_{chat_name}"
