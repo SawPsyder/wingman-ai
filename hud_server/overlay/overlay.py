@@ -1572,8 +1572,11 @@ class HeadsUpOverlay:
     # =========================================================================
     # DEPRECATED LEGACY METHODS
     # =========================================================================
-    # The following methods are legacy code from before the unified window system.
-    # They are kept for reference but are NOT called - the unified system uses:
+    # The following methods are from the original implementation before the
+    # unified window system was introduced. They are NOT called internally by
+    # the overlay but are retained with deprecation warnings in case external
+    # code or plugins attempt to use them. The unified system methods should
+    # be used instead:
     # - _draw_message_window() instead of _draw_main_frame()
     # - _draw_persistent_window() instead of _draw_persistent_frame()
     # - _update_message_window() instead of _update_logic_main()
