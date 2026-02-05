@@ -1269,6 +1269,12 @@ class HeadsUpOverlay:
         return text
 
     def _init_fonts(self, font_size: int = None, font_family: str = None):
+        """Initialize fonts for rendering.
+
+        Args:
+            font_size: Font size in pixels. Defaults to value from _default_props (16).
+            font_family: Font family name. Defaults to value from _default_props ('Segoe UI').
+        """
         size = font_size if font_size is not None else int(self._default_props.get('font_size', 16))
         family = font_family if font_family is not None else self._default_props.get('font_family', 'Segoe UI')
 
