@@ -21,6 +21,7 @@ import traceback
 import io
 import urllib.request
 import urllib.error
+import warnings
 
 # PIL for rendering
 try:
@@ -1582,6 +1583,11 @@ class HeadsUpOverlay:
 
     def _draw_main_frame(self):
         """DEPRECATED: Legacy method - use _draw_message_window() instead."""
+        warnings.warn(
+            "_draw_main_frame is deprecated, use _draw_message_window instead",
+            DeprecationWarning,
+            stacklevel=2
+        )
         if not self.current_message and not self.is_loading:
             return
 
@@ -1967,6 +1973,11 @@ class HeadsUpOverlay:
 
     def _update_logic_main(self):
         """DEPRECATED: Legacy method - use _update_message_window() instead."""
+        warnings.warn(
+            "_update_logic_main is deprecated, use _update_message_window instead",
+            DeprecationWarning,
+            stacklevel=2
+        )
         if not self.hwnd:
             return
 
@@ -2029,6 +2040,11 @@ class HeadsUpOverlay:
 
     def _check_collision(self) -> bool:
         """DEPRECATED: Legacy method - use _check_window_collision() instead."""
+        warnings.warn(
+            "_check_collision is deprecated, use _check_window_collision instead",
+            DeprecationWarning,
+            stacklevel=2
+        )
         if not self.current_message or not self.persistent_infos:
             return False
 
@@ -2057,6 +2073,11 @@ class HeadsUpOverlay:
 
     def _update_logic_persistent(self, collision_detected=False):
         """DEPRECATED: Legacy method - use _update_persistent_window() instead."""
+        warnings.warn(
+            "_update_logic_persistent is deprecated, use _update_persistent_window instead",
+            DeprecationWarning,
+            stacklevel=2
+        )
         if not self.hwnd_persistent:
             return
 
@@ -3006,6 +3027,11 @@ class HeadsUpOverlay:
 
     def _draw_persistent_frame(self):
         """DEPRECATED: Legacy method - use _draw_persistent_window() instead."""
+        warnings.warn(
+            "_draw_persistent_frame is deprecated, use _draw_persistent_window instead",
+            DeprecationWarning,
+            stacklevel=2
+        )
         if not self.persistent_infos:
             return
 
