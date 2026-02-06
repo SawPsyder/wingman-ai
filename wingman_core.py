@@ -405,8 +405,15 @@ class WingmanCore(WebSocketUser):
             app_root_path=app_root_path,
             app_is_bundled=app_is_bundled,
         )
+        whisperonnx_settings = self.settings_service.settings.voice_activation.whisperonnx
+        if whisperonnx_settings is None:
+            from api.interface import WhisperOnnxSettings
+            whisperonnx_settings = WhisperOnnxSettings(
+                model_size="openai/whisper-base", device="auto"
+            )
+            self.settings_service.settings.voice_activation.whisperonnx = whisperonnx_settings
         self.whisperonnx = WhisperOnnx(
-            settings=self.settings_service.settings.voice_activation.whisperonnx,
+            settings=whisperonnx_settings,
             app_root_path=app_root_path,
             app_is_bundled=app_is_bundled,
         )
@@ -987,8 +994,12 @@ class WingmanCore(WebSocketUser):
             )
             text = transcription.text
         elif provider == VoiceActivationSttProvider.WHISPER_ONNX:
+            onnx_config = self.settings_service.settings.voice_activation.whisperonnx_config
+            if onnx_config is None:
+                from api.interface import WhisperOnnxSttConfig
+                onnx_config = WhisperOnnxSttConfig()
             transcription = self.whisperonnx.transcribe(
-                config=self.settings_service.settings.voice_activation.whisperonnx_config,
+                config=onnx_config,
                 filename=recording_file,
             )
             if transcription:

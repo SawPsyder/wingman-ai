@@ -177,6 +177,11 @@ hiddenimports = [
     'onnxruntime',
     'huggingface_hub',
 
+    # WhisperOnnx / ONNX Runtime cross-GPU STT dependencies
+    'optimum',
+    'optimum.onnxruntime',
+    'transformers',
+
     # NVIDIA packages (ensure they're included even if DLL collection fails)
     'nvidia',
     'nvidia.cublas',

@@ -117,14 +117,10 @@ class SettingsService:
         )
 
         # WhisperOnnx
-        if not self.whisperonnx:
-            self.printr.toast_error(
-                "WhisperOnnx is not initialized. Please run SettingsService.initialize()",
+        if self.whisperonnx and settings.voice_activation.whisperonnx:
+            self.whisperonnx.update_settings(
+                settings=settings.voice_activation.whisperonnx
             )
-            return
-        self.whisperonnx.update_settings(
-            settings=settings.voice_activation.whisperonnx
-        )
 
         # XVASynth
         if not self.xvasynth:

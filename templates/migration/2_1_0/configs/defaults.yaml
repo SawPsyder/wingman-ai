@@ -235,6 +235,8 @@ fasterwhisper:
   language: ""
   hotwords: []
   additional_hotwords: []
+whisperonnx:
+  language: ""
 xvasynth:
   voice:
     model_directory: ""

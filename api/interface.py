@@ -541,10 +541,10 @@ class VoiceActivationSettings(BaseModel):
     azure: AzureSttConfig
     whispercpp: WhispercppSettings
     fasterwhisper: FasterWhisperSettings
-    whisperonnx: WhisperOnnxSettings
+    whisperonnx: Optional[WhisperOnnxSettings] = None
     whispercpp_config: WhispercppSttConfig
     fasterwhisper_config: FasterWhisperSttConfig
-    whisperonnx_config: WhisperOnnxSttConfig
+    whisperonnx_config: Optional[WhisperOnnxSttConfig] = None
 
 
 class FeaturesConfig(BaseModel):
@@ -976,7 +976,7 @@ class NestedConfig(BaseModel):
     pocket_tts: PocketTTSConfig
     whispercpp: WhispercppSttConfig
     fasterwhisper: FasterWhisperSttConfig
-    whisperonnx: WhisperOnnxSttConfig
+    whisperonnx: Optional[WhisperOnnxSttConfig] = None
     wingman_pro: WingmanProConfig
     perplexity: PerplexityConfig
     xai: XaiConfig

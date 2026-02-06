@@ -975,10 +975,14 @@ class OpenAiWingman(Wingman):
                     hotwords=list(set(hotwords)),
                 )
             elif self.config.features.stt_provider == SttProvider.WHISPER_ONNX:
+                onnx_config = self.config.whisperonnx
+                if onnx_config is None:
+                    from api.interface import WhisperOnnxSttConfig
+                    onnx_config = WhisperOnnxSttConfig()
                 transcript = self.whisperonnx.transcribe(
                     filename=audio_input_wav,
-                    config=self.config.whisperonnx,
-                    language=self.config.whisperonnx.language or None,
+                    config=onnx_config,
+                    language=onnx_config.language or None,
                 )
             elif self.config.features.stt_provider == SttProvider.WINGMAN_PRO:
                 if (
