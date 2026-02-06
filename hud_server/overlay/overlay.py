@@ -1194,6 +1194,8 @@ class HeadsUpOverlay:
         message_spacing = int(props.get('message_spacing', 8))
         fade_old = props.get('fade_old_messages', True)
         sender_colors = props.get('sender_colors', {})
+        scroll_fade_height = int(props.get('scroll_fade_height', 40))
+        color_emojis = props.get('color_emojis', True)
 
         # Build state hash for caching
         msg_state = tuple((m['sender'], m['text'], m.get('color')) for m in messages[-50:])
@@ -1203,6 +1205,7 @@ class HeadsUpOverlay:
             props.get('opacity', 0.85),
             props.get('font_size', 14),
             message_spacing, fade_old,
+            scroll_fade_height, color_emojis,
         )
         current_state = (msg_state, win.get('opacity', 0), props_hash)
 
@@ -1251,12 +1254,17 @@ class HeadsUpOverlay:
             else:
                 sender_color = accent
 
-            # Draw sender name
+            # Draw sender name with emoji support
             if sender:
                 if font_bold:
-                    draw.text((padding, y), sender + ":", fill=sender_color + (msg_alpha,), font=font_bold)
+                    sender_text = sender + ":"
+                    if color_emojis and self.md_renderer:
+                        # Use emoji-aware rendering for proper emoji display
+                        self._render_text_with_emoji(draw, sender_text, padding, y, sender_color + (msg_alpha,), font_bold, emoji_y_offset=0)
+                    else:
+                        draw.text((padding, y), sender_text, fill=sender_color + (msg_alpha,), font=font_bold)
                     try:
-                        bbox = font_bold.getbbox(sender + ":")
+                        bbox = font_bold.getbbox(sender_text)
                         y += bbox[3] - bbox[1] + 4
                     except:
                         y += 20
@@ -1265,8 +1273,11 @@ class HeadsUpOverlay:
             if text and self.md_renderer:
                 y = self.md_renderer.render(draw, temp, text, padding, y, content_width, max_chars=None)
             elif text and font_normal:
-                # Fallback simple text rendering
-                draw.text((padding, y), text, fill=text_color + (msg_alpha,), font=font_normal)
+                # Fallback simple text rendering with emoji support
+                if color_emojis and self.md_renderer:
+                    self._render_text_with_emoji(draw, text, padding, y, text_color + (msg_alpha,), font_normal, emoji_y_offset=0)
+                else:
+                    draw.text((padding, y), text, fill=text_color + (msg_alpha,), font=font_normal)
                 try:
                     lines = text.split('\n')
                     for line in lines:
@@ -1279,7 +1290,11 @@ class HeadsUpOverlay:
 
         # Calculate final height
         bottom_padding = padding - 4
-        final_h = min(max(60, y + bottom_padding), max_height)
+        total_content_height = y + bottom_padding
+        final_h = min(max(60, total_content_height), max_height)
+
+        # Determine if content is clipped (needs scroll)
+        content_clipped = total_content_height > max_height
 
         # Create final canvas
         old_canvas = win.get('canvas')
@@ -1295,11 +1310,62 @@ class HeadsUpOverlay:
         final_draw.rounded_rectangle([0, 0, width - 1, final_h - 1], radius=radius,
                                     fill=bg + (bg_alpha,), outline=(55, 62, 74))
 
-        # Composite content
-        crop = temp.crop((0, 0, width, min(final_h, temp.height)))
+        # Composite content - scroll to bottom (show newest messages)
+        if content_clipped:
+            # Content is taller than max_height, crop from bottom to show newest messages
+            crop_top = total_content_height - final_h
+            crop = temp.crop((0, crop_top, width, crop_top + final_h))
+        else:
+            # Content fits, crop from top
+            crop = temp.crop((0, 0, width, min(final_h, temp.height)))
+
         canvas_region = canvas.crop((0, 0, width, min(final_h, canvas.height)))
         composited = Image.alpha_composite(canvas_region, crop)
         canvas.paste(composited, (0, 0))
+
+        # Apply fade gradient at top when content is clipped to indicate more content above
+        if content_clipped:
+            fade_height = int(props.get('scroll_fade_height', 40))
+            if fade_height > 0:
+                # Get the top portion of the canvas before applying fade
+                top_region = canvas.crop((0, 0, width, fade_height))
+
+                # Create a mask identifying magenta (color key) pixels to preserve rounded corners
+                # Magenta = (255, 0, 255) is used as transparency color key
+                top_data = top_region.load()
+                corner_mask = Image.new('L', (width, fade_height), 0)
+                corner_mask_data = corner_mask.load()
+                for py in range(fade_height):
+                    for px in range(width):
+                        r, g, b, a = top_data[px, py]
+                        # Check if pixel is magenta (color key for transparency)
+                        if r == 255 and g == 0 and b == 255:
+                            corner_mask_data[px, py] = 255  # Mark as corner pixel
+
+                # Create a gradient mask that fades from opaque bg at top to transparent at bottom
+                gradient = Image.new('L', (width, fade_height), 0)
+                for fade_y in range(fade_height):
+                    # Fade: 255 (full bg) at top, 0 (no bg) at bottom
+                    alpha = int(255 * (1.0 - fade_y / fade_height))
+                    ImageDraw.Draw(gradient).line([(0, fade_y), (width, fade_y)], fill=alpha)
+
+                # Create background layer for fade
+                bg_layer = Image.new('RGBA', (width, fade_height), bg + (255,))
+
+                # Apply gradient as alpha to bg layer
+                bg_layer.putalpha(gradient)
+
+                # Composite fade over content
+                faded_top = Image.alpha_composite(top_region, bg_layer)
+
+                # Restore magenta pixels for corners (color key transparency)
+                faded_data = faded_top.load()
+                for py in range(fade_height):
+                    for px in range(width):
+                        if corner_mask_data[px, py] == 255:
+                            faded_data[px, py] = (255, 0, 255, 255)
+
+                canvas.paste(faded_top, (0, 0))
 
         # Update layout manager and position
         self._layout_manager.update_window_height(name, final_h)
@@ -2249,6 +2315,7 @@ class HeadsUpOverlay:
                         'auto_hide_delay': 10.0, 'max_messages': 50,
                         'sender_colors': {}, 'show_timestamps': False,
                         'message_spacing': 8, 'fade_old_messages': True,
+                        'scroll_fade_height': 40,  # Height of fade gradient at top when scrolled
                         'is_chat_window': True,
                         # Layout manager props (margin/spacing now global)
                         'anchor': 'top_left',
@@ -2259,7 +2326,7 @@ class HeadsUpOverlay:
                     # Also merge top-level msg properties for backwards compatibility
                     for key in ['x', 'y', 'width', 'max_height', 'auto_hide', 'auto_hide_delay',
                                 'max_messages', 'sender_colors', 'fade_old_messages',
-                                'anchor', 'priority', 'layout_mode']:
+                                'scroll_fade_height', 'anchor', 'priority', 'layout_mode']:
                         if key in msg and msg[key] is not None:
                             default_props[key] = msg[key]
 
