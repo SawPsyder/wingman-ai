@@ -146,7 +146,10 @@ class OpenAiWingman(Wingman):
 
             if self.uses_provider("fasterwhisper"):
                 self.fasterwhisper.validate(errors)
-            
+
+            if self.uses_provider("whisperonnx"):
+                self.whisperonnx.validate(errors)
+
             if self.uses_provider("pocket_tts"):
                 self.pocket_tts.validate(errors)
 
@@ -295,6 +298,8 @@ class OpenAiWingman(Wingman):
             return self.config.features.stt_provider == SttProvider.WHISPERCPP
         elif provider_type == "fasterwhisper":
             return self.config.features.stt_provider == SttProvider.FASTER_WHISPER
+        elif provider_type == "whisperonnx":
+            return self.config.features.stt_provider == SttProvider.WHISPER_ONNX
         elif provider_type == "wingman_pro":
             return any(
                 [
@@ -968,6 +973,12 @@ class OpenAiWingman(Wingman):
                     filename=audio_input_wav,
                     config=self.config.fasterwhisper,
                     hotwords=list(set(hotwords)),
+                )
+            elif self.config.features.stt_provider == SttProvider.WHISPER_ONNX:
+                transcript = self.whisperonnx.transcribe(
+                    filename=audio_input_wav,
+                    config=self.config.whisperonnx,
+                    language=self.config.whisperonnx.language or None,
                 )
             elif self.config.features.stt_provider == SttProvider.WINGMAN_PRO:
                 if (

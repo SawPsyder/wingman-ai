@@ -50,6 +50,12 @@ torch==2.8.0
 torchaudio==2.8.0
 pocket-tts==1.0.3 # needs to move to 1.0.4 when available as that one will have local model support
 
+# WhisperOnnx - ONNX Runtime-based Whisper for cross-GPU (AMD, Intel, NVIDIA) compatibility
+# Install onnxruntime-directml on Windows for DirectML GPU support, or onnxruntime-gpu for CUDA
+optimum-onnx>=0.1.0
+onnxruntime>=1.24.1
+transformers>=4.48.0
+
 
 # =============================================================================
 # SKILL DEPENDENCIES

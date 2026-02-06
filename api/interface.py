@@ -133,6 +133,14 @@ class FasterWhisperSettings(BaseModel):
     device: str
 
 
+class WhisperOnnxSettings(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
+    """openai/whisper-tiny, openai/whisper-base, openai/whisper-small, openai/whisper-medium, openai/whisper-large-v3, openai/whisper-large-v3-turbo"""
+    model_size: str
+    """auto, cpu, directml, cuda"""
+    device: str
+
+
 class XVASynthSettings(BaseModel):
     enable: bool
     host: str
@@ -164,6 +172,10 @@ class FasterWhisperSttConfig(BaseModel):
     language_detection_threshold: float
 
 
+class WhisperOnnxSttConfig(BaseModel):
+    language: Optional[str] = None
+
+
 class WhispercppTranscript(BaseModel):
     text: str
 
@@ -172,6 +184,11 @@ class FasterWhisperTranscript(BaseModel):
     text: str
     language: str
     language_probability: float
+
+
+class WhisperOnnxTranscript(BaseModel):
+    text: str
+    language: str
 
 
 class AzureInstanceConfig(BaseModel):
@@ -524,8 +541,10 @@ class VoiceActivationSettings(BaseModel):
     azure: AzureSttConfig
     whispercpp: WhispercppSettings
     fasterwhisper: FasterWhisperSettings
+    whisperonnx: WhisperOnnxSettings
     whispercpp_config: WhispercppSttConfig
     fasterwhisper_config: FasterWhisperSttConfig
+    whisperonnx_config: WhisperOnnxSttConfig
 
 
 class FeaturesConfig(BaseModel):
@@ -957,6 +976,7 @@ class NestedConfig(BaseModel):
     pocket_tts: PocketTTSConfig
     whispercpp: WhispercppSttConfig
     fasterwhisper: FasterWhisperSttConfig
+    whisperonnx: WhisperOnnxSttConfig
     wingman_pro: WingmanProConfig
     perplexity: PerplexityConfig
     xai: XaiConfig

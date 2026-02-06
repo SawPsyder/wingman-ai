@@ -32,6 +32,11 @@ voice_activation:
     multilingual: false
     hotwords: []
     additional_hotwords: []
+  whisperonnx:
+    model_size: openai/whisper-base
+    device: auto
+  whisperonnx_config:
+    language: ""
 wingman_pro:
   base_url: https://wingman-api-europe.azurewebsites.net
   region: europe

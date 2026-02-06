@@ -9,6 +9,7 @@ from api.interface import (
     SettingsConfig,
 )
 from providers.faster_whisper import FasterWhisper
+from providers.whisper_onnx import WhisperOnnx
 from providers.whispercpp import Whispercpp
 from providers.xvasynth import XVASynth
 from providers.pocket_tts import PocketTTS
@@ -28,6 +29,7 @@ class SettingsService:
         self.settings_events = PubSub()
         self.whispercpp: Whispercpp = None
         self.fasterwhisper: FasterWhisper = None
+        self.whisperonnx: WhisperOnnx = None
         self.xvasynth: XVASynth = None
         self.pocket_tts: PocketTTS = None
 
@@ -58,11 +60,13 @@ class SettingsService:
         self,
         whispercpp: Whispercpp,
         fasterwhisper: FasterWhisper,
+        whisperonnx: WhisperOnnx,
         xvasynth: XVASynth,
         pocket_tts: PocketTTS,
     ):
         self.whispercpp = whispercpp
         self.fasterwhisper = fasterwhisper
+        self.whisperonnx = whisperonnx
         self.xvasynth = xvasynth
         self.pocket_tts = pocket_tts
 
@@ -110,6 +114,16 @@ class SettingsService:
             return
         self.fasterwhisper.update_settings(
             settings=settings.voice_activation.fasterwhisper
+        )
+
+        # WhisperOnnx
+        if not self.whisperonnx:
+            self.printr.toast_error(
+                "WhisperOnnx is not initialized. Please run SettingsService.initialize()",
+            )
+            return
+        self.whisperonnx.update_settings(
+            settings=settings.voice_activation.whisperonnx
         )
 
         # XVASynth

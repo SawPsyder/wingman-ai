@@ -143,6 +143,7 @@ class SttProvider(Enum):
     AZURE_SPEECH = "azure_speech"
     WHISPERCPP = "whispercpp"
     FASTER_WHISPER = "fasterwhisper"
+    WHISPER_ONNX = "whisperonnx"
     WINGMAN_PRO = "wingman_pro"
     GROQ = "groq"
 
@@ -152,6 +153,7 @@ class VoiceActivationSttProvider(Enum):
     AZURE = "azure"
     WHISPERCPP = "whispercpp"
     FASTER_WHISPER = "fasterwhisper"
+    WHISPER_ONNX = "whisperonnx"
     WINGMAN_PRO = "wingman_pro"
     GROQ = "groq"
 

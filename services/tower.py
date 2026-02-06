@@ -8,6 +8,7 @@ from api.interface import (
     ConfigDirInfo,
 )
 from providers.faster_whisper import FasterWhisper
+from providers.whisper_onnx import WhisperOnnx
 from providers.pocket_tts import PocketTTS
 from providers.whispercpp import Whispercpp
 from providers.xvasynth import XVASynth
@@ -33,6 +34,7 @@ class Tower:
         audio_library: AudioLibrary,
         whispercpp: Whispercpp,
         fasterwhisper: FasterWhisper,
+        whisperonnx: WhisperOnnx,
         xvasynth: XVASynth,
         pocket_tts: PocketTTS,
     ):
@@ -46,6 +48,7 @@ class Tower:
         self.log_source_name = "Tower"
         self.whispercpp = whispercpp
         self.fasterwhisper = fasterwhisper
+        self.whisperonnx = whisperonnx
         self.xvasynth = xvasynth
         self.pocket_tts = pocket_tts
 
@@ -115,6 +118,7 @@ class Tower:
                     audio_library=self.audio_library,
                     whispercpp=self.whispercpp,
                     fasterwhisper=self.fasterwhisper,
+                    whisperonnx=self.whisperonnx,
                     xvasynth=self.xvasynth,
                     pocket_tts=self.pocket_tts,
                     tower=self,
@@ -128,6 +132,7 @@ class Tower:
                     audio_library=self.audio_library,
                     whispercpp=self.whispercpp,
                     fasterwhisper=self.fasterwhisper,
+                    whisperonnx=self.whisperonnx,
                     xvasynth=self.xvasynth,
                     pocket_tts=self.pocket_tts,
                     tower=self,

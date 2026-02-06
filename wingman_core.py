@@ -37,6 +37,7 @@ from api.interface import (
 )
 from providers.elevenlabs import ElevenLabs
 from providers.faster_whisper import FasterWhisper
+from providers.whisper_onnx import WhisperOnnx
 from providers.google import GoogleGenAI
 from providers.open_ai import OpenAi
 from providers.whispercpp import Whispercpp
@@ -152,6 +153,20 @@ class WingmanCore(WebSocketUser):
             path="/fasterwhisper/devices",
             response_model=list[str],
             endpoint=self.get_fasterwhisper_devices,
+            tags=tags,
+        )
+        self.router.add_api_route(
+            methods=["GET"],
+            path="/whisperonnx/modelsizes",
+            response_model=list[str],
+            endpoint=self.get_whisperonnx_modelsizes,
+            tags=tags,
+        )
+        self.router.add_api_route(
+            methods=["GET"],
+            path="/whisperonnx/devices",
+            response_model=list[str],
+            endpoint=self.get_whisperonnx_devices,
             tags=tags,
         )
         self.router.add_api_route(
@@ -390,11 +405,17 @@ class WingmanCore(WebSocketUser):
             app_root_path=app_root_path,
             app_is_bundled=app_is_bundled,
         )
+        self.whisperonnx = WhisperOnnx(
+            settings=self.settings_service.settings.voice_activation.whisperonnx,
+            app_root_path=app_root_path,
+            app_is_bundled=app_is_bundled,
+        )
         self.xvasynth = XVASynth(settings=self.settings_service.settings.xvasynth)
         self.pocket_tts = PocketTTS(settings=self.settings_service.settings.pocket_tts)
         self.settings_service.initialize(
             whispercpp=self.whispercpp,
             fasterwhisper=self.fasterwhisper,
+            whisperonnx=self.whisperonnx,
             xvasynth=self.xvasynth,
             pocket_tts=self.pocket_tts,
         )
@@ -675,6 +696,7 @@ class WingmanCore(WebSocketUser):
             audio_library=self.audio_library,
             whispercpp=self.whispercpp,
             fasterwhisper=self.fasterwhisper,
+            whisperonnx=self.whisperonnx,
             xvasynth=self.xvasynth,
             pocket_tts=self.pocket_tts,
         )
@@ -964,6 +986,13 @@ class WingmanCore(WebSocketUser):
                 hotwords=list(set(combined_hotwords)),
             )
             text = transcription.text
+        elif provider == VoiceActivationSttProvider.WHISPER_ONNX:
+            transcription = self.whisperonnx.transcribe(
+                config=self.settings_service.settings.voice_activation.whisperonnx_config,
+                filename=recording_file,
+            )
+            if transcription:
+                text = transcription.text
 
         if text:
             wingman = self.tower.get_wingman_from_text(text)
@@ -1262,6 +1291,33 @@ class WingmanCore(WebSocketUser):
         devices = [
             "auto",
             "cpu",
+        ]
+        if self.system_manager.is_cuda_available():
+            devices.append("cuda")
+        return devices
+
+    # GET /whisperonnx/modelsizes
+    def get_whisperonnx_modelsizes(self):
+        model_sizes = [
+            "openai/whisper-tiny",
+            "openai/whisper-tiny.en",
+            "openai/whisper-base",
+            "openai/whisper-base.en",
+            "openai/whisper-small",
+            "openai/whisper-small.en",
+            "openai/whisper-medium",
+            "openai/whisper-medium.en",
+            "openai/whisper-large-v3",
+            "openai/whisper-large-v3-turbo",
+        ]
+        return model_sizes
+
+    # GET /whisperonnx/devices
+    def get_whisperonnx_devices(self):
+        devices = [
+            "auto",
+            "cpu",
+            "directml",
         ]
         if self.system_manager.is_cuda_available():
             devices.append("cuda")
