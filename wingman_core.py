@@ -33,6 +33,8 @@ from api.interface import (
     ElevenlabsModel,
     OpenRouterEndpointResult,
     VoiceActivationSettings,
+    WhisperOnnxSettings,
+    WhisperOnnxSttConfig,
     WingmanInitializationError,
 )
 from providers.elevenlabs import ElevenLabs
@@ -407,7 +409,6 @@ class WingmanCore(WebSocketUser):
         )
         whisperonnx_settings = self.settings_service.settings.voice_activation.whisperonnx
         if whisperonnx_settings is None:
-            from api.interface import WhisperOnnxSettings
             whisperonnx_settings = WhisperOnnxSettings(
                 model_size="openai/whisper-base", device="auto"
             )
@@ -996,7 +997,6 @@ class WingmanCore(WebSocketUser):
         elif provider == VoiceActivationSttProvider.WHISPER_ONNX:
             onnx_config = self.settings_service.settings.voice_activation.whisperonnx_config
             if onnx_config is None:
-                from api.interface import WhisperOnnxSttConfig
                 onnx_config = WhisperOnnxSttConfig()
             transcription = self.whisperonnx.transcribe(
                 config=onnx_config,

@@ -28,9 +28,8 @@ class WhisperOnnx:
         self.pipeline = None
 
         self.is_windows = platform.system() == "Windows"
-        if self.is_windows:
-            app_dir = path.dirname(app_root_path) if app_is_bundled else app_root_path
-            self.models_dir = path.join(app_dir, MODELS_DIR)
+        app_dir = path.dirname(app_root_path) if app_is_bundled else app_root_path
+        self.models_dir = path.join(app_dir, MODELS_DIR)
 
         self.__update_model()
 
@@ -90,12 +89,11 @@ class WhisperOnnx:
 
             provider = self._get_execution_provider()
 
-            # Check for local model directory on Windows
+            # Check for local model directory
             local_model_path = None
-            if self.is_windows:
-                local_path = path.join(self.models_dir, model_id.replace("/", "--"))
-                if path.exists(local_path):
-                    local_model_path = local_path
+            local_path = path.join(self.models_dir, model_id.replace("/", "--"))
+            if path.exists(local_path):
+                local_model_path = local_path
 
             model_source = local_model_path or model_id
 
@@ -106,7 +104,7 @@ class WhisperOnnx:
             )
 
             # Save locally for future use if downloaded from hub
-            if local_model_path is None and self.is_windows:
+            if local_model_path is None:
                 save_path = path.join(
                     self.models_dir, model_id.replace("/", "--")
                 )
@@ -115,7 +113,7 @@ class WhisperOnnx:
             self.processor = AutoProcessor.from_pretrained(model_source)
 
             # Save processor locally too
-            if local_model_path is None and self.is_windows:
+            if local_model_path is None:
                 self.processor.save_pretrained(save_path)
 
             self.pipeline = pipeline(

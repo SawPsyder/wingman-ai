@@ -21,6 +21,7 @@ from api.interface import (
     OpenRouterEndpointResult,
     SettingsConfig,
     SoundConfig,
+    WhisperOnnxSttConfig,
     WingmanInitializationError,
     CommandConfig,
 )
@@ -977,7 +978,6 @@ class OpenAiWingman(Wingman):
             elif self.config.features.stt_provider == SttProvider.WHISPER_ONNX:
                 onnx_config = self.config.whisperonnx
                 if onnx_config is None:
-                    from api.interface import WhisperOnnxSttConfig
                     onnx_config = WhisperOnnxSttConfig()
                 transcript = self.whisperonnx.transcribe(
                     filename=audio_input_wav,
