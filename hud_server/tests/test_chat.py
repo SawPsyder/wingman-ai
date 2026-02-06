@@ -485,7 +485,7 @@ async def test_chat_message_update(session: TestSession):
 
     # Test that merged messages return the existing ID
     msg3_id = await session.send_chat_message(chat_name, "Alice", "I'm adding to my updated message.")
-    # Since Alice was not the last sender (Bob was), this should be a new message
+    # Bob was the last sender, so this creates a new message for Alice
     assert msg3_id is not None, "Expected a message ID back"
     print(f"  Message 3 ID: {msg3_id}")
     await asyncio.sleep(0.8)

@@ -56,9 +56,9 @@ class HudItem:
 @dataclass
 class ChatMessage:
     """A chat message."""
+    sender: str
+    text: str
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
-    sender: str = ""
-    text: str = ""
     color: Optional[str] = None
     timestamp: float = field(default_factory=time.time)
 
