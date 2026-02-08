@@ -1953,6 +1953,7 @@ class HeadsUpOverlay:
                     if self._foreground_changed.is_set():
                         self._foreground_changed.clear()
                         self._reapply_topmost()
+                        print("[HUD] Foreground change detected - moved HUD to absolute foreground")
 
                     self._emit_heartbeat()
 
