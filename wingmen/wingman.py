@@ -34,6 +34,7 @@ from providers.pocket_tts import PocketTTS
 from services.audio_player import AudioPlayer
 from services.benchmark import Benchmark
 from services.module_manager import ModuleManager
+from services.pub_sub import PubSub
 from services.secret_keeper import SecretKeeper
 from services.printr import Printr
 from services.audio_library import AudioLibrary
@@ -96,6 +97,9 @@ class Wingman:
 
         self.audio_library = audio_library
         """A service that allows you to play and manage audio files from the audio library."""
+
+        self.events = PubSub()
+        """A PubSub event system for the wingman. Skills can subscribe to events published by the wingman or other skills."""
 
         self.execution_start: None | float = None
         """Used for benchmarking executon times. The timer is (re-)started whenever the process function starts."""

@@ -1,0 +1,77 @@
+module: skills.voice_activation_notifier.main
+name: VoiceActivationNotifier
+display_name: Voice Activation Notifier
+author: JayMatthew
+auto_activate: true
+tags:
+  - Utility
+  - HUD
+description:
+  en: Displays a microphone icon on the HUD and plays sounds when voice activation is toggled.
+  de: Zeigt ein Mikrofonsymbol auf dem HUD an und spielt Sounds ab, wenn die Sprachaktivierung umgeschaltet wird.
+hint:
+  en: Make sure the HUD server is enabled in global settings for the mic icon display.
+  de: Stelle sicher, dass der HUD-Server in den globalen Einstellungen aktiviert ist, um das Mikrofonsymbol anzuzeigen.
+discoverable_by_default: false
+custom_properties:
+  - id: show_active_mic
+    name: Show Active Mic Icon
+    hint: Display a microphone icon on the HUD when voice activation is active.
+    property_type: boolean
+    value: true
+    required: false
+
+  - id: show_inactive_mic
+    name: Show Inactive Mic Icon
+    hint: Display a muted microphone icon on the HUD when voice activation is inactive.
+    property_type: boolean
+    value: true
+    required: false
+
+  - id: hud_priority
+    name: HUD Priority
+    hint: Stacking priority for the mic icon. Higher values appear closer to the anchor point. Must be greater than 0.
+    property_type: number
+    value: 5
+    required: false
+
+  - id: hud_anchor
+    name: HUD Anchor Point
+    hint: "Screen position for the mic icon. Valid values: top_left, top_right, bottom_left, bottom_right, center."
+    property_type: string
+    value: "bottom_right"
+    required: false
+
+  - id: activation_sound
+    name: Activation Sound
+    hint: Sound to play when voice activation is activated. Leave empty for no sound.
+    required: false
+    property_type: audio_files
+    options:
+      - label: wait
+        value: true
+      - label: multiple
+        value: false
+      - label: volume
+        value: true
+    value:
+      files: []
+      volume: 0.5
+      wait: true
+
+  - id: deactivation_sound
+    name: Deactivation Sound
+    hint: Sound to play when voice activation is deactivated. Leave empty for no sound.
+    required: false
+    property_type: audio_files
+    options:
+      - label: wait
+        value: true
+      - label: multiple
+        value: false
+      - label: volume
+        value: true
+    value:
+      files: []
+      volume: 0.5
+      wait: true

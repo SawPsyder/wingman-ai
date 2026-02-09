@@ -1156,6 +1156,15 @@ class WingmanCore(WebSocketUser):
         command = VoiceActivationMutedCommand(muted=mute)
         self.ensure_async(self._connection_manager.broadcast(command))
 
+        # Publish voice activation event to all wingmen
+        if self.tower:
+            for wingman in self.tower.wingmen:
+                self.ensure_async(
+                    wingman.events.publish(
+                        "voice_activation_changed", self.is_listening
+                    )
+                )
+
     def toggle_voice_recognition(self):
         mute = self.is_listening
         self.start_voice_recognition(mute)
