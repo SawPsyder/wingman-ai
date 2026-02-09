@@ -7,7 +7,6 @@ This skill subscribes to the wingman's voice_activation_changed event and:
 - Plays configurable sounds on activation/deactivation
 """
 
-import asyncio
 import re
 from typing import TYPE_CHECKING, Optional
 
@@ -45,7 +44,6 @@ class VoiceActivationNotifier(Skill):
 
         self._client: Optional[HudHttpClient] = None
         self._group_name: Optional[str] = None
-        self._is_active: bool = False
         self._hud_connected: bool = False
 
     async def validate(self) -> list[WingmanInitializationError]:
@@ -224,8 +222,6 @@ class VoiceActivationNotifier(Skill):
 
     async def _on_voice_activation_changed(self, is_active: bool) -> None:
         """Handle voice activation state change."""
-        self._is_active = is_active
-
         # Update HUD display
         await self._update_hud_display(is_active)
 
