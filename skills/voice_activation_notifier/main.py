@@ -58,10 +58,14 @@ class VoiceActivationNotifier(Skill):
 
         valid_anchors = [
             "top_left",
+            "top_center",
             "top_right",
-            "bottom_left",
-            "bottom_right",
+            "center_left",
             "center",
+            "center_right",
+            "bottom_left",
+            "bottom_center",
+            "bottom_right",
         ]
 
         # Validate boolean properties
