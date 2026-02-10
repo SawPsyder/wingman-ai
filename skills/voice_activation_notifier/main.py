@@ -49,6 +49,7 @@ class VoiceActivationNotifier(Skill):
         self._client: Optional[HudHttpClient] = None
         self._main_loop: Optional[asyncio.AbstractEventLoop] = None
         self._group_name: str = "va_notifier"
+        self._group_initialized: bool = False
 
     # ─────────────────────────────── Configuration ─────────────────────────────── #
 
@@ -167,9 +168,10 @@ class VoiceActivationNotifier(Skill):
                 pass
 
             # Setup group name with unique per-wingman suffix
-            if self._group_name == "va_notifier":
+            if not self._group_initialized:
                 sanitized_name = re.sub(r"[^a-zA-Z0-9_-]", "_", self.wingman.name)
                 self._group_name = f"va_notifier_{sanitized_name}"
+                self._group_initialized = True
 
         if not self._client.connected:
             try:
