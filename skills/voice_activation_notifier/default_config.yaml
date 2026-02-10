@@ -32,7 +32,7 @@ custom_properties:
     name: HUD Priority
     hint: Stacking priority for the mic icon. Higher values appear closer to the anchor point. Must be greater than 0.
     property_type: number
-    value: 5
+    value: 50
     required: false
 
   - id: hud_anchor
@@ -40,6 +40,13 @@ custom_properties:
     hint: "Screen position for the mic icon. Valid values: top_left, top_center, top_right, left_center, center, right_center, bottom_left, bottom_center, bottom_right."
     property_type: string
     value: "top_left"
+    required: false
+
+  - id: hud_opacity
+    name: HUD Opacity
+    hint: "Opacity of the mic icon on the HUD. ValXue should be between 0.0 (fully transparent) and 1.0 (fully opaque)."
+    property_type: number
+    value: 0.85
     required: false
 
   - id: activation_sound
@@ -57,6 +64,7 @@ custom_properties:
     value:
       files: []
       volume: 0.5
+      wait: false
 
   - id: deactivation_sound
     name: Deactivation Sound
@@ -73,3 +81,4 @@ custom_properties:
     value:
       files: []
       volume: 0.5
+      wait: false

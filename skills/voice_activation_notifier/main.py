@@ -20,10 +20,10 @@ from api.interface import (
     SkillConfig,
     WingmanInitializationError,
 )
+from hud_server.types import Anchor, LayoutMode, HudColor, PersistentProps
 from services.printr import Printr
 from skills.skill_base import Skill
 from hud_server.http_client import HudHttpClient
-from hud_server.models import HudGroupProps
 from hud_server import constants as hud_const
 
 if TYPE_CHECKING:
@@ -37,15 +37,15 @@ MIC_MUTED = "\U0001F507"  # 🔇
 
 # Valid anchor positions from HUD server constants
 VALID_ANCHORS = [
-    hud_const.ANCHOR_TOP_LEFT,
-    hud_const.ANCHOR_TOP_CENTER,
-    hud_const.ANCHOR_TOP_RIGHT,
-    hud_const.ANCHOR_LEFT_CENTER,
-    hud_const.ANCHOR_CENTER,
-    hud_const.ANCHOR_RIGHT_CENTER,
-    hud_const.ANCHOR_BOTTOM_LEFT,
-    hud_const.ANCHOR_BOTTOM_CENTER,
-    hud_const.ANCHOR_BOTTOM_RIGHT,
+    Anchor.TOP_LEFT,
+    Anchor.TOP_CENTER,
+    Anchor.TOP_RIGHT,
+    Anchor.LEFT_CENTER,
+    Anchor.CENTER,
+    Anchor.RIGHT_CENTER,
+    Anchor.BOTTOM_LEFT,
+    Anchor.BOTTOM_CENTER,
+    Anchor.BOTTOM_RIGHT,
 ]
 
 
@@ -63,8 +63,9 @@ class VoiceActivationNotifier(Skill):
         # HUD client state
         self._client: Optional[HudHttpClient] = None
         self._main_loop: Optional[asyncio.AbstractEventLoop] = None
-        self._group_name: str = "va_notifier"
+        self._group_name: str = "vanotifier_persistent"
         self._group_initialized: bool = False
+        self._current_voice_state: bool = False  # Track current voice activation state
 
     # ─────────────────────────────── Configuration ─────────────────────────────── #
 
@@ -103,6 +104,22 @@ class VoiceActivationNotifier(Skill):
         self.retrieve_custom_property_value("activation_sound", errors)
         self.retrieve_custom_property_value("deactivation_sound", errors)
 
+        # Validate opacity
+        hud_opacity = self.retrieve_custom_property_value("hud_opacity", errors)
+        if hud_opacity is not None:
+            try:
+                hud_opacity = float(hud_opacity)
+                if not (0 <= hud_opacity <= 1):
+                    raise ValueError()
+            except (ValueError, TypeError):
+                errors.append(
+                    WingmanInitializationError(
+                        wingman_name=self.wingman.name,
+                        message=f"Invalid hud_opacity: '{hud_opacity}'. Must be a number between 0 and 1.",
+                        error_type=WingmanInitializationErrorType.INVALID_CONFIG,
+                    )
+                )
+
         return errors
 
     def _get_prop(self, key: str, default):
@@ -110,21 +127,20 @@ class VoiceActivationNotifier(Skill):
         val = self.retrieve_custom_property_value(key, [])
         return val if val is not None else default
 
-    def _get_hud_props(self) -> HudGroupProps:
+    def _get_hud_props(self) -> PersistentProps:
         """Get HUD group properties as a typed HudGroupProps model."""
-        return HudGroupProps(
-            anchor=str(self._get_prop("hud_anchor", hud_const.ANCHOR_TOP_LEFT)),
+        return PersistentProps(
+            anchor=str(self._get_prop("hud_anchor", Anchor.TOP_LEFT)),
             priority=int(self._get_prop("hud_priority", 5)),
-            layout_mode=hud_const.LAYOUT_MODE_AUTO,
+            layout_mode=LayoutMode.AUTO,
             width=40,
             max_height=40,
-            bg_color=hud_const.DEFAULT_BG_COLOR,
-            text_color=hud_const.DEFAULT_TEXT_COLOR,
-            opacity=hud_const.DEFAULT_OPACITY,
-            border_radius=8,
+            bg_color=HudColor.BG_DARK,
+            text_color=HudColor.TEXT_PRIMARY,
+            opacity=float(self._get_prop("hud_opacity", 0.85)),
+            border_radius=20,
             font_size=20,
             content_padding=8,
-            auto_fade=False,
         )
 
     async def update_config(self, new_config) -> None:
@@ -140,10 +156,12 @@ class VoiceActivationNotifier(Skill):
 
         # Recreate HUD group with new settings
         await self._client.delete_group(self._group_name)
-        props = self._get_hud_props()
         await self._client.create_group(
-            self._group_name, props=props.model_dump(exclude_none=True)
+            self._group_name, props=self._get_hud_props(),
         )
+
+        # Restore the current mic icon display using stored state
+        await self._update_hud_display(self._current_voice_state)
 
     # ─────────────────────────────── Connection ─────────────────────────────── #
 
@@ -187,10 +205,9 @@ class VoiceActivationNotifier(Skill):
             try:
                 if await self._client.connect(timeout=hud_const.HTTP_CONNECT_TIMEOUT):
                     # Create/update HUD group with typed props
-                    props = self._get_hud_props()
                     await self._client.create_group(
                         self._group_name,
-                        props=props.model_dump(exclude_none=True),
+                        props=self._get_hud_props(),
                     )
                     return True
                 else:
@@ -239,10 +256,9 @@ class VoiceActivationNotifier(Skill):
 
             try:
                 if await self._client.connect(timeout=hud_const.HTTP_CONNECT_TIMEOUT):
-                    props = self._get_hud_props()
                     await self._client.create_group(
                         self._group_name,
-                        props=props.model_dump(exclude_none=True),
+                        props=self._get_hud_props(),
                     )
 
                     # Show initial state (muted by default)
@@ -303,6 +319,9 @@ class VoiceActivationNotifier(Skill):
 
     async def _on_voice_activation_changed(self, is_active: bool) -> None:
         """Handle voice activation state change."""
+        # Store current state
+        self._current_voice_state = is_active
+
         # Update HUD display
         await self._update_hud_display(is_active)
 
