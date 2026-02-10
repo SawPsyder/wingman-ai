@@ -23,6 +23,8 @@ from api.interface import (
 from services.printr import Printr
 from skills.skill_base import Skill
 from hud_server.http_client import HudHttpClient
+from hud_server.models import HudGroupProps
+from hud_server import constants as hud_const
 
 if TYPE_CHECKING:
     from wingmen.open_ai_wingman import OpenAiWingman
@@ -32,6 +34,19 @@ printr = Printr()
 # Unicode mic symbols
 MIC_ACTIVE = "\U0001F3A4"  # 🎤
 MIC_MUTED = "\U0001F507"  # 🔇
+
+# Valid anchor positions from HUD server constants
+VALID_ANCHORS = [
+    hud_const.ANCHOR_TOP_LEFT,
+    hud_const.ANCHOR_TOP_CENTER,
+    hud_const.ANCHOR_TOP_RIGHT,
+    hud_const.ANCHOR_LEFT_CENTER,
+    hud_const.ANCHOR_CENTER,
+    hud_const.ANCHOR_RIGHT_CENTER,
+    hud_const.ANCHOR_BOTTOM_LEFT,
+    hud_const.ANCHOR_BOTTOM_CENTER,
+    hud_const.ANCHOR_BOTTOM_RIGHT,
+]
 
 
 class VoiceActivationNotifier(Skill):
@@ -56,18 +71,6 @@ class VoiceActivationNotifier(Skill):
     async def validate(self) -> list[WingmanInitializationError]:
         errors = await super().validate()
 
-        valid_anchors = [
-            "top_left",
-            "top_center",
-            "top_right",
-            "center_left",
-            "center",
-            "center_right",
-            "bottom_left",
-            "bottom_center",
-            "bottom_right",
-        ]
-
         # Validate boolean properties
         self.retrieve_custom_property_value("show_active_mic", errors)
         self.retrieve_custom_property_value("show_inactive_mic", errors)
@@ -87,11 +90,11 @@ class VoiceActivationNotifier(Skill):
 
         # Validate hud_anchor
         hud_anchor = self.retrieve_custom_property_value("hud_anchor", errors)
-        if hud_anchor is not None and hud_anchor not in valid_anchors:
+        if hud_anchor is not None and hud_anchor not in VALID_ANCHORS:
             errors.append(
                 WingmanInitializationError(
                     wingman_name=self.wingman.name,
-                    message=f"Invalid hud_anchor: '{hud_anchor}'. Must be one of: {', '.join(valid_anchors)}.",
+                    message=f"Invalid hud_anchor: '{hud_anchor}'. Must be one of: {', '.join(VALID_ANCHORS)}.",
                     error_type=WingmanInitializationErrorType.INVALID_CONFIG,
                 )
             )
@@ -107,22 +110,22 @@ class VoiceActivationNotifier(Skill):
         val = self.retrieve_custom_property_value(key, [])
         return val if val is not None else default
 
-    def _get_hud_props(self) -> dict:
-        """Get HUD group properties as a dictionary."""
-        return {
-            "anchor": str(self._get_prop("hud_anchor", "bottom_right")),
-            "priority": int(self._get_prop("hud_priority", 5)),
-            "layout_mode": "auto",
-            "width": 40,
-            "max_height": 40,
-            "bg_color": "#1e212b",
-            "text_color": "#f0f0f0",
-            "opacity": 0.85,
-            "border_radius": 8,
-            "font_size": 20,
-            "content_padding": 8,
-            "auto_fade": False,
-        }
+    def _get_hud_props(self) -> HudGroupProps:
+        """Get HUD group properties as a typed HudGroupProps model."""
+        return HudGroupProps(
+            anchor=str(self._get_prop("hud_anchor", hud_const.ANCHOR_TOP_LEFT)),
+            priority=int(self._get_prop("hud_priority", 5)),
+            layout_mode=hud_const.LAYOUT_MODE_AUTO,
+            width=40,
+            max_height=40,
+            bg_color=hud_const.DEFAULT_BG_COLOR,
+            text_color=hud_const.DEFAULT_TEXT_COLOR,
+            opacity=hud_const.DEFAULT_OPACITY,
+            border_radius=8,
+            font_size=20,
+            content_padding=8,
+            auto_fade=False,
+        )
 
     async def update_config(self, new_config) -> None:
         """Handle configuration updates - recreate HUD group with new settings."""
@@ -137,7 +140,10 @@ class VoiceActivationNotifier(Skill):
 
         # Recreate HUD group with new settings
         await self._client.delete_group(self._group_name)
-        await self._client.create_group(self._group_name, props=self._get_hud_props())
+        props = self._get_hud_props()
+        await self._client.create_group(
+            self._group_name, props=props.model_dump(exclude_none=True)
+        )
 
     # ─────────────────────────────── Connection ─────────────────────────────── #
 
@@ -179,10 +185,12 @@ class VoiceActivationNotifier(Skill):
 
         if not self._client.connected:
             try:
-                if await self._client.connect(timeout=3.0):
-                    # Create/update HUD group
+                if await self._client.connect(timeout=hud_const.HTTP_CONNECT_TIMEOUT):
+                    # Create/update HUD group with typed props
+                    props = self._get_hud_props()
                     await self._client.create_group(
-                        self._group_name, props=self._get_hud_props()
+                        self._group_name,
+                        props=props.model_dump(exclude_none=True),
                     )
                     return True
                 else:
@@ -227,11 +235,14 @@ class VoiceActivationNotifier(Skill):
             # Setup group name
             sanitized_name = re.sub(r"[^a-zA-Z0-9_-]", "_", self.wingman.name)
             self._group_name = f"va_notifier_{sanitized_name}"
+            self._group_initialized = True
 
             try:
-                if await self._client.connect(timeout=3.0):
+                if await self._client.connect(timeout=hud_const.HTTP_CONNECT_TIMEOUT):
+                    props = self._get_hud_props()
                     await self._client.create_group(
-                        self._group_name, props=self._get_hud_props()
+                        self._group_name,
+                        props=props.model_dump(exclude_none=True),
                     )
 
                     # Show initial state (muted by default)

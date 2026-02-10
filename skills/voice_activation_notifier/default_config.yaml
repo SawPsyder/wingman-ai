@@ -37,7 +37,7 @@ custom_properties:
 
   - id: hud_anchor
     name: HUD Anchor Point
-    hint: "Screen position for the mic icon. Valid values: top_left, top_center top_right, center_left, center, center_right, bottom_left, bottom_center, bottom_right."
+    hint: "Screen position for the mic icon. Valid values: top_left, top_center, top_right, left_center, center, right_center, bottom_left, bottom_center, bottom_right."
     property_type: string
     value: "top_left"
     required: false

@@ -83,8 +83,8 @@ class HudGroupProps(BaseModel):
     layout_mode: str = Field(default="auto", pattern=r"^(auto|manual|hybrid)$")
     """Layout mode: 'auto' (automatic stacking), 'manual' (fixed x,y), 'hybrid' (auto with offset)."""
 
-    anchor: str = Field(default="top_left", pattern=r"^(top_left|top_right|bottom_left|bottom_right|center)$")
-    """Screen anchor for auto layout: 'top_left', 'top_right', 'bottom_left', 'bottom_right', 'center'."""
+    anchor: str = Field(default="top_left", pattern=r"^(top_left|top_center|top_right|left_center|center|right_center|bottom_left|bottom_center|bottom_right)$")
+    """Screen anchor for auto layout: 'top_left', 'top_center', 'top_right', 'left_center', 'center', 'right_center', 'bottom_left', 'bottom_center', 'bottom_right'."""
 
     priority: int = Field(default=10, ge=0, le=100)
     """Stacking priority within anchor zone. Higher = closer to anchor point."""
