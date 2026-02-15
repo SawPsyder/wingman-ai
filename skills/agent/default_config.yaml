@@ -1,0 +1,31 @@
+module: skills.agent.main
+name: SubAgent
+display_name: Sub-Agent
+author: ShipBit
+tags:
+  - Utility
+description:
+  en: Enables your Wingman to spawn sub-agents for complex tasks. Sub-agents inherit all available tools and MCPs, run in their own conversation context, and return results without bloating the main message history.
+  de: Ermöglicht es deinem Wingman, Sub-Agenten für komplexe Aufgaben zu starten. Sub-Agenten erben alle verfügbaren Tools und MCPs, laufen in ihrem eigenen Konversationskontext und liefern Ergebnisse zurück, ohne den Hauptnachrichtenverlauf aufzublähen.
+discovery_keywords:
+  - agent
+  - sub-agent
+  - delegate
+  - complex task
+  - multi-step
+  - background task
+  - research
+custom_properties:
+  - id: max_iterations
+    name: Max Tool Iterations
+    value: 15
+    property_type: number
+    hint: Maximum number of tool call iterations per agent run to prevent runaway loops.
+    required: false
+prompt: |
+  You have the ability to spawn sub-agents for complex, multi-step tasks.
+  Use the create_agent tool when a user request requires multiple tool calls or research steps.
+  The sub-agent will have access to all the same tools and capabilities you have.
+  It runs in its own isolated conversation, keeping your main history clean and saving tokens.
+  The sub-agent will return a text result that you can use to answer the user.
+  Only use sub-agents for tasks that genuinely benefit from isolation - simple single-tool calls should be done directly.
