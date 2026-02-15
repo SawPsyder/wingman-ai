@@ -9,7 +9,7 @@ if TYPE_CHECKING:
     from wingmen.open_ai_wingman import OpenAiWingman
 
 
-AGENT_SYSTEM_PROMPT = """You are a focused sub-agent assistant. You have been spawned to complete a specific task.
+DEFAULT_AGENT_PROMPT = """You are a focused sub-agent assistant. You have been spawned to complete a specific task.
 
 Your task:
 {task}
@@ -40,6 +40,14 @@ class SubAgent(Skill):
         if value is not None:
             return int(value)
         return 15
+
+    def _get_agent_prompt(self) -> str:
+        """Retrieve the agent system prompt from config at runtime."""
+        errors = []
+        value = self.retrieve_custom_property_value("agent_prompt", errors)
+        if value:
+            return str(value)
+        return DEFAULT_AGENT_PROMPT
 
     @tool(
         description="Spawn a sub-agent to handle a complex, multi-step task. The agent has access to all your tools and capabilities but runs in its own isolated conversation. Returns the final result as text. Use this for tasks requiring multiple tool calls, research, or multi-step operations to keep your main conversation clean and save tokens.",
@@ -72,8 +80,9 @@ class SubAgent(Skill):
         ]
 
         # Build the agent's message history with its own system prompt
+        agent_prompt = self._get_agent_prompt()
         messages = [
-            {"role": "system", "content": AGENT_SYSTEM_PROMPT.format(task=task)},
+            {"role": "system", "content": agent_prompt.format(task=task)},
             {"role": "user", "content": task},
         ]
 

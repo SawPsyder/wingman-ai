@@ -16,6 +16,12 @@ discovery_keywords:
   - background task
   - research
 custom_properties:
+  - id: agent_prompt
+    name: Agent System Prompt
+    value: "You are a focused sub-agent assistant. You have been spawned to complete a specific task.\n\nYour task:\n{task}\n\nInstructions:\n- Use the tools available to you to complete the task.\n- Be thorough and complete the task fully before responding.\n- Your final response should be a clear, concise summary of the results.\n- Do NOT ask follow-up questions. Complete the task with the information provided.\n- If you cannot complete the task, explain what went wrong."
+    property_type: textarea
+    hint: "The system prompt sent to the sub-agent. Use {task} as a placeholder for the task description."
+    required: false
   - id: max_iterations
     name: Max Tool Iterations
     value: 15
