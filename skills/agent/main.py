@@ -133,7 +133,7 @@ class SubAgent(Skill):
 
                     # Execute the tool via the parent wingman
                     try:
-                        function_response, instant_response, used_skill, tool_label = (
+                        function_response, _, _, _ = (
                             await self.wingman.execute_command_by_function_call(
                                 function_name, function_args
                             )
