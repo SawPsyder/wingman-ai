@@ -59,6 +59,9 @@ class HUD(Skill):
         self.stop_event = threading.Event()
         self.expecting_audio = False
         self.audio_expect_start_time = 0.0
+        self._streaming_message_shown = False
+        self._is_streaming = False
+        self._last_token_time = 0.0
 
         # Persistent items storage
         self._persistent_items: dict[str, dict] = {}
@@ -645,6 +648,7 @@ class HUD(Skill):
     async def _audio_monitor_loop(self):
         """Monitor audio playback and hide messages when audio stops."""
         was_playing = False
+        stream_was_active = False
 
         while not self.stop_event.is_set():
             try:
@@ -659,6 +663,7 @@ class HUD(Skill):
                 # Audio just started - reset expecting flag
                 if is_playing and not was_playing:
                     self.expecting_audio = False
+                    stream_was_active = True
 
                 # Hide message when audio stops
                 if was_playing and not is_playing:
@@ -673,7 +678,26 @@ class HUD(Skill):
                         pass
 
                     if still_not_playing:
-                        await self._hide_message()
+                        # During streaming, only hide when ALL streaming is done
+                        if stream_was_active:
+                            # Check if streaming is truly complete, not just queue empty
+                            # Queue might be empty between sentences while LLM generates next
+                            streaming_complete = True
+                            try:
+                                if self.wingman and self.wingman.tts_queue:
+                                    # Queue must be empty AND streaming must be closed
+                                    queue_empty = self.wingman.tts_queue.is_empty()
+                                    queue_closed = getattr(self.wingman.tts_queue, '_closed', True)
+                                    streaming_complete = queue_empty and queue_closed
+                            except Exception:
+                                pass
+
+                            if streaming_complete:
+                                await self._hide_message()
+                                stream_was_active = False
+                        else:
+                            # Non-streaming playback - hide immediately
+                            await self._hide_message()
                     self.expecting_audio = False
 
                 was_playing = is_playing
@@ -738,6 +762,18 @@ class HUD(Skill):
             return
 
         await self._client.hide_message(group_name=self._group_name, element=WindowType.MESSAGE)
+
+    async def _hide_streaming_message_after_delay(self, delay: float):
+        """Hide the streaming message after a delay."""
+        await asyncio.sleep(delay)
+        # Only hide if we're not currently expecting audio (playing)
+        if not self.expecting_audio:
+            printr.print(
+                f"[HUD] Hiding streaming message after delay",
+                color=LogType.INFO,
+                server_only=True,
+            )
+            await self._hide_message()
 
     async def _show_loader(self, show: bool, color: str = None):
         """Show or hide the loading animation."""
@@ -870,16 +906,104 @@ class HUD(Skill):
         if not self._get_prop("show_chat_messages", True):
             return
 
+        # Reset streaming state for new conversation
+        self._streaming_message_shown = False
+
         # Use accent color for user messages (user_color was unused)
         accent_color = str(self._get_prop("accent_color", "#00aaff"))
         await self._show_message("USER", message, accent_color)
 
         await self._show_loader(True, accent_color)
 
+    async def on_llm_token(self, token: str) -> None:
+        """Called for each LLM token during streaming."""
+        if not self._get_prop("show_chat_messages", True):
+            return
+
+        printr.print(
+            f"[HUD] on_llm_token called with: '{token[:30]}...'",
+            color=LogType.INFO,
+            server_only=True,
+        )
+
+        # Mark that we're streaming
+        self._is_streaming = True
+        self._last_token_time = time.time()
+
+        # Ensure connected to HUD server
+        if not await self._ensure_connected():
+            printr.print(
+                f"[HUD] Not connected to HUD server",
+                color=LogType.WARNING,
+                server_only=True,
+            )
+            return
+
+        # For streaming, we need to show a message first before we can append to it
+        # Only show the placeholder on the first token
+        try:
+            if not self._streaming_message_shown:
+                accent_color = str(self._get_prop("accent_color", "#00aaff"))
+                printr.print(
+                    f"[HUD] First token - showing placeholder message for streaming",
+                    color=LogType.INFO,
+                    server_only=True,
+                )
+                # Keep loader visible during streaming
+                await self._show_message(self.wingman.name, "", accent_color, duration=300.0)
+                self._streaming_message_shown = True
+
+            # Append the token
+            printr.print(
+                f"[HUD] Appending token: '{token[:20]}...'",
+                color=LogType.INFO,
+                server_only=True,
+            )
+            await self._client.append_message(
+                group_name=self._group_name,
+                element=WindowType.MESSAGE,
+                content=token
+            )
+        except Exception as e:
+            printr.print(
+                f"[HUD] Error in on_llm_token: {e}",
+                color=LogType.ERROR,
+                server_only=True,
+            )
+            # Silently ignore append errors - the full message will be shown later
+            pass
+
     async def on_add_assistant_message(self, message: str, tool_calls: list) -> None:
         """Handle assistant message - display on HUD with tool info."""
         if not self._get_prop("show_chat_messages", True):
             return
+
+        # If we were streaming, the message is already being displayed via on_llm_token
+        # Reset streaming state
+        was_streaming = self._is_streaming
+        if self._is_streaming:
+            printr.print(
+                f"[HUD] Streaming complete, hiding loader",
+                color=LogType.INFO,
+                server_only=True,
+            )
+            self._is_streaming = False
+            self._streaming_message_shown = False
+
+            # Hide loader when streaming is complete
+            await self._show_loader(False, "#00aaff")
+
+            # Don't hide message - let audio monitor handle that when playback stops
+
+            # If there are tool calls, still show those
+            if tool_calls:
+                # Show loader for tool processing
+                accent_color = str(self._get_prop("accent_color", "#00aaff"))
+                await self._show_loader(True, accent_color)
+            return
+
+        # Reset streaming state after message is complete
+        self._streaming_message_shown = False
 
         accent_color = str(self._get_prop("accent_color", "#00aaff"))
         display_tool_names = bool(self._get_prop("display_tool_names", False))

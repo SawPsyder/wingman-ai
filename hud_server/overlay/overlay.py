@@ -917,10 +917,31 @@ class HeadsUpOverlay:
         # Update renderer colors
         self.md_renderer.set_colors(text_color, accent, bg)
 
-        # Create temp canvas
-        temp_h = max_height + 500
-        temp = Image.new("RGBA", (width, temp_h), (0, 0, 0, 0))
+        # Create temp canvas - start at max_height, grow dynamically
+        # This minimizes CPU by using smallest needed size
+        current_temp_h = max_height  # Start exactly at max_height
+        temp = Image.new("RGBA", (width, current_temp_h), (0, 0, 0, 0))
         draw = ImageDraw.Draw(temp)
+
+        def debug_log(msg):
+            import logging
+            logging.getLogger("hud.overlay").debug(f"[Canvas] {msg}")
+
+        debug_log(f"init: max_height={max_height}, width={width}")
+
+        def ensure_canvas_space(required_y):
+            nonlocal temp, draw, current_temp_h
+            if required_y > current_temp_h:
+                old_h = current_temp_h
+                new_h = int(required_y * 1.20)  # 20% margin
+                new_temp = Image.new("RGBA", (width, new_h), (0, 0, 0, 0))
+                new_temp.paste(temp, (0, 0))
+                temp = new_temp
+                draw = ImageDraw.Draw(temp)
+                current_temp_h = new_h
+                debug_log(f"GREW: {old_h}->{new_h} (req: {required_y})")
+            else:
+                debug_log(f"fits: y={required_y} canvas={current_temp_h}")
 
         y = padding
 
@@ -971,6 +992,11 @@ class HeadsUpOverlay:
                     }
                     cached = win["current_blocks"]
 
+                # Ensure canvas can handle estimated message height before rendering
+                if message:
+                    est_msg_height = len(message) // 20 * 25 + 100
+                    ensure_canvas_space(y + est_msg_height)
+
                 if self.md_renderer:
                     y = self.md_renderer.render(
                         draw,
@@ -987,6 +1013,10 @@ class HeadsUpOverlay:
         if current_message:
             tools = current_message.get("tools", [])
             if tools:
+                # Reserve space for tools: ~40px per tool row
+                tool_rows = (len(tools) + 2) // 3  # 3 tools per row
+                ensure_canvas_space(y + tool_rows * 40 + 20)
+
                 y += 10
                 tx = padding
                 th = 30
@@ -1053,6 +1083,9 @@ class HeadsUpOverlay:
 
                 y += th + 10
 
+        # Reserve space for loading indicator
+        ensure_canvas_space(y + 50)
+
         # Loading animation
         if win.get("is_loading"):
             y += 6
@@ -1074,6 +1107,10 @@ class HeadsUpOverlay:
             # Calculate content height without loader space reservation
             # (loader is already included in y, we just need to cap at max_height)
             final_h = min(max(60, y + bottom_padding), max_height)
+
+        debug_log(f"final: y={y} canvas={current_temp_h} max_height={max_height} final_h={final_h}")
+        if y > current_temp_h:
+            debug_log(f"WARNING: content exceeds canvas! y={y} canvas={current_temp_h}")
 
         # Determine if content is clipped (overflows the final window height)
         content_clipped = y > final_h
@@ -1258,9 +1295,28 @@ class HeadsUpOverlay:
 
         self.md_renderer.set_colors(text_color, accent, bg)
 
-        # Create temp canvas
-        temp = Image.new("RGBA", (width, 2000), (0, 0, 0, 0))
+        # Create temp canvas - start at max_height, grow dynamically
+        current_temp_h = max_height
+        temp = Image.new("RGBA", (width, current_temp_h), (0, 0, 0, 0))
         draw = ImageDraw.Draw(temp)
+
+        def debug_log(msg):
+            import logging
+            logging.getLogger("hud.overlay").debug(f"[Canvas-Persistent] {msg}")
+
+        debug_log(f"init: max_height={max_height}, width={width}")
+
+        def ensure_canvas_space(required_y):
+            nonlocal temp, draw, current_temp_h
+            if required_y > current_temp_h:
+                old_h = current_temp_h
+                new_h = int(required_y * 1.20)
+                new_temp = Image.new("RGBA", (width, new_h), (0, 0, 0, 0))
+                new_temp.paste(temp, (0, 0))
+                temp = new_temp
+                draw = ImageDraw.Draw(temp)
+                current_temp_h = new_h
+                debug_log(f"GREW: {old_h}->{new_h} (req: {required_y})")
 
         y = padding
         font_bold = self.fonts.get(
@@ -1419,8 +1475,11 @@ class HeadsUpOverlay:
                     y = self.md_renderer.render(
                         draw, temp, desc, padding, y, width - padding * 2
                     )
+                    ensure_canvas_space(y + 50)
 
             y += 8
+
+        debug_log(f"final: y={y} canvas={current_temp_h}")
 
         # Finalize canvas
         bottom_padding = padding - 4
@@ -1611,7 +1670,7 @@ class HeadsUpOverlay:
         accent = self._hex_to_rgb(props.get("accent_color", "#00aaff"))
 
         width = int(props.get("width", 400))
-        max_height = int(props.get("max_height", 400))
+        max_height = int(props.get("max_height", 600))
         radius = int(props.get("border_radius", 12))
         padding = int(props.get("content_padding", 12))
         message_spacing = int(props.get("message_spacing", 8))
@@ -1664,10 +1723,28 @@ class HeadsUpOverlay:
         )
         font_normal = self.fonts.get("normal", self.fonts.get("regular"))
 
-        # Render messages to temp canvas
-        temp_h = max(2000, max_height * 3)
-        temp = Image.new("RGBA", (width, temp_h), (0, 0, 0, 0))
+        # Create temp canvas - start at max_height, grow dynamically
+        current_temp_h = max_height
+        temp = Image.new("RGBA", (width, current_temp_h), (0, 0, 0, 0))
         draw = ImageDraw.Draw(temp)
+
+        def debug_log(msg):
+            import logging
+            logging.getLogger("hud.overlay").debug(f"[Canvas-Chat] {msg}")
+
+        debug_log(f"init: max_height={max_height}, width={width}")
+
+        def ensure_canvas_space(required_y):
+            nonlocal temp, draw, current_temp_h
+            if required_y > current_temp_h:
+                old_h = current_temp_h
+                new_h = int(required_y * 1.20)
+                new_temp = Image.new("RGBA", (width, new_h), (0, 0, 0, 0))
+                new_temp.paste(temp, (0, 0))
+                temp = new_temp
+                draw = ImageDraw.Draw(temp)
+                current_temp_h = new_h
+                debug_log(f"GREW: {old_h}->{new_h} (req: {required_y})")
 
         content_width = width - (padding * 2)
         y = padding
@@ -1763,7 +1840,10 @@ class HeadsUpOverlay:
                 except:
                     y += len(text.split("\n")) * 20
 
+            ensure_canvas_space(y + 100)
             y += message_spacing
+
+        debug_log(f"final: y={y} canvas={current_temp_h}")
 
         # Calculate final height
         bottom_padding = padding - 4

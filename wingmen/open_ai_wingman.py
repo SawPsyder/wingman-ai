@@ -34,10 +34,14 @@ from api.enums import (
     WingmanProSttProvider,
     WingmanProTtsProvider,
     WingmanInitializationErrorType,
+    CommandTag,
 )
 from providers.edge import Edge
 from providers.elevenlabs import ElevenLabs
 from providers.google import GoogleGenAI
+from core.sentence_splitter import SentenceSplitter
+from core.thinking_filter import ThinkBlockFilter
+from services.tts_queue import TTSQueue
 from providers.open_ai import OpenAi, OpenAiAzure, OpenAiCompatibleTts
 from providers.hume import Hume
 from providers.inworld import Inworld
@@ -128,6 +132,11 @@ class OpenAiWingman(Wingman):
             self.skill_registry, self.mcp_registry
         )
 
+        # Streaming support for LLM response with TTS
+        # These are initialized in validate() once config is available
+        self.sentence_splitter: SentenceSplitter | None = None
+        self.tts_queue: TTSQueue | None = None
+
     def _broadcast_mcp_state_changed(self):
         """Broadcast MCP state change to UI via WebSocket."""
         if printr._connection_manager:
@@ -209,6 +218,14 @@ class OpenAiWingman(Wingman):
                 server_only=True,
             )
             printr.print(traceback.format_exc(), color=LogType.ERROR, server_only=True)
+
+        # Initialize streaming components if enabled
+        if hasattr(self.config.features, 'streaming') and self.config.features.streaming.enabled:
+            self.sentence_splitter = SentenceSplitter(
+                min_sentence_length=self.config.features.streaming.min_sentence_length
+            )
+            self.tts_queue = TTSQueue()
+            self.think_filter = ThinkBlockFilter()  # Stateful filter for think blocks
 
         return errors
 
@@ -1074,7 +1091,12 @@ class OpenAiWingman(Wingman):
                     message = self._get_random_filler()
                     is_summarize_needed = True
                 if message:
-                    self.threaded_execution(self.play_to_user, message, interrupt)
+                    # Skip play_to_user if streaming was active - audio already played
+                    if not getattr(self, '_streaming_was_active', False):
+                        self.threaded_execution(self.play_to_user, message, interrupt)
+                    else:
+                        # Reset for next message
+                        self._streaming_was_active = False
                     await printr.print_async(
                         f"{message}",
                         color=LogType.POSITIVE,
@@ -1678,10 +1700,13 @@ class OpenAiWingman(Wingman):
 
         return ""
 
-    async def actual_llm_call(self, messages, tools: list[dict] = None):
+    async def actual_llm_call(self, messages, tools: list[dict] = None, stream: bool = False):
         """
         Perform the actual LLM call with the messages provided.
+        If stream=True, returns an async iterator of response chunks.
         """
+        if stream:
+            return self._stream_llm_response(messages, tools)
 
         try:
             completion = None
@@ -1794,6 +1819,374 @@ class OpenAiWingman(Wingman):
 
         return completion
 
+    async def _stream_llm_response(self, messages, tools: list[dict] = None):
+        """
+        Stream LLM response with parallel TTS generation.
+        Yields tokens as they arrive, and triggers TTS for complete sentences.
+        """
+        # Reset think block filter for new stream
+        if hasattr(self, 'think_filter'):
+            self.think_filter.reset()
+
+        if not self.sentence_splitter or not self.tts_queue:
+            # Streaming not initialized, fall back to non-streaming
+            printr.print(
+                f"[STREAMING] Streaming not initialized, falling back to non-streaming",
+                color=LogType.INFO,
+                source_name=self.name,
+            )
+            completion = await self.actual_llm_call(messages, tools, stream=False)
+            yield completion
+            return
+
+        printr.print(
+            f"[STREAMING] Starting LLM streaming response",
+            color=LogType.INFO,
+            source_name=self.name,
+        )
+
+        # Log streaming config for debugging
+        stream_config = self.config.features.streaming
+        printr.print(
+            f"[STREAMING] Config - enabled: {stream_config.enabled}, min_sentence: {stream_config.min_sentence_length}, auto_play: {stream_config.auto_play}",
+            color=LogType.INFO,
+            source_name=self.name,
+        )
+        printr.print(
+            f"[STREAMING] TTS Provider: {self.config.features.tts_provider}, Conversation: {self.config.features.conversation_provider}",
+            color=LogType.INFO,
+            source_name=self.name,
+        )
+
+        # Clear any previous audio and reset state
+        await self.audio_player.clear_queue()
+        await self.tts_queue.clear()
+        self.tts_queue._closed = False
+
+        # Track if consumer is already running
+        consumer_started = False
+        consumer_task = None
+
+        try:
+            # Get the appropriate provider for streaming
+            provider = self._get_streaming_provider()
+            if not provider:
+                printr.print(
+                    f"[STREAMING] No streaming provider found",
+                    color=LogType.WARNING,
+                    source_name=self.name,
+                )
+                yield None
+                return
+
+            printr.print(
+                f"[STREAMING] Using provider: {type(provider).__name__}",
+                color=LogType.INFO,
+                source_name=self.name,
+            )
+
+            # Get and log the model
+            model = self._get_streaming_model()
+            printr.print(
+                f"[STREAMING] Using model: {model}",
+                color=LogType.INFO,
+                source_name=self.name,
+            )
+
+            # Get streaming iterator from provider
+            # Different providers use different parameter names
+            provider_name = type(provider).__name__
+            if provider_name == "WingmanPro":
+                stream_iter = provider.ask(
+                    messages=messages,
+                    deployment=self._get_streaming_model(),
+                    tools=tools,
+                    stream=True,
+                )
+            else:
+                stream_iter = provider.ask(
+                    messages=messages,
+                    tools=tools,
+                    model=self._get_streaming_model(),
+                    stream=True,
+                )
+
+            # Process tokens as they arrive
+            token_count = 0
+            sentence_count = 0
+            async for chunk in stream_iter:
+                if chunk and chunk.choices and chunk.choices[0].delta.content:
+                    token = chunk.choices[0].delta.content
+                    token_count += 1
+                    yield token
+
+                    # Feed to sentence splitter - strip think blocks first
+                    token_for_splitter = self.think_filter.filter(token)
+                    sentence = self.sentence_splitter.feed(token_for_splitter)
+                    if sentence:
+                        sentence_count += 1
+                        printr.print(
+                            f"[STREAMING] Sentence {sentence_count}: '{sentence[:50]}...' -> enqueued for TTS",
+                            color=LogType.INFO,
+                            source_name=self.name,
+                        )
+                        # Queue for TTS generation
+                        await self.tts_queue.enqueue(sentence)
+                        # Start consumer task only once if not already running
+                        if not consumer_started:
+                            printr.print(
+                                f"[STREAMING] Starting TTS consumer task",
+                                color=LogType.INFO,
+                                source_name=self.name,
+                            )
+                            consumer_task = asyncio.create_task(self._consume_tts_queue())
+                            consumer_started = True
+                            # Mark that streaming was active - audio will be played during streaming
+                            self._streaming_was_active = True
+                        # Yield control to allow consumer to run
+                        await asyncio.sleep(0)
+
+            printr.print(
+                f"[STREAMING] Stream complete. Tokens: {token_count}, Sentences: {sentence_count}",
+                color=LogType.INFO,
+                source_name=self.name,
+            )
+
+            # Flush remaining buffer - strip think blocks
+            remaining = self.think_filter.filter(self.sentence_splitter.flush())
+            if remaining:
+                printr.print(
+                    f"[STREAMING] Flushing remaining buffer: '{remaining[:50]}...'",
+                    color=LogType.INFO,
+                    source_name=self.name,
+                )
+                await self.tts_queue.enqueue(remaining)
+                if not consumer_started:
+                    consumer_task = asyncio.create_task(self._consume_tts_queue())
+                    consumer_started = True
+
+            # Wait for consumer to finish if it was started
+            # Always fire message_complete when streaming is done, regardless of whether audio was generated
+            try:
+                if consumer_task:
+                    await consumer_task
+                    # Wait for audio playback to finish
+                    while self.audio_player.is_playing:
+                        await asyncio.sleep(0.1)
+
+                # Fire message_complete event - always fire when stream is complete
+                await printr.print_async(
+                    f"Message complete",
+                    command_tag=CommandTag.MESSAGE_COMPLETE,
+                    source_name=self.name,
+                )
+            except Exception as e:
+                await printr.print_async(
+                    f"Error in TTS consumer: {str(e)}", color=LogType.ERROR
+                )
+
+            # Close the queue AFTER consumer finishes
+            await self.tts_queue.close()
+
+        except Exception as e:
+            await printr.print_async(
+                f"Error during LLM streaming: {str(e)}", color=LogType.ERROR
+            )
+            printr.print(traceback.format_exc(), color=LogType.ERROR, server_only=True)
+        finally:
+            # Ensure cleanup
+            await self.tts_queue.close()
+
+    def _get_streaming_provider(self):
+        """Get the provider instance for streaming."""
+        provider_map = {
+            ConversationProvider.AZURE: self.openai_azure,
+            ConversationProvider.OPENAI: self.openai,
+            ConversationProvider.MISTRAL: self.mistral,
+            ConversationProvider.GROQ: self.groq,
+            ConversationProvider.CEREBRAS: self.cerebras,
+            ConversationProvider.GOOGLE: self.google,
+            ConversationProvider.OPENROUTER: self.openrouter,
+            ConversationProvider.LOCAL_LLM: self.local_llm,
+            ConversationProvider.WINGMAN_PRO: self.wingman_pro,
+            ConversationProvider.PERPLEXITY: self.perplexity,
+            ConversationProvider.XAI: self.xai,
+        }
+        return provider_map.get(self.config.features.conversation_provider)
+
+    def _get_streaming_model(self):
+        """Get the model name for streaming."""
+        model_map = {
+            ConversationProvider.OPENAI: self.config.openai.conversation_model,
+            ConversationProvider.MISTRAL: self.config.mistral.conversation_model,
+            ConversationProvider.GROQ: self.config.groq.conversation_model,
+            ConversationProvider.CEREBRAS: self.config.cerebras.conversation_model,
+            ConversationProvider.GOOGLE: self.config.google.conversation_model,
+            ConversationProvider.OPENROUTER: self.config.openrouter.conversation_model,
+            ConversationProvider.LOCAL_LLM: self.config.local_llm.conversation_model,
+            ConversationProvider.PERPLEXITY: self.config.perplexity.conversation_model.value,
+            ConversationProvider.XAI: self.config.xai.conversation_model,
+            ConversationProvider.AZURE: self.config.azure.conversation.deployment_name,
+            ConversationProvider.WINGMAN_PRO: self.config.wingman_pro.conversation_deployment,
+        }
+        return model_map.get(self.config.features.conversation_provider)
+
+    async def _consume_tts_queue(self):
+        """Consume TTS queue and play audio sequentially."""
+        printr.print(
+            f"[TTS QUEUE] Consumer started",
+            color=LogType.INFO,
+            source_name=self.name,
+        )
+        try:
+            while not self.tts_queue.is_empty() or not self.tts_queue._closed:
+                try:
+                    text = await asyncio.wait_for(
+                        self.tts_queue._queue.get(), timeout=0.5
+                    )
+                except asyncio.TimeoutError:
+                    if self.tts_queue._closed and self.tts_queue.is_empty():
+                        break
+                    continue
+
+                if not text:
+                    continue
+
+                printr.print(
+                    f"[TTS QUEUE] Processing: '{text[:50]}...'",
+                    color=LogType.INFO,
+                    source_name=self.name,
+                )
+
+                # Get sound config from wingman config
+                sound_config = self.config.sound
+
+                # Call the appropriate TTS provider with streaming enabled
+                tts_provider = self.config.features.tts_provider
+
+                # Check if audio is pre-generated
+                pre_generated_audio = None
+                if text in self.tts_queue._audio_buffers:
+                    pre_generated_audio = self.tts_queue._audio_buffers.pop(text)
+                    printr.print(
+                        f"[TTS QUEUE] Using pre-generated audio for: '{text[:50]}...'",
+                        color=LogType.INFO,
+                        source_name=self.name,
+                    )
+
+                try:
+                    if pre_generated_audio:
+                        # Play pre-generated audio directly
+                        await self.audio_player.play_with_effects(
+                            input_data=pre_generated_audio,
+                            config=sound_config,
+                            wingman_name=self.name,
+                        )
+                    elif tts_provider == TtsProvider.OPENAI:
+                        printr.print(
+                            f"[TTS QUEUE] Calling OpenAI TTS (streaming)",
+                            color=LogType.INFO,
+                            source_name=self.name,
+                        )
+                        await self.openai.play_audio(
+                            text=text,
+                            voice=self.config.openai.tts_voice,
+                            model=self.config.openai.tts_model,
+                            speed=self.config.openai.tts_speed,
+                            sound_config=sound_config,
+                            audio_player=self.audio_player,
+                            wingman_name=self.name,
+                            stream=True,
+                        )
+                    elif tts_provider == TtsProvider.ELEVENLABS:
+                        await self.elevenlabs.play_audio(
+                            text=text,
+                            config=self.config.elevenlabs,
+                            sound_config=sound_config,
+                            audio_player=self.audio_player,
+                            wingman_name=self.name,
+                            stream=True,
+                        )
+                    elif tts_provider == TtsProvider.POCKET_TTS:
+                        await self.pocket_tts.play_audio(
+                            text=text,
+                            config=self.config.pocket_tts,
+                            sound_config=sound_config,
+                            audio_player=self.audio_player,
+                            wingman_name=self.name,
+                        )
+                    elif tts_provider == TtsProvider.AZURE:
+                        await self.openai_azure.play_audio(
+                            text=text,
+                            api_key=self.azure_api_keys.get("tts", ""),
+                            config=self.config.azure.tts,
+                            sound_config=sound_config,
+                            audio_player=self.audio_player,
+                            wingman_name=self.name,
+                        )
+                    elif tts_provider == TtsProvider.EDGE_TTS:
+                        await self.edge_tts.play_audio(
+                            text=text,
+                            config=self.config.edge_tts,
+                            sound_config=sound_config,
+                            audio_player=self.audio_player,
+                            wingman_name=self.name,
+                        )
+                    elif tts_provider == TtsProvider.INWORLD:
+                        await self.inworld.play_audio(
+                            text=text,
+                            config=self.config.inworld,
+                            sound_config=sound_config,
+                            audio_player=self.audio_player,
+                            wingman_name=self.name,
+                        )
+                    elif tts_provider == TtsProvider.HUME:
+                        await self.hume.play_audio(
+                            text=text,
+                            config=self.config.hume,
+                            sound_config=sound_config,
+                            audio_player=self.audio_player,
+                            wingman_name=self.name,
+                        )
+                    elif tts_provider == TtsProvider.XVASYNTH:
+                        await self.xvasynth.play_audio(
+                            text=text,
+                            config=self.config.xvasynth,
+                            sound_config=sound_config,
+                            audio_player=self.audio_player,
+                            wingman_name=self.name,
+                        )
+                    elif tts_provider == TtsProvider.OPENAI_COMPATIBLE:
+                        await self.openai_compatible_tts.play_audio(
+                            text=text,
+                            voice=self.config.openai_compatible_tts.voice,
+                            model=self.config.openai_compatible_tts.model,
+                            sound_config=sound_config,
+                            audio_player=self.audio_player,
+                            wingman_name=self.name,
+                            stream=True,
+                        )
+                    elif tts_provider == TtsProvider.WINGMAN_PRO:
+                        if self.config.wingman_pro.tts_provider.name == "OPENAI":
+                            await self.wingman_pro.generate_openai_speech(
+                                text=text,
+                                voice=self.config.openai.tts_voice,
+                                model=self.config.openai.tts_model,
+                                speed=self.config.openai.tts_speed,
+                                sound_config=sound_config,
+                                audio_player=self.audio_player,
+                                wingman_name=self.name,
+                            )
+                except Exception as e:
+                    await printr.print_async(
+                        f"Error playing TTS for sentence: {str(e)}", color=LogType.ERROR
+                    )
+
+        except Exception as e:
+            await printr.print_async(
+                f"Error consuming TTS queue: {str(e)}", color=LogType.ERROR
+            )
+
     async def _llm_call(self, allow_tool_calls: bool = True):
         """Makes the primary LLM call with the conversation history and tools enabled.
 
@@ -1808,9 +2201,21 @@ class OpenAiWingman(Wingman):
         # build tools
         tools = self.build_tools() if allow_tool_calls else None
 
+        # Check if streaming is enabled
+        streaming_enabled = (
+            hasattr(self.config.features, 'streaming') and
+            self.config.features.streaming.enabled
+        )
+
+        printr.print(
+            f"[LLM_CALL] Streaming enabled: {streaming_enabled}",
+            color=LogType.INFO,
+            source_name=self.name,
+        )
+
         if self.settings.debug_mode:
             await printr.print_async(
-                f"Calling LLM with {(len(self.messages))} messages (excluding context) and {len(tools) if tools else 0} tools.",
+                f"Calling LLM with {(len(self.messages))} messages (excluding context) and {len(tools) if tools else 0} tools. Streaming: {streaming_enabled}",
                 color=LogType.INFO,
             )
 
@@ -1825,7 +2230,53 @@ class OpenAiWingman(Wingman):
         #     print(messages[0].get("content", ""))
         #     print("=" * 80 + "\n")
 
-        completion = await self.actual_llm_call(messages, tools)
+        if streaming_enabled:
+            # Use streaming - iterate over the async iterator and collect all content
+            stream_iter = await self.actual_llm_call(messages, tools, stream=True)
+
+            full_content = ""
+            async for chunk in stream_iter:
+                if chunk:
+                    full_content += self.think_filter.filter(chunk)
+                    # Call skill hooks for each token (for HUD streaming display)
+                    for skill in self.skills:
+                        if skill.is_prepared:
+                            if hasattr(skill, 'on_llm_token'):
+                                printr.print(
+                                    f"[STREAMING] Calling on_llm_token for skill {skill.name}",
+                                    color=LogType.INFO,
+                                    source_name=self.name,
+                                )
+                                try:
+                                    await skill.on_llm_token(chunk)
+                                except Exception as e:
+                                    printr.print(
+                                        f"Error calling on_llm_token for skill {skill.name}: {e}",
+                                        color=LogType.WARNING,
+                                        source_name=self.name,
+                                    )
+
+            # Create a mock completion object from the streamed content
+            if full_content:
+                from openai.types.chat import ChatCompletion, ChatCompletionMessage
+                completion = ChatCompletion.model_construct(
+                    id="stream-" + str(int(time.time())),
+                    choices=[{
+                        "finish_reason": "stop",
+                        "index": 0,
+                        "message": {
+                            "content": full_content,
+                            "role": "assistant",
+                        },
+                    }],
+                    created=int(time.time()),
+                    model=self._get_streaming_model() or "gpt-4o",
+                    object="chat.completion",
+                )
+            else:
+                completion = None
+        else:
+            completion = await self.actual_llm_call(messages, tools)
 
         # if request isnt most recent, ignore the response
         if self.last_gpt_call != thiscall:

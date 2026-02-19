@@ -2,6 +2,7 @@ import asyncio
 import io
 import wave
 from os import path
+import queue
 from threading import Thread
 from typing import Callable
 import numpy as np
@@ -37,6 +38,8 @@ class AudioPlayer:
         self.sample_dir = path.join(
             path.abspath(path.dirname(__file__)), "../audio_samples"
         )
+        # Audio queue for sequential playback of streaming chunks
+        self._audio_queue: asyncio.Queue = asyncio.Queue()
 
     def set_event_loop(self, loop: asyncio.AbstractEventLoop):
         self.event_loop = loop
@@ -356,11 +359,40 @@ class AudioPlayer:
         channels=1,
         dtype="int16",
         use_gain_boost=False,
+        run_in_thread: bool = False,
     ):
+        """Stream audio with effects. Set run_in_thread=True for non-blocking TTS."""
         buffer = bytearray()
         stream_finished = False
         data_received = False
         mixed_pos = 0
+
+        # Queue for thread-based bufferCallback
+        audio_queue = None
+        queue_thread = None
+
+        if run_in_thread:
+            # Run buffer_callback in a separate thread to avoid blocking the event loop
+            audio_queue = queue.Queue()
+            audio_queue_put = audio_queue.put
+            audio_queue_get = audio_queue.get
+            audio_queue_empty = audio_queue.empty
+
+            def thread_target():
+                try:
+                    while True:
+                        local_buffer = bytearray(buffer_size)
+                        filled_size = buffer_callback(local_buffer)
+                        if filled_size <= 0:
+                            audio_queue_put(None)  # Signal end of stream
+                            break
+                        audio_queue_put(bytes(local_buffer[:filled_size]))
+                except Exception as e:
+                    audio_queue_put(None)  # Signal end on error
+                    print(f"Error in thread: {e}")
+
+            queue_thread = Thread(target=thread_target, daemon=True)
+            queue_thread.start()
 
         mix_layer_file = None
         for effect in config.effects:
@@ -464,34 +496,74 @@ class AudioPlayer:
 
             self.raw_stream.start()
 
+            # Wait for first chunk to arrive before starting to process (for thread mode)
+            if run_in_thread:
+                while audio_queue.empty():
+                    import time
+                    time.sleep(0.001)  # Wait for first chunk
+                    # Check if thread has ended (queue still empty after sleep means no data coming)
+                    if queue_thread is not None and not queue_thread.is_alive():
+                        break
+
             sound_effects = get_sound_effects(
                 config=config, use_gain_boost=use_gain_boost
             )
-            audio_buffer = bytearray(buffer_size)
-            filled_size = buffer_callback(audio_buffer)
-            while filled_size > 0:
-                data_in_numpy = np.frombuffer(
-                    audio_buffer[:filled_size], dtype=dtype
-                ).astype(np.float32)
 
-                for sound_effect in sound_effects:
-                    data_in_numpy = sound_effect(
-                        data_in_numpy, sample_rate, reset=False
-                    )
+            if run_in_thread:
+                # Read from queue (non-blocking)
+                while True:
+                    try:
+                        chunk = audio_queue.get_nowait()
+                        if chunk is None:
+                            break
+                        data_in_numpy = np.frombuffer(chunk, dtype=dtype).astype(np.float32)
 
-                if mix_layer_file:
-                    noise_chunk = get_mixed_chunk(len(data_in_numpy))
-                    # Convert gain boost from dB to amplitude factor
-                    amplitude_factor = 10 ** (mix_layer_gain_boost_db / 20)
-                    data_in_numpy = data_in_numpy + noise_chunk * amplitude_factor
+                        for sound_effect in sound_effects:
+                            data_in_numpy = sound_effect(
+                                data_in_numpy, sample_rate, reset=False
+                            )
 
-                data_in_numpy = data_in_numpy * config.volume
-                processed_buffer = data_in_numpy.astype(dtype).tobytes()
-                buffer.extend(processed_buffer)
-                await self.stream_event.publish("audio", processed_buffer)
+                        if mix_layer_file:
+                            noise_chunk = get_mixed_chunk(len(data_in_numpy))
+                            amplitude_factor = 10 ** (mix_layer_gain_boost_db / 20)
+                            data_in_numpy = data_in_numpy + noise_chunk * amplitude_factor
+
+                        data_in_numpy = data_in_numpy * config.volume
+                        processed_buffer = data_in_numpy.astype(dtype).tobytes()
+                        buffer.extend(processed_buffer)
+                        await self.stream_event.publish("audio", processed_buffer)
+                    except:
+                        pass
+                    # Yield to other tasks occasionally
+                    await asyncio.sleep(0)
+                data_received = True
+            else:
+                # Original blocking behavior
+                audio_buffer = bytearray(buffer_size)
                 filled_size = buffer_callback(audio_buffer)
+                while filled_size > 0:
+                    data_in_numpy = np.frombuffer(
+                        audio_buffer[:filled_size], dtype=dtype
+                    ).astype(np.float32)
 
-            data_received = True
+                    for sound_effect in sound_effects:
+                        data_in_numpy = sound_effect(
+                            data_in_numpy, sample_rate, reset=False
+                        )
+
+                    if mix_layer_file:
+                        noise_chunk = get_mixed_chunk(len(data_in_numpy))
+                        # Convert gain boost from dB to amplitude factor
+                        amplitude_factor = 10 ** (mix_layer_gain_boost_db / 20)
+                        data_in_numpy = data_in_numpy + noise_chunk * amplitude_factor
+
+                    data_in_numpy = data_in_numpy * config.volume
+                    processed_buffer = data_in_numpy.astype(dtype).tobytes()
+                    buffer.extend(processed_buffer)
+                    await self.stream_event.publish("audio", processed_buffer)
+                    filled_size = buffer_callback(audio_buffer)
+
+                data_received = True
             while not stream_finished:
                 sd.sleep(100)
 
@@ -506,3 +578,19 @@ class AudioPlayer:
 
             self.is_playing = False
             await self.notify_playback_finished(wingman_name)
+
+    async def enqueue_stream(self, buffer_callback: Callable[[list], int]) -> None:
+        """Add streaming audio to queue for sequential playback."""
+        await self._audio_queue.put(buffer_callback)
+
+    async def clear_queue(self) -> None:
+        """Clear all pending audio in queue."""
+        while not self._audio_queue.empty():
+            try:
+                self._audio_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+
+    def is_queue_empty(self) -> bool:
+        """Check if queue has pending audio."""
+        return self._audio_queue.empty()

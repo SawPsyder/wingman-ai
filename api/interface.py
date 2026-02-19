@@ -525,6 +525,19 @@ class VoiceActivationSettings(BaseModel):
     fasterwhisper_config: FasterWhisperSttConfig
 
 
+class StreamingConfig(BaseModel):
+    """Configuration for LLM response streaming with TTS."""
+
+    enabled: bool = True
+    """Whether to enable LLM response streaming."""
+
+    min_sentence_length: int = 5
+    """Minimum sentence length before triggering TTS."""
+
+    auto_play: bool = True
+    """Whether to automatically play TTS audio."""
+
+
 class FeaturesConfig(BaseModel):
     """You can override various AI providers if your Wingman supports it. Our OpenAI wingman does!
 
@@ -537,6 +550,8 @@ class FeaturesConfig(BaseModel):
     remember_messages: Optional[int] = None
     image_generation_provider: ImageGenerationProvider
     use_generic_instant_responses: bool
+    streaming: StreamingConfig = StreamingConfig()
+    """Streaming configuration for LLM response with TTS."""
 
 
 class AudioFile(BaseModel):
