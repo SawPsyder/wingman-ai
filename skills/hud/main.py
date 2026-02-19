@@ -667,37 +667,22 @@ class HUD(Skill):
 
                 # Hide message when audio stops
                 if was_playing and not is_playing:
-                    await asyncio.sleep(0.5)  # Brief delay for readability
+                    # Wait for potential MESSAGE_COMPLETE event processing
+                    await asyncio.sleep(0.3)
 
-                    # Re-check if audio started during the delay
-                    still_not_playing = True
+                    # Check if we should hide - queue must be empty AND consumer must be done
+                    should_hide = True
                     try:
-                        if self.wingman and self.wingman.audio_player:
-                            still_not_playing = not self.wingman.audio_player.is_playing
+                        if self.wingman and self.wingman.tts_queue:
+                            queue_empty = self.wingman.tts_queue.is_empty()
+                            consumer_done = getattr(self.wingman.tts_queue, '_consumer_done', True)
+                            should_hide = queue_empty and consumer_done
                     except Exception:
                         pass
 
-                    if still_not_playing:
-                        # During streaming, only hide when ALL streaming is done
-                        if stream_was_active:
-                            # Check if streaming is truly complete, not just queue empty
-                            # Queue might be empty between sentences while LLM generates next
-                            streaming_complete = True
-                            try:
-                                if self.wingman and self.wingman.tts_queue:
-                                    # Queue must be empty AND streaming must be closed
-                                    queue_empty = self.wingman.tts_queue.is_empty()
-                                    queue_closed = getattr(self.wingman.tts_queue, '_closed', True)
-                                    streaming_complete = queue_empty and queue_closed
-                            except Exception:
-                                pass
-
-                            if streaming_complete:
-                                await self._hide_message()
-                                stream_was_active = False
-                        else:
-                            # Non-streaming playback - hide immediately
-                            await self._hide_message()
+                    if should_hide:
+                        await self._hide_message()
+                        stream_was_active = False
                     self.expecting_audio = False
 
                 was_playing = is_playing
