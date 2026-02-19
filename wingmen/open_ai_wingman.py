@@ -2237,24 +2237,27 @@ class OpenAiWingman(Wingman):
             full_content = ""
             async for chunk in stream_iter:
                 if chunk:
-                    full_content += self.think_filter.filter(chunk)
-                    # Call skill hooks for each token (for HUD streaming display)
-                    for skill in self.skills:
-                        if skill.is_prepared:
-                            if hasattr(skill, 'on_llm_token'):
-                                printr.print(
-                                    f"[STREAMING] Calling on_llm_token for skill {skill.name}",
-                                    color=LogType.INFO,
-                                    source_name=self.name,
-                                )
-                                try:
-                                    await skill.on_llm_token(chunk)
-                                except Exception as e:
+                    # Filter once and use for both full_content AND HUD
+                    filtered_chunk = self.think_filter.filter(chunk)
+                    if filtered_chunk:
+                        full_content += filtered_chunk
+                        # Call skill hooks for each token (for HUD streaming display)
+                        for skill in self.skills:
+                            if skill.is_prepared:
+                                if hasattr(skill, 'on_llm_token'):
                                     printr.print(
-                                        f"Error calling on_llm_token for skill {skill.name}: {e}",
-                                        color=LogType.WARNING,
+                                        f"[STREAMING] Calling on_llm_token for skill {skill.name}",
+                                        color=LogType.INFO,
                                         source_name=self.name,
                                     )
+                                    try:
+                                        await skill.on_llm_token(filtered_chunk)
+                                    except Exception as e:
+                                        printr.print(
+                                            f"Error calling on_llm_token for skill {skill.name}: {e}",
+                                            color=LogType.WARNING,
+                                            source_name=self.name,
+                                        )
 
             # Create a mock completion object from the streamed content
             if full_content:

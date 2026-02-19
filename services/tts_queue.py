@@ -8,6 +8,7 @@ class TTSQueue:
     def __init__(self):
         self._queue: asyncio.Queue[str] = asyncio.Queue()
         self._closed = False
+        self._consumer_done = False
         self._consumer_task: asyncio.Task | None = None
         self._audio_callback: Callable[[bytes], Awaitable[None]] | None = None
         # For pre-generated audio
@@ -75,6 +76,7 @@ class TTSQueue:
         Batch sizes: 1, 2, 4, 8... capped at 10 sentences.
         This enables faster initial response while batching longer sentences.
         """
+        self._consumer_done = False  # Reset at start of new stream
         batch_size = 1
         max_batch_size = 10
         pending_sentences: list[str] = []
@@ -141,6 +143,9 @@ class TTSQueue:
                 async for chunk in self._generate_audio(batch_text):
                     if chunk:
                         yield chunk
+
+        # Mark that consumer has finished processing
+        self._consumer_done = True
 
     async def _generate_audio(self, text: str) -> AsyncIterator[bytes]:
         """Generate audio for text. Override in subclass or inject provider."""
