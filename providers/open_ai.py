@@ -127,6 +127,11 @@ class BaseOpenAi(ABC):
                     tool_choice="auto",
                     **reasoning_params,
                 )
+
+            # If streaming, convert sync generator to async generator
+            if stream:
+                return self._sync_to_async_generator(completion)
+
             return completion
         except APIStatusError as e:
             self._handle_api_error(e)
@@ -134,6 +139,13 @@ class BaseOpenAi(ABC):
         except UnicodeEncodeError:
             self._handle_key_error()
             return None
+
+    def _sync_to_async_generator(self, sync_generator):
+        """Convert a synchronous generator to an async generator."""
+        async def async_gen():
+            for item in sync_generator:
+                yield item
+        return async_gen()
 
 
 class OpenAi(BaseOpenAi):
@@ -255,6 +267,7 @@ class OpenAi(BaseOpenAi):
                         dtype="int16",
                         channels=1,
                         use_gain_boost=True,  # All streaming PCM TTS providers need this
+                        run_in_thread=True,  # Run in thread to not block event loop
                     )
 
         except APIStatusError as e:
@@ -376,6 +389,7 @@ class OpenAiAzure(BaseOpenAi):
                     sound_config,
                     wingman_name=wingman_name,
                     use_gain_boost=True,  # "Azure Streaming" low gain workaround
+                    run_in_thread=True,  # Run in thread to not block event loop
                 )
             else:
                 await audio_player.play_with_effects(
@@ -561,6 +575,7 @@ class OpenAiCompatibleTts:
                         dtype="int16",
                         channels=1,
                         use_gain_boost=True,  # All streaming PCM TTS providers need this
+                        run_in_thread=True,  # Run in thread to not block event loop
                     )
 
         except APIStatusError as e:

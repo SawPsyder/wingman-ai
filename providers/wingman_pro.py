@@ -197,6 +197,7 @@ class WingmanPro:
                 config=sound_config,
                 wingman_name=wingman_name,
                 use_gain_boost=True,  # "Azure Streaming" low gain workaround
+                run_in_thread=True,  # Run in thread to not block event loop
             )
         else:  # non-streaming
             response = requests.post(
@@ -340,6 +341,7 @@ class WingmanPro:
                 channels=1,  # LINEAR16 is typically mono
                 dtype="int16",  # LINEAR16 uses 16-bit integers
                 use_gain_boost=True,  # Streaming audio needs gain boost for radio effects
+                run_in_thread=True,  # Run in thread to not block event loop
             )
         else:
             response = requests.post(

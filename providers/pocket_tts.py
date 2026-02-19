@@ -411,6 +411,7 @@ class PocketTTS:
             dtype="int16",
             channels=1,
             use_gain_boost=True,
+            run_in_thread=True,  # Run in thread to not block event loop
         )
 
     # --- Utilities ---

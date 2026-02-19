@@ -228,6 +228,7 @@ class Inworld:
                 channels=1,  # LINEAR16 is typically mono
                 dtype="int16",  # LINEAR16 uses 16-bit integers
                 use_gain_boost=True,  # All streaming PCM TTS providers need this
+                run_in_thread=True,  # Run in thread to not block event loop
             )
 
             # Wait for the background thread to complete

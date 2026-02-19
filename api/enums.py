@@ -69,6 +69,7 @@ class CommandTag(Enum):
     IGNORED_RECORDING = "ignored_recording"
     PLAYBACK_STARTED = "playback_started"
     PLAYBACK_STOPPED = "playback_stopped"
+    MESSAGE_COMPLETE = "message_complete"
     UNAUTHORIZED = "unauthorized"
     CONFIG_LOADED = "config_loaded"
     SECRET_SAVED = "secret_saved"
