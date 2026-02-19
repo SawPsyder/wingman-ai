@@ -2034,11 +2034,6 @@ class OpenAiWingman(Wingman):
 
     async def _consume_tts_queue(self):
         """Consume TTS queue and play audio sequentially."""
-        printr.print(
-            f"[TTS QUEUE] Consumer started",
-            color=LogType.INFO,
-            source_name=self.name,
-        )
         try:
             while not self.tts_queue.is_empty() or not self.tts_queue._closed:
                 try:
@@ -2053,12 +2048,6 @@ class OpenAiWingman(Wingman):
                 if not text:
                     continue
 
-                printr.print(
-                    f"[TTS QUEUE] Processing: '{text[:50]}...'",
-                    color=LogType.INFO,
-                    source_name=self.name,
-                )
-
                 # Get sound config from wingman config
                 sound_config = self.config.sound
 
@@ -2069,11 +2058,6 @@ class OpenAiWingman(Wingman):
                 pre_generated_audio = None
                 if text in self.tts_queue._audio_buffers:
                     pre_generated_audio = self.tts_queue._audio_buffers.pop(text)
-                    printr.print(
-                        f"[TTS QUEUE] Using pre-generated audio for: '{text[:50]}...'",
-                        color=LogType.INFO,
-                        source_name=self.name,
-                    )
 
                 try:
                     if pre_generated_audio:
@@ -2084,11 +2068,6 @@ class OpenAiWingman(Wingman):
                             wingman_name=self.name,
                         )
                     elif tts_provider == TtsProvider.OPENAI:
-                        printr.print(
-                            f"[TTS QUEUE] Calling OpenAI TTS (streaming)",
-                            color=LogType.INFO,
-                            source_name=self.name,
-                        )
                         await self.openai.play_audio(
                             text=text,
                             voice=self.config.openai.tts_voice,
