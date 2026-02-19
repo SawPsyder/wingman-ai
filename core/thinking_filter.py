@@ -8,35 +8,44 @@ class ThinkBlockFilter:
         self.in_think_block = False
 
     def filter(self, text: str) -> str:
-        """Remove content between <think> and </think> tags, handling multi-chunk blocks."""
+        """Remove think blocks from text, handling multi-chunk blocks.
+
+        Logic:
+        - Chunk has both <think> and </think>: filter content between them
+        - Chunk has only <think>: skip entire chunk, set flag
+        - Chunk has only </think>: filter and return text AFTER </think>, reset flag
+        - Chunk has neither: return as-is (or skip if in think block)
+        """
         if not text:
             return text
 
-        result = []
-        current_pos = 0
+        has_open = '<think>' in text
+        has_close = '</think>' in text
 
-        # Find all think block tags
-        for match in re.finditer(r'<think>|</think>', text):
-            # Add text before the tag
-            if match.start() > current_pos:
-                result.append(text[current_pos:match.start()])
+        if has_open and has_close:
+            # Both tags - strip everything between them
+            return re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
 
-            if match.group() == '<think>':
-                self.in_think_block = True
-            else:  # match.group() == '</think>'
-                self.in_think_block = False
+        elif has_open:
+            # Only opening tag - skip this chunk, we're now in think block
+            self.in_think_block = True
+            return ''
 
-            current_pos = match.end()
+        elif has_close:
+            # Only closing tag - we're exiting think block, return text AFTER </think>
+            self.in_think_block = False
+            # Return everything after the closing tag
+            close_idx = text.find('</think>')
+            return text[close_idx + len('</think>'):]
 
-        # Add remaining text after last tag
-        if current_pos < len(text):
+        else:
+            # Neither tag
             if self.in_think_block:
-                # Still in think block, discard remaining
-                pass
+                # Still in think block from previous chunk - skip
+                return ''
             else:
-                result.append(text[current_pos:])
-
-        return "".join(result)
+                # Normal text - return as-is
+                return text
 
     def reset(self):
         """Reset the filter state."""
@@ -48,11 +57,14 @@ def strip_think_blocks(text: str) -> str:
 
     This function handles multi-chunk think blocks by repeatedly applying
     the filter until no more think blocks are found.
+
+    Also handles unclosed think blocks by returning content after the last
+    opening tag (everything is treated as think content if unclosed).
     """
     if not text:
         return text
 
-    # Keep filtering until no more think blocks
+    # First, handle fully closed think blocks
     result = text
     max_iterations = 10
 
@@ -61,5 +73,16 @@ def strip_think_blocks(text: str) -> str:
         if new_result == result:
             break
         result = new_result
+
+    # If result still contains unclosed <think>, strip everything from first <think> onwards
+    # This handles the case where the LLM didn't close the think block
+    if '<think>' in result:
+        # Find the last <think> and return everything after it
+        # Actually, if there's no </think>, ALL content after <think> is thinking
+        # So we need to find text BEFORE the first <think>
+        first_think = result.find('<think>')
+        if first_think >= 0:
+            # Return text before the first <think>
+            result = result[:first_think]
 
     return result

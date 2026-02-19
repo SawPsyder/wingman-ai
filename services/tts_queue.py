@@ -16,6 +16,23 @@ class TTSQueue:
         self._pending_generation: set[str] = set()
         self._generation_lock = asyncio.Lock()
 
+    def reset(self):
+        """Recreate the asyncio primitives on the current event loop.
+
+        asyncio.Queue and asyncio.Lock are bound to the loop that was running
+        when they were created.  If the TTSQueue was instantiated during
+        config/validation (which may run on a different loop) and then used
+        during streaming, the old primitives will raise
+        'is bound to a different event loop'.  Calling reset() before each
+        streaming session fixes that.
+        """
+        self._queue = asyncio.Queue()
+        self._generation_lock = asyncio.Lock()
+        self._closed = False
+        self._consumer_done = False
+        self._audio_buffers.clear()
+        self._pending_generation.clear()
+
     def set_audio_callback(self, callback: Callable[[bytes], Awaitable[None]]) -> None:
         """Set callback for audio chunks to be played."""
         self._audio_callback = callback

@@ -646,6 +646,12 @@ class Skill:
         """
         return text
 
+    async def on_message_complete(self) -> None:
+        """Called when a message is complete (after LLM response finishes).
+        This is called regardless of whether audio was generated.
+        """
+        pass
+
     async def is_summarize_needed(self, tool_name: str) -> bool:
         """Returns whether a tool needs to be summarized."""
         # Check @tool decorator setting

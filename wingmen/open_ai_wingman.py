@@ -136,6 +136,8 @@ class OpenAiWingman(Wingman):
         # These are initialized in validate() once config is available
         self.sentence_splitter: SentenceSplitter | None = None
         self.tts_queue: TTSQueue | None = None
+        self._tts_consumer_task: asyncio.Task | None = None
+        self._message_complete_fired: bool = False
 
     def _broadcast_mcp_state_changed(self):
         """Broadcast MCP state change to UI via WebSocket."""
@@ -1092,12 +1094,11 @@ class OpenAiWingman(Wingman):
                     message = self._get_random_filler()
                     is_summarize_needed = True
                 if message:
-                    # Skip play_to_user if streaming was active - audio already played
-                    if not getattr(self, '_streaming_was_active', False):
+                    # Skip play_to_user if streaming already played audio for this content
+                    if not getattr(self, '_streaming_played_audio', False):
                         self.threaded_execution(self.play_to_user, message, interrupt)
-                    else:
-                        # Reset for next message
-                        self._streaming_was_active = False
+                    # Reset for subsequent iterations
+                    self._streaming_played_audio = False
                     await printr.print_async(
                         f"{message}",
                         color=LogType.POSITIVE,
@@ -1172,7 +1173,162 @@ class OpenAiWingman(Wingman):
             self._add_tool_execution_snapshot(
                 benchmark, tool_execution_time_ms, tool_timings
             )
-        return response_message.content, response_message.content, None, interrupt
+
+        content = response_message.content
+        # If streaming already played TTS audio, return None as process_result
+        # to prevent duplicate play_to_user in the base class, but pass the content
+        # as instant_response so it still appears in the UI log.
+        if getattr(self, '_streaming_played_audio', False):
+            self._streaming_played_audio = False
+            self._message_complete_fired = False
+
+            # Push the completed message to the client immediately - don't wait
+            # for _fire_message_complete / TTS to finish first.
+            if content:
+                await printr.print_async(
+                    f"{content}",
+                    color=LogType.POSITIVE,
+                    source=LogSource.WINGMAN,
+                    source_name=self.name,
+                    skill_name="",
+                    benchmark_result=benchmark.finish(),
+                )
+
+            printr.print(
+                f"[STREAMING] Streaming return path: content_len={len(content) if content else 0}, about to call _fire_message_complete",
+                color=LogType.INFO,
+                source_name=self.name,
+                server_only=True,
+            )
+            # Notify client and skills that the streamed message is fully complete
+            await self._fire_message_complete()
+            # Return (None, None) so wingman.py doesn't print or play_to_user again
+            return None, None, None, interrupt
+        printr.print(
+            f"[STREAMING] Non-streaming return path: content_len={len(content) if content else 0}",
+            color=LogType.INFO,
+            source_name=self.name,
+            server_only=True,
+        )
+        return content, content, None, interrupt
+
+    async def _fire_message_complete(self):
+        """Wait for TTS audio to finish, then fire MESSAGE_COMPLETE and on_message_complete.
+
+        The audio wait was moved here from the streaming generator so that the
+        client receives the completed message text immediately while audio is
+        still playing.  This method blocks until all audio has finished, then
+        signals completion to the client and skills (e.g. HUD hide).
+        """
+        # Wait for the TTS consumer task and audio playback
+        consumer_task = getattr(self, '_tts_consumer_task', None)
+        try:
+            if consumer_task:
+                printr.print(
+                    f"[STREAMING] Waiting for TTS consumer task to finish...",
+                    color=LogType.INFO,
+                    source_name=self.name,
+                    server_only=True,
+                )
+                await consumer_task
+                printr.print(
+                    f"[STREAMING] TTS consumer done. Waiting for audio playback...",
+                    color=LogType.INFO,
+                    source_name=self.name,
+                    server_only=True,
+                )
+                while self.audio_player.is_playing:
+                    await asyncio.sleep(0.1)
+                printr.print(
+                    f"[STREAMING] Audio playback finished.",
+                    color=LogType.INFO,
+                    source_name=self.name,
+                    server_only=True,
+                )
+        except (asyncio.CancelledError, Exception) as e:
+            if not isinstance(e, asyncio.CancelledError):
+                await printr.print_async(
+                    f"Error waiting for TTS consumer: {str(e)}", color=LogType.ERROR
+                )
+        finally:
+            self._tts_consumer_task = None
+
+        # Guard against double-firing (abort_streaming_playback may have already fired)
+        if self._message_complete_fired:
+            return
+        self._message_complete_fired = True
+
+        printr.print(
+            f"[STREAMING] _fire_message_complete: firing MESSAGE_COMPLETE + on_message_complete",
+            color=LogType.INFO,
+            source_name=self.name,
+            server_only=True,
+        )
+        await printr.print_async(
+            "Message complete",
+            command_tag=CommandTag.MESSAGE_COMPLETE,
+            source_name=self.name,
+        )
+        for skill in self.skills:
+            if skill.is_prepared:
+                try:
+                    await skill.on_message_complete()
+                except Exception as e:
+                    printr.print(
+                        f"Error calling on_message_complete for skill {skill.name}: {e}",
+                        color=LogType.WARNING,
+                        source_name=self.name,
+                        server_only=True,
+                    )
+
+    async def abort_streaming_playback(self):
+        """Abort any running TTS streaming playback.
+
+        Called when the user manually stops playback (keybind or API).
+        Stops the TTS consumer, clears the queue, and fires on_message_complete
+        so the HUD message is hidden.
+        """
+        consumer_task = self._tts_consumer_task
+        had_active_stream = consumer_task is not None and not consumer_task.done()
+
+        if self.tts_queue:
+            # Signal no more items and clear remaining sentences
+            self.tts_queue._closed = True
+            await self.tts_queue.clear()
+
+        # Wait briefly for the consumer to notice the closed+empty queue and exit
+        if consumer_task and not consumer_task.done():
+            try:
+                await asyncio.wait_for(consumer_task, timeout=1.0)
+            except (asyncio.TimeoutError, Exception):
+                consumer_task.cancel()
+                try:
+                    await consumer_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+
+        self._tts_consumer_task = None
+
+        # Fire message complete so HUD hides and client gets notified
+        if had_active_stream and not self._message_complete_fired:
+            self._message_complete_fired = True
+            printr.print(
+                f"[STREAMING] Playback aborted — firing on_message_complete",
+                color=LogType.INFO,
+                source_name=self.name,
+                server_only=True,
+            )
+            await printr.print_async(
+                "Message complete",
+                command_tag=CommandTag.MESSAGE_COMPLETE,
+                source_name=self.name,
+            )
+            for skill in self.skills:
+                if skill.is_prepared:
+                    try:
+                        await skill.on_message_complete()
+                    except Exception:
+                        pass
 
     def _add_benchmark_snapshot(
         self, benchmark: Benchmark, label: str, execution_time_ms: float
@@ -1823,7 +1979,8 @@ class OpenAiWingman(Wingman):
     async def _stream_llm_response(self, messages, tools: list[dict] = None):
         """
         Stream LLM response with parallel TTS generation.
-        Yields tokens as they arrive, and triggers TTS for complete sentences.
+        Yields raw ChatCompletionChunk objects as they arrive from the provider.
+        Internally feeds content tokens to the sentence splitter and TTS queue.
         """
         # Reset think block filter for new stream
         if hasattr(self, 'think_filter'):
@@ -1835,6 +1992,7 @@ class OpenAiWingman(Wingman):
                 f"[STREAMING] Streaming not initialized, falling back to non-streaming",
                 color=LogType.INFO,
                 source_name=self.name,
+                server_only=True,
             )
             completion = await self.actual_llm_call(messages, tools, stream=False)
             yield completion
@@ -1844,6 +2002,7 @@ class OpenAiWingman(Wingman):
             f"[STREAMING] Starting LLM streaming response",
             color=LogType.INFO,
             source_name=self.name,
+            server_only=True,
         )
 
         # Log streaming config for debugging
@@ -1852,21 +2011,38 @@ class OpenAiWingman(Wingman):
             f"[STREAMING] Config - enabled: {stream_config.enabled}, min_sentence: {stream_config.min_sentence_length}, auto_play: {stream_config.auto_play}",
             color=LogType.INFO,
             source_name=self.name,
+            server_only=True,
         )
-        printr.print(
-            f"[STREAMING] TTS Provider: {self.config.features.tts_provider}, Conversation: {self.config.features.conversation_provider}",
-            color=LogType.INFO,
-            source_name=self.name,
-        )
+
+        # Wait for any previous TTS consumer to finish before resetting
+        prev_task = self._tts_consumer_task
+        if prev_task and not prev_task.done():
+            printr.print(
+                f"[STREAMING] Waiting for previous TTS consumer to finish before new stream...",
+                color=LogType.INFO,
+                source_name=self.name,
+                server_only=True,
+            )
+            try:
+                await prev_task
+            except Exception:
+                pass
+            # Also wait for leftover audio playback
+            while self.audio_player.is_playing:
+                await asyncio.sleep(0.1)
+        self._tts_consumer_task = None
 
         # Clear any previous audio and reset state
         await self.audio_player.clear_queue()
-        await self.tts_queue.clear()
-        self.tts_queue._closed = False
+        self.tts_queue.reset()
 
         # Track if consumer is already running
         consumer_started = False
         consumer_task = None
+
+        # Markdown filter for TTS — strip syntax that should not be spoken
+        from core.markdown_filter import MarkdownTTSFilter
+        md_filter = MarkdownTTSFilter()
 
         try:
             # Get the appropriate provider for streaming
@@ -1876,6 +2052,7 @@ class OpenAiWingman(Wingman):
                     f"[STREAMING] No streaming provider found",
                     color=LogType.WARNING,
                     source_name=self.name,
+                    server_only=True,
                 )
                 yield None
                 return
@@ -1884,6 +2061,7 @@ class OpenAiWingman(Wingman):
                 f"[STREAMING] Using provider: {type(provider).__name__}",
                 color=LogType.INFO,
                 source_name=self.name,
+                server_only=True,
             )
 
             # Get and log the model
@@ -1892,6 +2070,7 @@ class OpenAiWingman(Wingman):
                 f"[STREAMING] Using model: {model}",
                 color=LogType.INFO,
                 source_name=self.name,
+                server_only=True,
             )
 
             # Get streaming iterator from provider
@@ -1912,82 +2091,66 @@ class OpenAiWingman(Wingman):
                     stream=True,
                 )
 
-            # Process tokens as they arrive
+            # Process chunks as they arrive
             token_count = 0
             sentence_count = 0
             async for chunk in stream_iter:
-                if chunk and chunk.choices and chunk.choices[0].delta.content:
-                    token = chunk.choices[0].delta.content
-                    token_count += 1
-                    yield token
+                if not chunk or not chunk.choices:
+                    continue
 
-                    # Feed to sentence splitter - strip think blocks first
+                delta = chunk.choices[0].delta if hasattr(chunk.choices[0], 'delta') else None
+
+                # Extract content for TTS processing
+                if delta and delta.content:
+                    token = delta.content
+                    token_count += 1
+
+                    # Feed to sentence splitter for TTS - strip think blocks first
                     token_for_splitter = self.think_filter.filter(token)
                     sentence = self.sentence_splitter.feed(token_for_splitter)
                     if sentence:
+                        # Strip markdown syntax before TTS
+                        sentence = md_filter.filter(sentence)
+                        if not sentence:
+                            continue
                         sentence_count += 1
-                        printr.print(
-                            f"[STREAMING] Sentence {sentence_count}: '{sentence[:50]}...' -> enqueued for TTS",
-                            color=LogType.INFO,
-                            source_name=self.name,
-                        )
                         # Queue for TTS generation
                         await self.tts_queue.enqueue(sentence)
                         # Start consumer task only once if not already running
                         if not consumer_started:
-                            printr.print(
-                                f"[STREAMING] Starting TTS consumer task",
-                                color=LogType.INFO,
-                                source_name=self.name,
-                            )
                             consumer_task = asyncio.create_task(self._consume_tts_queue())
                             consumer_started = True
-                            # Mark that streaming was active - audio will be played during streaming
-                            self._streaming_was_active = True
                         # Yield control to allow consumer to run
                         await asyncio.sleep(0)
 
-            printr.print(
-                f"[STREAMING] Stream complete. Tokens: {token_count}, Sentences: {sentence_count}",
-                color=LogType.INFO,
-                source_name=self.name,
-            )
+                # Yield the raw chunk to the caller (_llm_call) for content + tool call accumulation
+                yield chunk
 
-            # Flush remaining buffer - strip think blocks
+            # Flush remaining buffer - strip think blocks and markdown
             remaining = self.think_filter.filter(self.sentence_splitter.flush())
             if remaining:
-                printr.print(
-                    f"[STREAMING] Flushing remaining buffer: '{remaining[:50]}...'",
-                    color=LogType.INFO,
-                    source_name=self.name,
-                )
+                remaining = md_filter.filter(remaining)
+            if remaining:
                 await self.tts_queue.enqueue(remaining)
                 if not consumer_started:
                     consumer_task = asyncio.create_task(self._consume_tts_queue())
                     consumer_started = True
 
-            # Wait for consumer to finish if it was started
-            # Always fire message_complete when streaming is done, regardless of whether audio was generated
-            try:
-                if consumer_task:
-                    await consumer_task
-                    # Wait for audio playback to finish
-                    while self.audio_player.is_playing:
-                        await asyncio.sleep(0.1)
+            # Signal that no more items will be enqueued so the consumer can exit
+            self.tts_queue._closed = True
 
-                # Fire message_complete event - always fire when stream is complete
-                await printr.print_async(
-                    f"Message complete",
-                    command_tag=CommandTag.MESSAGE_COMPLETE,
-                    source_name=self.name,
-                )
-            except Exception as e:
-                await printr.print_async(
-                    f"Error in TTS consumer: {str(e)}", color=LogType.ERROR
-                )
+            # Store the consumer task so the caller can await audio completion
+            # separately from the stream iteration. This lets the client receive
+            # the completed message text before all TTS audio has finished playing.
+            self._tts_consumer_task = consumer_task
 
-            # Close the queue AFTER consumer finishes
-            await self.tts_queue.close()
+            printr.print(
+                f"[STREAMING] Generator returning. consumer_started={consumer_started}",
+                color=LogType.INFO,
+                source_name=self.name,
+                server_only=True,
+            )
+
 
         except Exception as e:
             await printr.print_async(
@@ -1995,8 +2158,9 @@ class OpenAiWingman(Wingman):
             )
             printr.print(traceback.format_exc(), color=LogType.ERROR, server_only=True)
         finally:
-            # Ensure cleanup
-            await self.tts_queue.close()
+            # Only signal closed — do NOT clear the queue.
+            # The consumer task is still running and needs to drain remaining items.
+            self.tts_queue._closed = True
 
     def _get_streaming_provider(self):
         """Get the provider instance for streaming."""
@@ -2034,6 +2198,7 @@ class OpenAiWingman(Wingman):
 
     async def _consume_tts_queue(self):
         """Consume TTS queue and play audio sequentially."""
+        self.tts_queue._consumer_done = False
         try:
             while not self.tts_queue.is_empty() or not self.tts_queue._closed:
                 try:
@@ -2166,6 +2331,8 @@ class OpenAiWingman(Wingman):
             await printr.print_async(
                 f"Error consuming TTS queue: {str(e)}", color=LogType.ERROR
             )
+        finally:
+            self.tts_queue._consumer_done = True
 
     async def _llm_call(self, allow_tool_calls: bool = True):
         """Makes the primary LLM call with the conversation history and tools enabled.
@@ -2185,12 +2352,6 @@ class OpenAiWingman(Wingman):
         streaming_enabled = (
             hasattr(self.config.features, 'streaming') and
             self.config.features.streaming.enabled
-        )
-
-        printr.print(
-            f"[LLM_CALL] Streaming enabled: {streaming_enabled}",
-            color=LogType.INFO,
-            source_name=self.name,
         )
 
         if self.settings.debug_mode:
@@ -2215,49 +2376,156 @@ class OpenAiWingman(Wingman):
             stream_iter = await self.actual_llm_call(messages, tools, stream=True)
 
             full_content = ""
+            raw_content = ""
+            # Accumulate tool calls across chunks (index-based, as per OpenAI streaming spec)
+            tool_calls_accum: dict[int, dict] = {}
+            self._streaming_played_audio = False
+
+            # Separate think-block filter for HUD tokens
+            # (the TTS filter in _stream_llm_response uses self.think_filter independently)
+            hud_think_filter = ThinkBlockFilter()
+
             async for chunk in stream_iter:
                 if chunk:
-                    # Filter once and use for both full_content AND HUD
-                    filtered_chunk = self.think_filter.filter(chunk)
-                    if filtered_chunk:
-                        full_content += filtered_chunk
-                        # Call skill hooks for each token (for HUD streaming display)
-                        for skill in self.skills:
-                            if skill.is_prepared:
-                                if hasattr(skill, 'on_llm_token'):
-                                    printr.print(
-                                        f"[STREAMING] Calling on_llm_token for skill {skill.name}",
-                                        color=LogType.INFO,
-                                        source_name=self.name,
-                                    )
-                                    try:
-                                        await skill.on_llm_token(filtered_chunk)
-                                    except Exception as e:
-                                        printr.print(
-                                            f"Error calling on_llm_token for skill {skill.name}: {e}",
-                                            color=LogType.WARNING,
-                                            source_name=self.name,
-                                        )
+                    # Handle both ChatCompletionChunk objects and plain strings
+                    if hasattr(chunk, 'choices') and chunk.choices:
+                        choice = chunk.choices[0]
+                        delta = choice.delta if hasattr(choice, 'delta') else None
 
-            # Create a mock completion object from the streamed content
-            if full_content:
-                from openai.types.chat import ChatCompletion, ChatCompletionMessage
-                completion = ChatCompletion.model_construct(
+                        # Accumulate tool call deltas (streamed across multiple chunks)
+                        if delta and delta.tool_calls:
+                            for tc_delta in delta.tool_calls:
+                                idx = tc_delta.index
+                                if idx not in tool_calls_accum:
+                                    tool_calls_accum[idx] = {
+                                        "id": "",
+                                        "type": "function",
+                                        "function": {"name": "", "arguments": ""},
+                                    }
+                                acc = tool_calls_accum[idx]
+                                if tc_delta.id:
+                                    acc["id"] = tc_delta.id
+                                if tc_delta.type:
+                                    acc["type"] = tc_delta.type
+                                if tc_delta.function:
+                                    if tc_delta.function.name:
+                                        acc["function"]["name"] += tc_delta.function.name
+                                    if tc_delta.function.arguments:
+                                        acc["function"]["arguments"] += tc_delta.function.arguments
+
+                        # Extract content from delta
+                        chunk_content = delta.content if delta and delta.content else ""
+                    else:
+                        # It's already a string (fallback from _stream_llm_response non-streaming path)
+                        chunk_content = str(chunk) if chunk else ""
+
+                    if chunk_content:
+                        raw_content += chunk_content
+                        # Filter think blocks before sending to HUD/skill hooks
+                        filtered_for_hud = hud_think_filter.filter(chunk_content)
+                        if filtered_for_hud:
+                            # Call skill hooks for each filtered token (for HUD streaming display)
+                            for skill in self.skills:
+                                if skill.is_prepared:
+                                    if hasattr(skill, 'on_llm_token'):
+                                        try:
+                                            await skill.on_llm_token(filtered_for_hud)
+                                        except Exception as e:
+                                            printr.print(
+                                                f"Error calling on_llm_token for skill {skill.name}: {e}",
+                                                color=LogType.WARNING,
+                                                source_name=self.name,
+                                            )
+
+            # Strip think blocks from accumulated raw content
+            from core.thinking_filter import strip_think_blocks
+            full_content = strip_think_blocks(raw_content) if raw_content else ""
+
+            # Debug logging
+            if raw_content:
+                printr.print(
+                    f"[STREAMING] Raw content ({len(raw_content)} chars): {raw_content[:200]}{'...' if len(raw_content) > 200 else ''}",
+                    color=LogType.INFO,
+                    source_name=self.name,
+                    server_only=True,
+                )
+                if full_content != raw_content:
+                    printr.print(
+                        f"[STREAMING] Filtered content ({len(full_content)} chars): {full_content[:200]}{'...' if len(full_content) > 200 else ''}",
+                        color=LogType.INFO,
+                        source_name=self.name,
+                        server_only=True,
+                    )
+
+            # Build tool_calls list from accumulated deltas
+            built_tool_calls = None
+            if tool_calls_accum:
+                from openai.types.chat.chat_completion_message_tool_call import Function
+                built_tool_calls = []
+                for idx in sorted(tool_calls_accum.keys()):
+                    tc = tool_calls_accum[idx]
+                    built_tool_calls.append(
+                        ChatCompletionMessageToolCall(
+                            id=tc["id"],
+                            type=tc["type"],
+                            function=Function(
+                                name=tc["function"]["name"],
+                                arguments=tc["function"]["arguments"],
+                            ),
+                        )
+                    )
+                printr.print(
+                    f"[STREAMING] Accumulated {len(built_tool_calls)} tool call(s): "
+                    + ", ".join(tc.function.name for tc in built_tool_calls),
+                    color=LogType.INFO,
+                    source_name=self.name,
+                    server_only=True,
+                )
+
+            # Create a proper ChatCompletion object from streamed content and/or tool calls
+            if full_content or built_tool_calls:
+                from openai.types.chat.chat_completion import Choice
+                from typing import cast, Literal
+                finish_reason = cast(
+                    Literal["stop", "length", "tool_calls", "content_filter", "function_call"],
+                    "tool_calls" if built_tool_calls else "stop",
+                )
+                message = ChatCompletionMessage(
+                    content=full_content or None,
+                    role="assistant",
+                    tool_calls=built_tool_calls,
+                )
+                completion = ChatCompletion(
                     id="stream-" + str(int(time.time())),
-                    choices=[{
-                        "finish_reason": "stop",
-                        "index": 0,
-                        "message": {
-                            "content": full_content,
-                            "role": "assistant",
-                        },
-                    }],
+                    choices=[
+                        Choice(
+                            finish_reason=finish_reason,
+                            index=0,
+                            message=message,
+                        )
+                    ],
                     created=int(time.time()),
                     model=self._get_streaming_model() or "gpt-4o",
                     object="chat.completion",
                 )
+                # Mark that streaming played audio (TTS was handled during stream)
+                # so the caller can skip duplicate play_to_user
+                if full_content:
+                    self._streaming_played_audio = True
+                printr.print(
+                    f"[STREAMING] Built completion: has_content={bool(full_content)}, has_tools={bool(built_tool_calls)}, _streaming_played_audio={self._streaming_played_audio}",
+                    color=LogType.INFO,
+                    source_name=self.name,
+                    server_only=True,
+                )
             else:
                 completion = None
+                printr.print(
+                    f"[STREAMING] No content and no tool calls - completion is None",
+                    color=LogType.WARNING,
+                    source_name=self.name,
+                    server_only=True,
+                )
         else:
             completion = await self.actual_llm_call(messages, tools)
 
@@ -2282,9 +2550,30 @@ class OpenAiWingman(Wingman):
 
         response_message = completion.choices[0].message
 
-        content = response_message.content
-        if content is None:
-            response_message.content = ""
+        raw_content = response_message.content
+        if raw_content is None:
+            raw_content = ""
+
+        # Debug logging for think block filtering (non-streaming)
+        printr.print(
+            f"[NON-STREAMING] Raw content: {raw_content[:200]}{'...' if len(raw_content) > 200 else ''}",
+            color=LogType.INFO,
+            source_name=self.name,
+            server_only=True,
+        )
+
+        # Filter think blocks from content
+        from core.thinking_filter import strip_think_blocks
+        filtered_content = strip_think_blocks(raw_content)
+
+        printr.print(
+            f"[NON-STREAMING] Filtered content: {filtered_content[:200]}{'...' if len(filtered_content) > 200 else ''}",
+            color=LogType.INFO,
+            source_name=self.name,
+            server_only=True,
+        )
+
+        response_message.content = filtered_content if filtered_content else ""
 
         # temporary fix for tool calls that have a command name as function name
         if response_message.tool_calls:

@@ -1245,6 +1245,13 @@ class WingmanCore(WebSocketUser):
     async def stop_playback(self):
         await self.audio_player.stop_playback()
 
+        # Also abort any active streaming TTS on all wingmen
+        # so the HUD hides and no more audio chunks are generated.
+        if self.tower:
+            for wingman in self.tower.wingmen:
+                if isinstance(wingman, OpenAiWingman):
+                    await wingman.abort_streaming_playback()
+
     # POST /ask-wingman-conversation-provider
     async def ask_wingman_conversation_provider(self, text: str, wingman_name: str):
         wingman = self.tower.get_wingman_by_name(wingman_name)
