@@ -1,4 +1,5 @@
 import json
+import re
 import time
 import asyncio
 import random
@@ -1816,8 +1817,6 @@ class OpenAiWingman(Wingman):
         # Username (only if not explicitly named in backstory)
         if self.settings.user_name:
             # Check if username is mentioned in backstory as a standalone word
-            import re
-
             name_pattern = r"\b" + re.escape(self.settings.user_name.lower()) + r"\b"
             if not re.search(name_pattern, backstory_lower):
                 context_parts.append(
@@ -2091,6 +2090,17 @@ class OpenAiWingman(Wingman):
                     stream=True,
                 )
 
+            # Guard against providers returning None on error
+            if stream_iter is None:
+                printr.print(
+                    f"[STREAMING] Provider returned None - likely an API error",
+                    color=LogType.ERROR,
+                    source_name=self.name,
+                    server_only=True,
+                )
+                yield None
+                return
+
             # Process chunks as they arrive
             token_count = 0
             sentence_count = 0
@@ -2113,13 +2123,19 @@ class OpenAiWingman(Wingman):
                         sentence = md_filter.filter(sentence)
                         if not sentence:
                             continue
-                        sentence_count += 1
-                        # Queue for TTS generation
-                        await self.tts_queue.enqueue(sentence)
-                        # Start consumer task only once if not already running
-                        if not consumer_started:
-                            consumer_task = asyncio.create_task(self._consume_tts_queue())
-                            consumer_started = True
+                        # The markdown filter injects ". " between bullet items.
+                        # Re-split on sentence boundaries so each bullet item
+                        # becomes a separate TTS entry with a natural pause.
+                        sub_sentences = re.split(r'(?<=\.)\s+', sentence)
+                        for sub in sub_sentences:
+                            sub = sub.strip()
+                            if not sub:
+                                continue
+                            sentence_count += 1
+                            await self.tts_queue.enqueue(sub)
+                            if not consumer_started:
+                                consumer_task = asyncio.create_task(self._consume_tts_queue())
+                                consumer_started = True
                         # Yield control to allow consumer to run
                         await asyncio.sleep(0)
 
@@ -2131,10 +2147,16 @@ class OpenAiWingman(Wingman):
             if remaining:
                 remaining = md_filter.filter(remaining)
             if remaining:
-                await self.tts_queue.enqueue(remaining)
-                if not consumer_started:
-                    consumer_task = asyncio.create_task(self._consume_tts_queue())
-                    consumer_started = True
+                # Re-split on sentence boundaries (bullet items inject ". ")
+                sub_sentences = re.split(r'(?<=\.)\s+', remaining)
+                for sub in sub_sentences:
+                    sub = sub.strip()
+                    if not sub:
+                        continue
+                    await self.tts_queue.enqueue(sub)
+                    if not consumer_started:
+                        consumer_task = asyncio.create_task(self._consume_tts_queue())
+                        consumer_started = True
 
             # Signal that no more items will be enqueued so the consumer can exit
             self.tts_queue._closed = True
@@ -2197,142 +2219,197 @@ class OpenAiWingman(Wingman):
         return model_map.get(self.config.features.conversation_provider)
 
     async def _consume_tts_queue(self):
-        """Consume TTS queue and play audio sequentially."""
+        """Consume TTS queue and play audio in exponentially growing batches.
+
+        Batch sizes grow: 1, 2, 4, 8, 16 (max). This gives fast initial response
+        while reducing pauses between later audio blocks.
+
+        If audio playback of one block finishes and the next batch isn't full yet,
+        we flush whatever sentences are available immediately (without advancing
+        to the next desired batch size) so there's no unnecessary silence.
+        """
         self.tts_queue._consumer_done = False
+        max_batch_size = 16
+        desired_batch_size = 1
+        pending_sentences: list[str] = []
+
         try:
             while not self.tts_queue.is_empty() or not self.tts_queue._closed:
-                try:
-                    text = await asyncio.wait_for(
-                        self.tts_queue._queue.get(), timeout=0.5
-                    )
-                except asyncio.TimeoutError:
-                    if self.tts_queue._closed and self.tts_queue.is_empty():
+                # Determine how many sentences we still need for the current batch
+                needed = desired_batch_size - len(pending_sentences)
+
+                if needed > 0:
+                    try:
+                        text = await asyncio.wait_for(
+                            self.tts_queue._queue.get(), timeout=0.1
+                        )
+                        if text and text.strip():
+                            pending_sentences.append(text.strip())
+
+                        # Check if batch is now full
+                        if len(pending_sentences) >= desired_batch_size:
+                            await self._play_tts_batch(pending_sentences)
+                            pending_sentences.clear()
+                            desired_batch_size = min(desired_batch_size * 2, max_batch_size)
+                        continue
+
+                    except asyncio.TimeoutError:
+                        # No new sentence available right now
+                        pass
+
+                # We timed out waiting for more sentences.
+                # Decide whether to flush what we have or keep waiting.
+                if pending_sentences:
+                    # If the queue is closed (stream ended), flush immediately
+                    if self.tts_queue._closed:
+                        await self._play_tts_batch(pending_sentences)
+                        pending_sentences.clear()
                         break
-                    continue
 
-                if not text:
-                    continue
+                    # If audio is NOT playing (previous block finished),
+                    # flush what we have so there's no gap — but do NOT
+                    # advance to the next batch size since we didn't fill this one.
+                    if not self.audio_player.is_playing:
+                        await self._play_tts_batch(pending_sentences)
+                        pending_sentences.clear()
+                        # Keep desired_batch_size the same — don't grow since
+                        # we couldn't fill this batch (LLM is slower than TTS)
+                        continue
 
-                # Get sound config from wingman config
-                sound_config = self.config.sound
+                # Nothing pending and queue looks done
+                if self.tts_queue._closed and self.tts_queue.is_empty():
+                    break
 
-                # Call the appropriate TTS provider with streaming enabled
-                tts_provider = self.config.features.tts_provider
-
-                # Check if audio is pre-generated
-                pre_generated_audio = None
-                if text in self.tts_queue._audio_buffers:
-                    pre_generated_audio = self.tts_queue._audio_buffers.pop(text)
-
-                try:
-                    if pre_generated_audio:
-                        # Play pre-generated audio directly
-                        await self.audio_player.play_with_effects(
-                            input_data=pre_generated_audio,
-                            config=sound_config,
-                            wingman_name=self.name,
-                        )
-                    elif tts_provider == TtsProvider.OPENAI:
-                        await self.openai.play_audio(
-                            text=text,
-                            voice=self.config.openai.tts_voice,
-                            model=self.config.openai.tts_model,
-                            speed=self.config.openai.tts_speed,
-                            sound_config=sound_config,
-                            audio_player=self.audio_player,
-                            wingman_name=self.name,
-                            stream=True,
-                        )
-                    elif tts_provider == TtsProvider.ELEVENLABS:
-                        await self.elevenlabs.play_audio(
-                            text=text,
-                            config=self.config.elevenlabs,
-                            sound_config=sound_config,
-                            audio_player=self.audio_player,
-                            wingman_name=self.name,
-                            stream=True,
-                        )
-                    elif tts_provider == TtsProvider.POCKET_TTS:
-                        await self.pocket_tts.play_audio(
-                            text=text,
-                            config=self.config.pocket_tts,
-                            sound_config=sound_config,
-                            audio_player=self.audio_player,
-                            wingman_name=self.name,
-                        )
-                    elif tts_provider == TtsProvider.AZURE:
-                        await self.openai_azure.play_audio(
-                            text=text,
-                            api_key=self.azure_api_keys.get("tts", ""),
-                            config=self.config.azure.tts,
-                            sound_config=sound_config,
-                            audio_player=self.audio_player,
-                            wingman_name=self.name,
-                        )
-                    elif tts_provider == TtsProvider.EDGE_TTS:
-                        await self.edge_tts.play_audio(
-                            text=text,
-                            config=self.config.edge_tts,
-                            sound_config=sound_config,
-                            audio_player=self.audio_player,
-                            wingman_name=self.name,
-                        )
-                    elif tts_provider == TtsProvider.INWORLD:
-                        await self.inworld.play_audio(
-                            text=text,
-                            config=self.config.inworld,
-                            sound_config=sound_config,
-                            audio_player=self.audio_player,
-                            wingman_name=self.name,
-                        )
-                    elif tts_provider == TtsProvider.HUME:
-                        await self.hume.play_audio(
-                            text=text,
-                            config=self.config.hume,
-                            sound_config=sound_config,
-                            audio_player=self.audio_player,
-                            wingman_name=self.name,
-                        )
-                    elif tts_provider == TtsProvider.XVASYNTH:
-                        await self.xvasynth.play_audio(
-                            text=text,
-                            config=self.config.xvasynth,
-                            sound_config=sound_config,
-                            audio_player=self.audio_player,
-                            wingman_name=self.name,
-                        )
-                    elif tts_provider == TtsProvider.OPENAI_COMPATIBLE:
-                        await self.openai_compatible_tts.play_audio(
-                            text=text,
-                            voice=self.config.openai_compatible_tts.voice,
-                            model=self.config.openai_compatible_tts.model,
-                            sound_config=sound_config,
-                            audio_player=self.audio_player,
-                            wingman_name=self.name,
-                            stream=True,
-                        )
-                    elif tts_provider == TtsProvider.WINGMAN_PRO:
-                        if self.config.wingman_pro.tts_provider.name == "OPENAI":
-                            await self.wingman_pro.generate_openai_speech(
-                                text=text,
-                                voice=self.config.openai.tts_voice,
-                                model=self.config.openai.tts_model,
-                                speed=self.config.openai.tts_speed,
-                                sound_config=sound_config,
-                                audio_player=self.audio_player,
-                                wingman_name=self.name,
-                            )
-                except Exception as e:
-                    await printr.print_async(
-                        f"Error playing TTS for sentence: {str(e)}", color=LogType.ERROR
-                    )
+                # Avoid busy-looping when waiting for more sentences
+                if not pending_sentences:
+                    await asyncio.sleep(0.05)
 
         except Exception as e:
             await printr.print_async(
                 f"Error consuming TTS queue: {str(e)}", color=LogType.ERROR
             )
         finally:
+            # Flush any remaining sentences
+            if pending_sentences:
+                try:
+                    await self._play_tts_batch(pending_sentences)
+                except Exception as e:
+                    await printr.print_async(
+                        f"Error playing final TTS batch: {str(e)}", color=LogType.ERROR
+                    )
             self.tts_queue._consumer_done = True
+
+    async def _play_tts_batch(self, sentences: list[str]):
+        """Combine sentences into a single text and play via the configured TTS provider."""
+        text = " ".join(sentences)
+        if not text:
+            return
+
+        printr.print(
+            f"[STREAMING] Playing TTS batch ({len(sentences)} sentence(s), {len(text)} chars)",
+            color=LogType.INFO,
+            source_name=self.name,
+            server_only=True,
+        )
+
+        sound_config = self.config.sound
+        tts_provider = self.config.features.tts_provider
+
+        try:
+            if tts_provider == TtsProvider.OPENAI:
+                await self.openai.play_audio(
+                    text=text,
+                    voice=self.config.openai.tts_voice,
+                    model=self.config.openai.tts_model,
+                    speed=self.config.openai.tts_speed,
+                    sound_config=sound_config,
+                    audio_player=self.audio_player,
+                    wingman_name=self.name,
+                    stream=True,
+                )
+            elif tts_provider == TtsProvider.ELEVENLABS:
+                await self.elevenlabs.play_audio(
+                    text=text,
+                    config=self.config.elevenlabs,
+                    sound_config=sound_config,
+                    audio_player=self.audio_player,
+                    wingman_name=self.name,
+                    stream=True,
+                )
+            elif tts_provider == TtsProvider.POCKET_TTS:
+                await self.pocket_tts.play_audio(
+                    text=text,
+                    config=self.config.pocket_tts,
+                    sound_config=sound_config,
+                    audio_player=self.audio_player,
+                    wingman_name=self.name,
+                )
+            elif tts_provider == TtsProvider.AZURE:
+                await self.openai_azure.play_audio(
+                    text=text,
+                    api_key=self.azure_api_keys.get("tts", ""),
+                    config=self.config.azure.tts,
+                    sound_config=sound_config,
+                    audio_player=self.audio_player,
+                    wingman_name=self.name,
+                )
+            elif tts_provider == TtsProvider.EDGE_TTS:
+                await self.edge_tts.play_audio(
+                    text=text,
+                    config=self.config.edge_tts,
+                    sound_config=sound_config,
+                    audio_player=self.audio_player,
+                    wingman_name=self.name,
+                )
+            elif tts_provider == TtsProvider.INWORLD:
+                await self.inworld.play_audio(
+                    text=text,
+                    config=self.config.inworld,
+                    sound_config=sound_config,
+                    audio_player=self.audio_player,
+                    wingman_name=self.name,
+                )
+            elif tts_provider == TtsProvider.HUME:
+                await self.hume.play_audio(
+                    text=text,
+                    config=self.config.hume,
+                    sound_config=sound_config,
+                    audio_player=self.audio_player,
+                    wingman_name=self.name,
+                )
+            elif tts_provider == TtsProvider.XVASYNTH:
+                await self.xvasynth.play_audio(
+                    text=text,
+                    config=self.config.xvasynth,
+                    sound_config=sound_config,
+                    audio_player=self.audio_player,
+                    wingman_name=self.name,
+                )
+            elif tts_provider == TtsProvider.OPENAI_COMPATIBLE:
+                await self.openai_compatible_tts.play_audio(
+                    text=text,
+                    voice=self.config.openai_compatible_tts.voice,
+                    model=self.config.openai_compatible_tts.model,
+                    sound_config=sound_config,
+                    audio_player=self.audio_player,
+                    wingman_name=self.name,
+                    stream=True,
+                )
+            elif tts_provider == TtsProvider.WINGMAN_PRO:
+                if self.config.wingman_pro.tts_provider.name == "OPENAI":
+                    await self.wingman_pro.generate_openai_speech(
+                        text=text,
+                        voice=self.config.openai.tts_voice,
+                        model=self.config.openai.tts_model,
+                        speed=self.config.openai.tts_speed,
+                        sound_config=sound_config,
+                        audio_player=self.audio_player,
+                        wingman_name=self.name,
+                    )
+        except Exception as e:
+            await printr.print_async(
+                f"Error playing TTS for batch: {str(e)}", color=LogType.ERROR
+            )
 
     async def _llm_call(self, allow_tool_calls: bool = True):
         """Makes the primary LLM call with the conversation history and tools enabled.
@@ -2409,9 +2486,59 @@ class OpenAiWingman(Wingman):
                                     acc["type"] = tc_delta.type
                                 if tc_delta.function:
                                     if tc_delta.function.name:
-                                        acc["function"]["name"] += tc_delta.function.name
+                                        # Function names are never fragmented across
+                                        # chunks — assign instead of append. Some
+                                        # providers (e.g. Google Gemini via OpenAI
+                                        # compat) re-send the full name in every
+                                        # chunk which caused duplication with +=.
+                                        acc["function"]["name"] = tc_delta.function.name
                                     if tc_delta.function.arguments:
-                                        acc["function"]["arguments"] += tc_delta.function.arguments
+                                        new_args = tc_delta.function.arguments
+                                        existing = acc["function"]["arguments"]
+                                        # Some providers send the complete arguments
+                                        # JSON in each chunk instead of incremental
+                                        # fragments. Detect this: if existing args
+                                        # look like complete JSON and new args start
+                                        # a new JSON object, overwrite instead of
+                                        # appending (which would produce invalid
+                                        # "Extra data" JSON).
+                                        if (
+                                            existing
+                                            and existing.rstrip().endswith("}")
+                                            and new_args.lstrip().startswith("{")
+                                        ):
+                                            acc["function"]["arguments"] = new_args
+                                        else:
+                                            acc["function"]["arguments"] += new_args
+
+                                # Capture Google Gemini extra_content (contains
+                                # thought_signature) from model_extra on the
+                                # tool-call delta.  Required for Gemini 3+
+                                # tool-call round-trips.
+                                for extra_src in (tc_delta, getattr(tc_delta, "function", None)):
+                                    if extra_src and hasattr(extra_src, "model_extra") and extra_src.model_extra:
+                                        extra_content = extra_src.model_extra.get("extra_content")
+                                        if extra_content and isinstance(extra_content, dict):
+                                            google_extra = extra_content.get("google", {})
+                                            if google_extra.get("thought_signature"):
+                                                acc["extra_content"] = extra_content
+                                                printr.print(
+                                                    f"[STREAMING] Captured thought_signature from tool-call delta",
+                                                    color=LogType.INFO,
+                                                    source_name=self.name,
+                                                    server_only=True,
+                                                )
+
+                        # Also capture extra_content from the choice-level
+                        # model_extra (some SDK versions surface it there).
+                        if hasattr(choice, "model_extra") and choice.model_extra:
+                            extra_content = choice.model_extra.get("extra_content")
+                            if extra_content and isinstance(extra_content, dict):
+                                google_extra = extra_content.get("google", {})
+                                if google_extra.get("thought_signature"):
+                                    for idx in sorted(tool_calls_accum.keys(), reverse=True):
+                                        tool_calls_accum[idx].setdefault("extra_content", extra_content)
+                                        break
 
                         # Extract content from delta
                         chunk_content = delta.content if delta and delta.content else ""
@@ -2464,6 +2591,12 @@ class OpenAiWingman(Wingman):
                 built_tool_calls = []
                 for idx in sorted(tool_calls_accum.keys()):
                     tc = tool_calls_accum[idx]
+                    # Include extra_content if present (contains
+                    # thought_signature required for Gemini 3+ tool-call
+                    # round-trips via OpenAI compat API).
+                    extra_kwargs = {}
+                    if "extra_content" in tc:
+                        extra_kwargs["extra_content"] = tc["extra_content"]
                     built_tool_calls.append(
                         ChatCompletionMessageToolCall(
                             id=tc["id"],
@@ -2472,6 +2605,7 @@ class OpenAiWingman(Wingman):
                                 name=tc["function"]["name"],
                                 arguments=tc["function"]["arguments"],
                             ),
+                            **extra_kwargs,
                         )
                     )
                 printr.print(

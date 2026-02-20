@@ -1,6 +1,6 @@
 # services/tts_queue.py
 import asyncio
-from typing import AsyncIterator, Optional, Callable, Awaitable
+from typing import AsyncIterator, Callable, Awaitable
 
 class TTSQueue:
     """Manages TTS requests with queueing and streaming."""
@@ -11,10 +11,6 @@ class TTSQueue:
         self._consumer_done = False
         self._consumer_task: asyncio.Task | None = None
         self._audio_callback: Callable[[bytes], Awaitable[None]] | None = None
-        # For pre-generated audio
-        self._audio_buffers: dict[str, bytes] = {}
-        self._pending_generation: set[str] = set()
-        self._generation_lock = asyncio.Lock()
 
     def reset(self):
         """Recreate the asyncio primitives on the current event loop.
@@ -27,53 +23,19 @@ class TTSQueue:
         streaming session fixes that.
         """
         self._queue = asyncio.Queue()
-        self._generation_lock = asyncio.Lock()
         self._closed = False
         self._consumer_done = False
-        self._audio_buffers.clear()
-        self._pending_generation.clear()
 
     def set_audio_callback(self, callback: Callable[[bytes], Awaitable[None]]) -> None:
         """Set callback for audio chunks to be played."""
         self._audio_callback = callback
 
     async def enqueue(self, text: str) -> None:
-        """Add text to TTS queue and start background audio generation."""
+        """Add text to TTS queue."""
         if self._closed:
             return
         await self._queue.put(text)
 
-        # Start background audio generation immediately
-        asyncio.create_task(self._generate_audio_background(text))
-
-    async def _generate_audio_background(self, text: str, retry_count: int = 0) -> None:
-        """Generate audio in background with retry."""
-        max_retries = 1  # Retry once
-
-        if text in self._audio_buffers or text in self._pending_generation:
-            return
-
-        async with self._generation_lock:
-            if text in self._audio_buffers or text in self._pending_generation:
-                return
-            self._pending_generation.add(text)
-
-        try:
-            audio_bytes = b""
-            async for chunk in self._generate_audio(text):
-                if chunk:
-                    audio_bytes += chunk
-
-            if audio_bytes:
-                self._audio_buffers[text] = audio_bytes
-        except Exception as e:
-            print(f"Background audio generation failed (attempt {retry_count + 1}): {e}")
-            if retry_count < max_retries:
-                # Retry after brief delay
-                await asyncio.sleep(0.5)
-                return await self._generate_audio_background(text, retry_count + 1)
-        finally:
-            self._pending_generation.discard(text)
 
     async def clear(self) -> None:
         """Clear all pending TTS requests."""

@@ -37,10 +37,12 @@ class MarkdownTTSFilter:
 
     def __init__(self):
         self._in_code_fence = False
+        self._seen_bullet = False
 
     def reset(self):
         """Reset state for a new stream."""
         self._in_code_fence = False
+        self._seen_bullet = False
 
     def filter(self, text: str) -> str:
         """Strip markdown from *text* and return TTS-friendly output.
@@ -53,6 +55,7 @@ class MarkdownTTSFilter:
             return text
 
         result = text
+        self._seen_bullet = False
 
         # ── 1. Code fences (``` … ```) ──────────────────────────────
         # They can open/close within a single sentence or span many.
@@ -97,10 +100,20 @@ class MarkdownTTSFilter:
         result = re.sub(r'^[-*_]{3,}\s*$', '', result, flags=re.MULTILINE)
 
         # ── 8. Unordered list bullets (-, *, +) ────────────────────
-        result = re.sub(r'^[\s]*[-*+]\s+', '', result, flags=re.MULTILINE)
+        # Replace bullet markers so TTS pauses between list items.
+        # A newline before a bullet is replaced with ". " to force a
+        # sentence break; the first bullet simply has its marker stripped.
+        result = re.sub(r'^([\s]*[-*+]\s+)', self._bullet_replacement, result, flags=re.MULTILINE)
 
         # ── 9. Ordered list numbers (1. 2. …) ─────────────────────
-        result = re.sub(r'^[\s]*\d+\.\s+', '', result, flags=re.MULTILINE)
+        result = re.sub(r'^([\s]*\d+\.\s+)', self._bullet_replacement, result, flags=re.MULTILINE)
+
+        # ── 9b. Clean up newlines left around bullet replacements ──
+        # After bullet markers are replaced, the pattern is:
+        #   "ItemA\n. ItemB\n. ItemC"
+        # We want: "ItemA. ItemB. ItemC" — period attached to previous item.
+        result = re.sub(r'\s*\n+\s*\.\s*', '. ', result)
+        result = re.sub(r'\n+', ' ', result)
 
         # ── 10. HTML tags ──────────────────────────────────────────
         result = re.sub(r'<[^>]+>', '', result)
@@ -129,6 +142,15 @@ class MarkdownTTSFilter:
         return result
 
     # ────────────────────── helpers ──────────────────────────────────
+
+    def _bullet_replacement(self, match: re.Match) -> str:
+        """Replace a bullet/number marker, inserting a period before subsequent
+        items so the sentence splitter produces a pause between them."""
+        if self._seen_bullet:
+            # Not the first item — inject ". " to force a sentence break
+            return ". "
+        self._seen_bullet = True
+        return ""
 
     def _handle_code_fences(self, text: str) -> str:
         """Process code fence markers (```) and suppress fenced content.

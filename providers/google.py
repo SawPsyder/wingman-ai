@@ -80,6 +80,13 @@ class GoogleGenAI:
         # Don't send reasoning_effort unless we know it's supported.
         return {}
 
+    def _sync_to_async_generator(self, sync_generator):
+        """Convert a synchronous generator to an async generator."""
+        async def async_gen():
+            for item in sync_generator:
+                yield item
+        return async_gen()
+
     def ask(
         self,
         messages: list[dict[str, str]],
@@ -105,6 +112,11 @@ class GoogleGenAI:
                     tool_choice="auto",
                     **reasoning_params,
                 )
+
+            # If streaming, convert sync generator to async generator
+            if stream:
+                return self._sync_to_async_generator(completion)
+
             return completion
         except APIStatusError as e:
             self._handle_api_error(e)

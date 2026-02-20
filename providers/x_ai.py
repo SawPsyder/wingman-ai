@@ -26,6 +26,11 @@ class XAi(OpenAi):
                     tools=self._fix_tools(tools),
                     tool_choice="auto",
                 )
+
+            # If streaming, convert sync generator to async generator
+            if stream:
+                return self._sync_to_async_generator(completion)
+
             return completion
         except APIStatusError as e:
             self._handle_api_error(e)
