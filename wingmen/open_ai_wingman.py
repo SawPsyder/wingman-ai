@@ -2461,6 +2461,7 @@ class OpenAiWingman(Wingman):
             # Separate think-block filter for HUD tokens
             # (the TTS filter in _stream_llm_response uses self.think_filter independently)
             hud_think_filter = ThinkBlockFilter()
+            was_thinking = False
 
             async for chunk in stream_iter:
                 if chunk:
@@ -2550,6 +2551,18 @@ class OpenAiWingman(Wingman):
                         raw_content += chunk_content
                         # Filter think blocks before sending to HUD/skill hooks
                         filtered_for_hud = hud_think_filter.filter(chunk_content)
+
+                        # Detect think-block state transitions and notify skills
+                        is_thinking = hud_think_filter.in_think_block
+                        if is_thinking != was_thinking:
+                            was_thinking = is_thinking
+                            for skill in self.skills:
+                                if skill.is_prepared:
+                                    try:
+                                        await skill.on_thinking_state_changed(is_thinking)
+                                    except Exception:
+                                        pass
+
                         if filtered_for_hud:
                             # Call skill hooks for each filtered token (for HUD streaming display)
                             for skill in self.skills:
@@ -2563,6 +2576,15 @@ class OpenAiWingman(Wingman):
                                                 color=LogType.WARNING,
                                                 source_name=self.name,
                                             )
+
+            # If the stream ended while still in a think block, notify skills
+            if was_thinking:
+                for skill in self.skills:
+                    if skill.is_prepared:
+                        try:
+                            await skill.on_thinking_state_changed(False)
+                        except Exception:
+                            pass
 
             # Strip think blocks from accumulated raw content
             from core.thinking_filter import strip_think_blocks

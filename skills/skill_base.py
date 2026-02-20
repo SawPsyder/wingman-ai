@@ -652,6 +652,14 @@ class Skill:
         """
         pass
 
+    async def on_thinking_state_changed(self, is_thinking: bool) -> None:
+        """Called when the LLM starts or stops a think block during streaming.
+
+        Args:
+            is_thinking: True when a think block starts, False when it ends.
+        """
+        pass
+
     async def is_summarize_needed(self, tool_name: str) -> bool:
         """Returns whether a tool needs to be summarized."""
         # Check @tool decorator setting

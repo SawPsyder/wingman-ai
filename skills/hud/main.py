@@ -942,6 +942,34 @@ class HUD(Skill):
             # Silently ignore append errors - the full message will be shown later
             pass
 
+    async def on_thinking_state_changed(self, is_thinking: bool) -> None:
+        """Show or hide a 'Thinking...' indicator on the HUD when the LLM
+        enters or leaves a think block during streaming."""
+        if not self._get_prop("show_chat_messages", True):
+            return
+        if not await self._ensure_connected():
+            return
+
+        accent_color = str(self._get_prop("accent_color", "#00aaff"))
+
+        if is_thinking:
+            # Show a tool-activity style "Thinking..." message
+            thinking_tool = [{
+                "name": "thinking",
+                "source": "Thinking...",
+                "type": "system",
+                "icon": None,
+            }]
+            await self._show_message(
+                self.wingman.name, "", accent_color,
+                tools=thinking_tool, duration=300.0,
+            )
+        else:
+            # Thinking ended — hide the indicator so streaming text can take over.
+            # Reset _streaming_message_shown so on_llm_token creates a fresh message.
+            await self._hide_message()
+            self._streaming_message_shown = False
+
     async def on_message_complete(self) -> None:
         """Called when streaming message and all audio playback are fully complete.
 
