@@ -85,4 +85,7 @@ def strip_think_blocks(text: str) -> str:
             # Return text before the first <think>
             result = result[:first_think]
 
+    # strip leading/trailing whitespaces and '\n'
+    result = result.strip()
+
     return result

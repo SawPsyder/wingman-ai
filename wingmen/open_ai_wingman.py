@@ -1185,7 +1185,8 @@ class OpenAiWingman(Wingman):
 
             # Push the completed message to the client immediately - don't wait
             # for _fire_message_complete / TTS to finish first.
-            if content:
+            # Also check for whitespace-only content to avoid showing empty messages
+            if content and content.strip():
                 await printr.print_async(
                     f"{content}",
                     color=LogType.POSITIVE,
@@ -1195,7 +1196,7 @@ class OpenAiWingman(Wingman):
                     benchmark_result=benchmark.finish(),
                 )
 
-            printr.print(
+            await printr.print_async(
                 f"[STREAMING] Streaming return path: content_len={len(content) if content else 0}, about to call _fire_message_complete",
                 color=LogType.INFO,
                 source_name=self.name,
@@ -1205,13 +1206,15 @@ class OpenAiWingman(Wingman):
             await self._fire_message_complete()
             # Return (None, None) so wingman.py doesn't print or play_to_user again
             return None, None, None, interrupt
-        printr.print(
-            f"[STREAMING] Non-streaming return path: content_len={len(content) if content else 0}",
+        # Check for whitespace-only content to avoid sending empty messages
+        display_content = content if content and content.strip() else None
+        await printr.print_async(
+            f"[STREAMING] Non-streaming return path: content_len={len(display_content) if display_content else 0}",
             color=LogType.INFO,
             source_name=self.name,
             server_only=True,
         )
-        return content, content, None, interrupt
+        return display_content, display_content, None, interrupt
 
     async def _fire_message_complete(self):
         """Wait for TTS audio to finish, then fire MESSAGE_COMPLETE and on_message_complete.
@@ -1490,6 +1493,11 @@ class OpenAiWingman(Wingman):
 
             if len(unique_tools) == 1 and "execute_command" in unique_tools:
                 is_waiting_response_needed = True
+
+            # If content is empty or only whitespace but tool calls exist, we need a summary LLM call
+            # to provide a response for the tool (especially for commands)
+            if tool_calls and (not message.content or not message.content.strip()):
+                is_summarize_needed = True
 
         return is_waiting_response_needed, is_summarize_needed
 
@@ -2666,7 +2674,8 @@ class OpenAiWingman(Wingman):
                 )
                 # Mark that streaming played audio (TTS was handled during stream)
                 # so the caller can skip duplicate play_to_user
-                if full_content:
+                # Also check for whitespace-only content to avoid showing empty messages
+                if full_content and full_content.strip():
                     self._streaming_played_audio = True
                 printr.print(
                     f"[STREAMING] Built completion: has_content={bool(full_content)}, has_tools={bool(built_tool_calls)}, _streaming_played_audio={self._streaming_played_audio}",
