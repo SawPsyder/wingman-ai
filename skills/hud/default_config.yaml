@@ -180,6 +180,13 @@ custom_properties:
     value: 5
     required: false
 
+  - id: audio_stop_delay
+    name: Audio Stop Delay
+    hint: Time in seconds to wait after audio playback stops before hiding the message.
+    property_type: number
+    value: 1
+    required: false
+
   - id: opacity
     name: Opacity
     hint: Transparency of HUD elements (0 = fully transparent, 100 = no transparency).

@@ -304,6 +304,17 @@ class HUD(Skill):
                 )
             )
 
+        # Validate audio_stop_delay
+        audio_stop_delay = self.retrieve_custom_property_value("audio_stop_delay", errors)
+        if not isinstance(audio_stop_delay, (int, float)) or audio_stop_delay < 0:
+            errors.append(
+                WingmanInitializationError(
+                    wingman_name=self.wingman.name,
+                    message=f"Invalid audio_stop_delay: '{audio_stop_delay}'. Must be a non-negative number.",
+                    error_type=WingmanInitializationErrorType.INVALID_CONFIG
+                )
+            )
+
         # Validate typewriter_effect
         typewriter_effect = self.retrieve_custom_property_value("typewriter_effect", errors)
         if not isinstance(typewriter_effect, bool):
@@ -667,7 +678,6 @@ class HUD(Skill):
 
                 # Hide message when audio stops
                 if was_playing and not is_playing:
-                    # Wait for potential MESSAGE_COMPLETE event processing
                     await asyncio.sleep(0.3)
 
                     # Check if we should hide - queue must be empty AND consumer must be done
@@ -681,6 +691,8 @@ class HUD(Skill):
                         pass
 
                     if should_hide:
+                        audio_stop_delay = float(self._get_prop("audio_stop_delay", 1))
+                        await asyncio.sleep(audio_stop_delay)
                         await self._hide_message()
                         stream_was_active = False
                     self.expecting_audio = False
