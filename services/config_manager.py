@@ -43,6 +43,15 @@ DEFAULT_PREFIX = "_"
 _WINGMAN_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9 -]*$")
 
 
+class ConfigValidationError(ValueError):
+    """Raised when a YAML config file fails Pydantic validation.
+
+    The message is already formatted for end-user display (human-readable paths,
+    no raw Pydantic noise). Callers should show ``str(e)`` directly and avoid
+    printing the traceback to the terminal.
+    """
+
+
 class ConfigManager:
     def __init__(self, app_root_path: str):
         self.log_source_name = "ConfigManager"
@@ -438,10 +447,10 @@ class ConfigManager:
                     wingman_config = self.read_config(path.join(root, filename))
                     try:
                         merged_config = self.merge_configs(default_config, wingman_config)
-                    except ValueError as e:
+                    except ConfigValidationError as e:
                         # Re-raise with the source YAML file name prepended so the
                         # user immediately knows which file to open and fix.
-                        raise ValueError(
+                        raise ConfigValidationError(
                             f"Invalid config in '{filename}':\n{e}"
                         ) from None
                     default_config["wingmen"][
@@ -451,7 +460,7 @@ class ConfigManager:
         try:
             validated_config = Config(**default_config)
         except ValidationError as e:
-            raise ValueError(
+            raise ConfigValidationError(
                 self._format_validation_error(e, default_config)
             ) from None
 
@@ -1737,6 +1746,6 @@ class ConfigManager:
             return WingmanConfig(**merged)
         except ValidationError as e:
             wingman_name = merged.get("name", "")
-            raise ValueError(
+            raise ConfigValidationError(
                 self._format_validation_error(e, merged, wingman_name=wingman_name)
             ) from None
