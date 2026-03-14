@@ -214,22 +214,22 @@ official_virtual_keys = {
     0x5c: ('right windows', False),
     0x5d: ('applications', False),
     0x5f: ('sleep', False),
-    0x60: ('0', True),
-    0x61: ('1', True),
-    0x62: ('2', True),
-    0x63: ('3', True),
-    0x64: ('4', True),
-    0x65: ('5', True),
-    0x66: ('6', True),
-    0x67: ('7', True),
-    0x68: ('8', True),
-    0x69: ('9', True),
-    0x6a: ('*', True),
-    0x6b: ('+', True),
+    0x60: ('num 0', True),
+    0x61: ('num 1', True),
+    0x62: ('num 2', True),
+    0x63: ('num 3', True),
+    0x64: ('num 4', True),
+    0x65: ('num 5', True),
+    0x66: ('num 6', True),
+    0x67: ('num 7', True),
+    0x68: ('num 8', True),
+    0x69: ('num 9', True),
+    0x6a: ('num *', True),
+    0x6b: ('num +', True),
     0x6c: ('separator', True),
-    0x6d: ('-', True),
+    0x6d: ('num -', True),
     0x6e: ('decimal', True),
-    0x6f: ('/', True),
+    0x6f: ('num /', True),
     0x70: ('f1', False),
     0x71: ('f2', False),
     0x72: ('f3', False),
@@ -537,9 +537,9 @@ def map_name(name, yield_extended=False):
     for i, entry in entries:
         scan_code, vk, is_extended, modifiers = entry
         if yield_extended:
-            yield scan_code or -vk, modifiers, is_extended
+            yield scan_code if (scan_code and not name.startswith('num')) else -vk, modifiers, is_extended
         else:
-            yield scan_code or -vk, modifiers
+            yield scan_code if (scan_code and not name.startswith('num')) else -vk, modifiers
 
 def direct_event(code, event_type):
     _send_event(code, event_type)

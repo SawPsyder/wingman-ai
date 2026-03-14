@@ -678,7 +678,8 @@ class HUD(Skill):
 
                 # Hide message when audio stops
                 if was_playing and not is_playing:
-                    await asyncio.sleep(0.3)
+                    audio_stop_delay = float(self._get_prop("audio_stop_delay", 0.3))
+                    await asyncio.sleep(audio_stop_delay)
 
                     # Check if we should hide - queue must be empty AND consumer must be done
                     should_hide = True
