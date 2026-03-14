@@ -535,6 +535,11 @@ if __name__ == "__main__":
 
     try:
         loop.run_until_complete(async_main(host=host, port=port, sidecar=args.sidecar))
+    except ValueError as e:
+        # Config validation errors are already formatted and displayed by the config
+        # service (toast_error). Just record the traceback in the log file silently
+        # so the terminal shows only the clean, user-friendly message.
+        printr.logger.info(f"Config validation failed at startup:\n{traceback.format_exc()}")
     except Exception as e:
         printr.print(f"Error starting application: {str(e)}", color=LogType.ERROR)
         printr.print(traceback.format_exc(), color=LogType.ERROR, server_only=True)
