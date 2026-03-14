@@ -228,7 +228,7 @@ commands:
     actions:
       - keyboard:
           hotkey: alt+n
-  - name: Cycle Master Mode
+  - name: Toggle Quantum or Navigation or SCM or Master Mode
     category_id: 59907f6d-16e2-4bc5-8cb0-676ff78f94b0
     is_system_command: false
     force_instant_activation: false
@@ -243,7 +243,7 @@ commands:
     actions:
       - mouse:
           button: left
-  - name: Engage Quantum Drive
+  - name: Initiate Quantum Jump
     category_id: d5d831d2-3990-41c8-afc3-c205c83f39b0
     is_system_command: false
     force_instant_activation: false
@@ -291,7 +291,7 @@ commands:
     actions:
       - keyboard:
           hotkey: "5"
-  - name: Ping the area
+  - name: Ping Area for Resources and Vehicles
     category_id: 8878cd3f-e81d-4cc5-b2ed-dd9337b52456
     is_system_command: false
     force_instant_activation: false
@@ -325,7 +325,7 @@ commands:
     actions:
       - keyboard:
           hotkey: q
-  - name: Toggle Gyro
+  - name: Toggle Gyro Turret Stabilization
     category_id: 72be05a7-901f-4434-9f46-0e8e7d23b2f4
     is_system_command: false
     force_instant_activation: false
@@ -347,14 +347,14 @@ commands:
     actions:
       - keyboard:
           hotkey: s
-  - name: Toggle Gimbals
+  - name: Toggle Weapon Gimbals
     category_id: a0479a7c-e43f-427c-b626-a1a6ca1a7aef
     is_system_command: false
     force_instant_activation: false
     actions:
       - keyboard:
           hotkey: g
-  - name: Cycle Aim Mode
+  - name: Cycle Weapon Aim Mode
     category_id: a0479a7c-e43f-427c-b626-a1a6ca1a7aef
     is_system_command: false
     force_instant_activation: false
@@ -384,14 +384,14 @@ commands:
     actions:
       - keyboard:
           hotkey: alt+g
-  - name: Launch Decoy
+  - name: Launch Countermeasure Decoy
     category_id: 582b505e-1096-42c1-9a4f-ca3ba0a822ed
     is_system_command: false
     force_instant_activation: false
     actions:
       - keyboard:
           hotkey: h
-  - name: Increase Decoys
+  - name: Increase Decoys for next Launch
     category_id: 582b505e-1096-42c1-9a4f-ca3ba0a822ed
     is_system_command: false
     force_instant_activation: false
@@ -407,21 +407,21 @@ commands:
       - keyboard:
           hotkey: alt gr
           release: true
-  - name: Decrease Decoys
+  - name: Decrease Decoys for next Launch
     category_id: 582b505e-1096-42c1-9a4f-ca3ba0a822ed
     is_system_command: false
     force_instant_activation: false
     actions:
       - keyboard:
           hotkey: alt+h
-  - name: Launch Noise
+  - name: Launch Countermeasure Noise
     category_id: 582b505e-1096-42c1-9a4f-ca3ba0a822ed
     is_system_command: false
     force_instant_activation: false
     actions:
       - keyboard:
           hotkey: j
-  - name: Toggle Power
+  - name: Toggle Main Power On or Off
     category_id: 58262631-2984-4bf0-99ee-f409a753df44
     is_system_command: false
     force_instant_activation: false
@@ -456,7 +456,7 @@ commands:
     actions:
       - keyboard:
           hotkey: l
-  - name: PIT
+  - name: Open Inner Thought Menu
     category_id: 90f81cd0-4aff-44cc-a4ef-43c73ec8d6e1
     is_system_command: false
     force_instant_activation: false
@@ -542,7 +542,7 @@ commands:
       - keyboard:
           hotkey: f4
           release: true
-  - name: Launch Sequence
+  - name: Launch Sequence including Liftoff
     is_system_command: false
     instant_activation:
       - Launch Sequence
@@ -563,7 +563,7 @@ commands:
           hotkey: n
       - keyboard:
           hotkey: k
-  - name: Landing Sequence
+  - name: Landing Sequence including Touchdown
     is_system_command: false
     instant_activation:
       - Landing Sequence
@@ -620,4 +620,11 @@ commands:
     force_instant_activation: false
     actions:
       - keyboard:
-          hotkey: "num 0"
+          hotkey: num 0
+  - name: Toggle Mining or Salvage Mode
+    category_id: 8483a2f5-5273-435f-82ee-561c5a485317
+    is_system_command: false
+    force_instant_activation: false
+    actions:
+      - keyboard:
+          hotkey: m
