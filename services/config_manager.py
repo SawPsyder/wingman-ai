@@ -5,7 +5,7 @@ from os import makedirs, path, remove, walk
 import copy
 import shutil
 import re
-from typing import Optional, Tuple
+from typing import Any, Optional, Tuple
 from pydantic import BaseModel, ValidationError
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
@@ -43,6 +43,15 @@ DEFAULT_PREFIX = "_"
 _WINGMAN_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9 -]*$")
 
 
+class ConfigValidationError(ValueError):
+    """Raised when a YAML config file fails Pydantic validation.
+
+    The message is already formatted for end-user display (human-readable paths,
+    no raw Pydantic noise). Callers should show ``str(e)`` directly and avoid
+    printing the traceback to the terminal.
+    """
+
+
 class ConfigManager:
     def __init__(self, app_root_path: str):
         self.log_source_name = "ConfigManager"
@@ -63,6 +72,82 @@ class ConfigManager:
         self.default_config = self.load_defaults_config(silent_on_error=True)
         # Load MCP config silently - migration may need to run first
         self.mcp_config = self.load_mcp_config(silent_on_error=True)
+
+    @staticmethod
+    def _format_validation_error(
+        error: ValidationError, data: Any, wingman_name: str = ""
+    ) -> str:
+        """Converts a Pydantic ValidationError into a human-readable message.
+
+        Replaces numeric list indices in the error path with the actual name/id
+        of the offending item so users immediately see *which* skill or property
+        is broken instead of a raw index like ``skills.7.custom_properties.2``.
+        """
+        lines: list[str] = []
+        for err in error.errors():
+            loc: tuple = err["loc"]
+            raw_msg: str = err["msg"]
+            err_type: str = err.get("type", "")
+
+            readable_parts: list[str] = []
+            current: Any = data
+
+            for part in loc:
+                if isinstance(part, int):
+                    # Numeric index – try to resolve it to a friendly label from
+                    # the current list element.
+                    item: Any = (
+                        current[part]
+                        if isinstance(current, list) and part < len(current)
+                        else None
+                    )
+                    label: Optional[str] = None
+                    if isinstance(item, dict):
+                        label = (
+                            item.get("display_name")
+                            or item.get("name")
+                            or item.get("id")
+                        )
+
+                    if label is not None:
+                        # Escape single quotes so path segments like ['{label}'] remain unambiguous
+                        label = label.replace("'", "\\'")
+
+                    if readable_parts and label:
+                        readable_parts[-1] = f"{readable_parts[-1]}['{label}']"
+                    elif readable_parts:
+                        readable_parts[-1] = f"{readable_parts[-1]}[{part}]"
+                    else:
+                        readable_parts.append(f"['{label}']" if label else f"[{part}]")
+
+                    current = item
+                else:
+                    readable_parts.append(str(part))
+                    if isinstance(current, dict) and part in current:
+                        current = current[part]
+                    else:
+                        current = None
+
+            path_str = ".".join(readable_parts)
+            if wingman_name:
+                safe_wingman_name = wingman_name.replace("'", "\\'")
+                path_str = f"wingman['{safe_wingman_name}'].{path_str}"
+
+            if err_type == "missing":
+                field = loc[-1] if loc else "?"
+                lines.append(
+                    f"  • {path_str}: required field '{field}' is missing"
+                )
+            else:
+                lines.append(f"  • {path_str}: {raw_msg}")
+
+        n = len(error.errors())
+        return (
+            f"Config validation failed"
+            + (f" for wingman '{wingman_name}'" if wingman_name else "")
+            + f" — {n} issue{'s' if n != 1 else ''}:\n"
+            + "\n".join(lines)
+        )
 
     def find_default_config(self) -> ConfigDirInfo:
         """Find the (first) default config (name starts with "_") found or another normal config as fallback."""
@@ -360,14 +445,24 @@ class ConfigManager:
             for filename in files:
                 if filename.endswith(".yaml") and not filename.startswith("."):
                     wingman_config = self.read_config(path.join(root, filename))
-                    merged_config = self.merge_configs(default_config, wingman_config)
+                    try:
+                        merged_config = self.merge_configs(default_config, wingman_config)
+                    except ConfigValidationError as e:
+                        # Re-raise with the source YAML file name prepended so the
+                        # user immediately knows which file to open and fix.
+                        raise ConfigValidationError(
+                            f"Invalid config in '{filename}':\n{e}"
+                        ) from None
                     default_config["wingmen"][
                         filename.replace(".yaml", "")
                     ] = merged_config
 
-        validated_config = Config(**default_config)
-        # not catching ValidationExceptions here, because we can't recover from it
-        # TODO: Notify the client about the error somehow
+        try:
+            validated_config = Config(**default_config)
+        except ValidationError as e:
+            raise ConfigValidationError(
+                self._format_validation_error(e, default_config)
+            ) from None
 
         return config_dir, validated_config
 
@@ -1647,4 +1742,10 @@ class ConfigManager:
         if "discoverable_mcps" not in wingman and "discoverable_mcps" in default:
             merged["discoverable_mcps"] = default["discoverable_mcps"]
 
-        return WingmanConfig(**merged)
+        try:
+            return WingmanConfig(**merged)
+        except ValidationError as e:
+            wingman_name = merged.get("name", "")
+            raise ConfigValidationError(
+                self._format_validation_error(e, merged, wingman_name=wingman_name)
+            ) from None
