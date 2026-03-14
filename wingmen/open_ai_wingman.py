@@ -2331,13 +2331,13 @@ class OpenAiWingman(Wingman):
             )
             printr.print(traceback.format_exc(), color=LogType.ERROR, server_only=True)
 
-    async def _execute_command(self, command: CommandConfig, is_instant=False) -> tuple[str|None, str|None]:
-        """Does what Wingman base does, but always returns "Ok" instead of a command response.
-        Otherwise, the AI will try to respond to the command and generate a "duplicate" response for instant_activation commands.
+    async def _execute_command(self, command: CommandConfig, is_instant=False) -> tuple[str | None, str]:
+        """Executes a command by delegating to the Wingman base implementation.
 
         Returns:
-            str|None: Instant response as str or None
-            str|None: Function response as str
+            tuple[str | None, str]: A 2-tuple of:
+                - Instant response (str) to play immediately, or None if there is no instant response.
+                - Function/tool response (str) to feed back to the LLM.
         """
         return await super()._execute_command(command, is_instant)
 

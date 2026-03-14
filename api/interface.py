@@ -663,7 +663,7 @@ class CommandConfig(BaseModel):
     responses: Optional[list[str]] = None
     """Optional: Provide responses that will be used when the command is executed. A random one will be chosen (if multiple)."""
     additional_context: Optional[str] = None
-    """Optional: Provide additional context for the llm after command execution."""
+    """Optional: Provide additional context for the LLM after command execution."""
     actions: Optional[list[CommandActionConfig]] = None
     """The actions to execute when the command is called. You can use keyboard, mouse and wait actions here."""
 
