@@ -100,6 +100,10 @@ class ConfigManager:
                             or item.get("id")
                         )
 
+                    if label is not None:
+                        # Escape single quotes so path segments like ['{label}'] remain unambiguous
+                        label = label.replace("'", "\\'")
+
                     if readable_parts and label:
                         readable_parts[-1] = f"{readable_parts[-1]}['{label}']"
                     elif readable_parts:
@@ -117,7 +121,8 @@ class ConfigManager:
 
             path_str = ".".join(readable_parts)
             if wingman_name:
-                path_str = f"wingman['{wingman_name}'].{path_str}"
+                safe_wingman_name = wingman_name.replace("'", "\\'")
+                path_str = f"wingman['{safe_wingman_name}'].{path_str}"
 
             if err_type == "missing":
                 field = loc[-1] if loc else "?"
