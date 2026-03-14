@@ -630,7 +630,7 @@ class Wingman:
         )
         return command
 
-    def _select_command_response(self, command: CommandConfig) -> str | None:
+    def _select_instant_command_response(self, command: CommandConfig) -> str | None:
         """Returns one of the configured responses of the command. This base implementation returns a random one.
 
         Args:
@@ -697,18 +697,19 @@ class Wingman:
             printr.print(traceback.format_exc(), color=LogType.ERROR, server_only=True)
             return None
 
-    async def _execute_command(self, command: CommandConfig, is_instant=False) -> str:
+    async def _execute_command(self, command: CommandConfig, is_instant=False) -> tuple[str|None, str|None]:
         """Triggers the execution of a command. This base implementation executes the keypresses defined in the command.
 
         Args:
             command (dict): The command object from the config to execute
 
         Returns:
-            str: the selected response from the command's responses list in the config. "Ok" if there are none.
+            str|None: Instant response as str or None
+            str|None: Function response as str
         """
 
         if not command:
-            return "Command not found"
+            return None, "Command not found"
 
         try:
             if len(command.actions or []) == 0:
@@ -730,14 +731,14 @@ class Wingman:
                     f"Executed command: {command.name}", color=LogType.COMMAND
                 )
 
-            return self._select_command_response(command) or "Ok"
+            return self._select_instant_command_response(command), command.additional_context or "OK"
         except Exception as e:
             await printr.print_async(
                 f"Error executing command '{command.name}' for Wingman '{self.name}': {str(e)}",
                 color=LogType.ERROR,
             )
             printr.print(traceback.format_exc(), color=LogType.ERROR, server_only=True)
-            return "ERROR DURING PROCESSING"  # hints to AI that there was an Error
+            return None, "ERROR DURING PROCESSING"
 
     async def execute_action(self, command: CommandConfig):
         """Executes the actions defined in the command (in order).

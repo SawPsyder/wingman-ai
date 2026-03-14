@@ -662,6 +662,8 @@ class CommandConfig(BaseModel):
     """Optional: If true, the command will only be executed if the exact phrase is said. If false, the command will be executed if the exact phrase is said, or if the AI thinks it makes sense based on name and context."""
     responses: Optional[list[str]] = None
     """Optional: Provide responses that will be used when the command is executed. A random one will be chosen (if multiple)."""
+    additional_context: Optional[str] = None
+    """Optional: Provide additional context for the llm after command execution."""
     actions: Optional[list[CommandActionConfig]] = None
     """The actions to execute when the command is called. You can use keyboard, mouse and wait actions here."""
 

@@ -1403,6 +1403,7 @@ class OpenAiWingman(Wingman):
             role="assistant",
             tool_calls=[],
         )
+        tool_id_to_command = {}
         for command in commands:
             tool_id = None
             if (
@@ -1445,10 +1446,12 @@ class OpenAiWingman(Wingman):
                 type="function",
             )
             message.tool_calls.append(tool_call)
+            tool_id_to_command[tool_id] = command
 
         await self._add_gpt_response(message, message.tool_calls)
         for tool_call in message.tool_calls:
-            await self._update_tool_response(tool_call.id, "OK")
+            command = tool_id_to_command[tool_call.id]
+            await self._update_tool_response(tool_call.id, command.additional_context or "OK")
 
     async def _cleanup_conversation_history(self):
         """Cleans up the conversation history by removing messages that are too old."""
@@ -1524,7 +1527,7 @@ class OpenAiWingman(Wingman):
             responses = []
             for command in commands:
                 if command.responses:
-                    responses.append(self._select_command_response(command))
+                    responses.append(self._select_instant_command_response(command))
 
             if len(responses) == len(commands):
                 # clear duplicates
@@ -2068,15 +2071,15 @@ class OpenAiWingman(Wingman):
 
                 return function_response, None, None, tool_label
 
+        # Handle command calls
         if function_name == "execute_command":
             # get the command based on the argument passed by the LLM
             command = self.get_command(function_args["command_name"])
             # execute the command
-            function_response = await self._execute_command(command)
+            instant_response, function_response = await self._execute_command(command)
             tool_label = f"Command: {function_args.get('command_name', function_name)}"
             # if the command has responses, we have to play one of them
-            if command and command.responses:
-                instant_response = self._select_command_response(command)
+            if instant_response:
                 await self.play_to_user(instant_response)
 
         # Go through the skills and check if the function name matches any of the tools
@@ -2328,12 +2331,15 @@ class OpenAiWingman(Wingman):
             )
             printr.print(traceback.format_exc(), color=LogType.ERROR, server_only=True)
 
-    async def _execute_command(self, command: CommandConfig, is_instant=False) -> str:
+    async def _execute_command(self, command: CommandConfig, is_instant=False) -> tuple[str|None, str|None]:
         """Does what Wingman base does, but always returns "Ok" instead of a command response.
         Otherwise, the AI will try to respond to the command and generate a "duplicate" response for instant_activation commands.
+
+        Returns:
+            str|None: Instant response as str or None
+            str|None: Function response as str
         """
-        await super()._execute_command(command, is_instant)
-        return "Ok"
+        return await super()._execute_command(command, is_instant)
 
     def build_tools(self) -> list[dict]:
         """
