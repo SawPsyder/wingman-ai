@@ -11,7 +11,7 @@ from typing import (
     Optional,
     TYPE_CHECKING,
 )
-import keyboard.keyboard as keyboard
+import services.keyboard_handler as keyboard
 import mouse.mouse as mouse
 from api.interface import (
     CommandConfig,

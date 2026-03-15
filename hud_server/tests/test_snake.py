@@ -30,7 +30,7 @@ from hud_server.tests.test_session import TestSession
 from hud_server.types import Anchor, LayoutMode, HudColor, MessageProps, WindowType
 
 try:
-    import keyboard.keyboard as keyboard
+    import services.keyboard_handler as keyboard
 except ImportError:
     import keyboard
 

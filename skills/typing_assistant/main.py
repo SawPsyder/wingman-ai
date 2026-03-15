@@ -3,7 +3,7 @@ from typing import TYPE_CHECKING
 from api.interface import SettingsConfig, SkillConfig
 from api.enums import LogType
 from skills.skill_base import Skill, tool
-import keyboard.keyboard as keyboard
+import services.keyboard_handler as keyboard
 
 if TYPE_CHECKING:
     from wingmen.open_ai_wingman import OpenAiWingman

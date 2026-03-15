@@ -43,7 +43,7 @@ from fastapi.openapi.utils import get_openapi
 from api.commands import WebSocketCommandModel
 from api.interface import BenchmarkResult, CoreStatusResponse
 from api.enums import ENUM_TYPES, CoreState, LogType, WingmanInitializationErrorType
-import keyboard.keyboard as keyboard
+import services.keyboard_handler as keyboard
 from services.command_handler import CommandHandler
 from services.config_manager import ConfigManager
 from services.connection_manager import ConnectionManager
