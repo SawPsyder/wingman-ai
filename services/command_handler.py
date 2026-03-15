@@ -3,7 +3,7 @@ import asyncio
 import threading
 from fastapi import WebSocket
 import pygame
-import keyboard.keyboard as keyboard
+from services import keyboard_adapter as keyboard
 from api.commands import (
     ActionsRecordedCommand,
     ClientLoggedOutCommand,

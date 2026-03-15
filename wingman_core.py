@@ -12,7 +12,7 @@ import requests
 import sounddevice as sd
 from showinfm import show_in_file_manager
 import azure.cognitiveservices.speech as speechsdk
-import keyboard.keyboard as keyboard
+from services import keyboard_adapter as keyboard
 import mouse.mouse as mouse
 from api.commands import CoreStateChangedCommand, VoiceActivationMutedCommand
 from api.enums import (
