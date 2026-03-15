@@ -12,11 +12,6 @@ import platform
 from enum import Enum
 from typing import Optional
 
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from services.printr import Printr
-
 try:
     import vgamepad as vg
 

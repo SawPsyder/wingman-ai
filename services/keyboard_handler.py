@@ -34,11 +34,8 @@ except ImportError:
         right = scroll_lock = None
         shift = shift_l = shift_r = None
         space = tab = up = None
-
-        # Function keys
-        for _i in range(1, 21):
-            locals()[f"f{_i}"] = None
-        del _i
+        f1 = f2 = f3 = f4 = f5 = f6 = f7 = f8 = f9 = f10 = None
+        f11 = f12 = f13 = f14 = f15 = f16 = f17 = f18 = f19 = f20 = None
 
     class KeyCode:  # type: ignore[no-redef]
         def __init__(self, char=None, vk=None, **kwargs):
