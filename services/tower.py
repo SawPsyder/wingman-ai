@@ -1,4 +1,5 @@
 import asyncio
+import re
 from api.enums import LogSource, LogType, WingmanInitializationErrorType
 from api.interface import (
     Config,
@@ -198,8 +199,11 @@ class Tower:
 
     def get_wingman_from_text(self, text: str) -> Wingman | None:
         for wingman in self.wingmen:
-            # Check if a wingman name is in the text
-            if wingman.config.name.lower() in text.lower():
+            # Check if a wingman name appears as a whole word in the text
+            if re.search(
+                r"\b" + re.escape(wingman.config.name.lower()) + r"\b",
+                text.lower(),
+            ):
                 return wingman
 
         # Check if there is a default wingman defined in the config

@@ -44,3 +44,11 @@ xvasynth:
 pocket_tts:
   enable: true
   custom_model_path: ""
+hud_server:
+  enabled: false
+  host: "127.0.0.1"
+  port: 7862
+  framerate: 60
+  layout_margin: 20
+  layout_spacing: 15
+  screen: 1

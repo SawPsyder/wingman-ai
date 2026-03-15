@@ -14,7 +14,7 @@ from showinfm import show_in_file_manager
 import azure.cognitiveservices.speech as speechsdk
 import keyboard.keyboard as keyboard
 import mouse.mouse as mouse
-from api.commands import CoreStateChangedCommand, VoiceActivationMutedCommand
+from api.commands import AudioLibraryPlaybackFinishedCommand, CoreStateChangedCommand, VoiceActivationMutedCommand
 from api.enums import (
     AzureRegion,
     CommandTag,
@@ -354,7 +354,9 @@ class WingmanCore(WebSocketUser):
             on_playback_started=self.on_playback_started,
             on_playback_finished=self.on_playback_finished,
         )
-        self.audio_library = AudioLibrary()
+        self.audio_library = AudioLibrary(
+            callback_playback_finished=self.on_audio_library_playback_finished,
+        )
 
         self.tower: Tower = None
 
@@ -1646,6 +1648,11 @@ class WingmanCore(WebSocketUser):
         await self.audio_library.audio_library_toggle_play(
             audio_file=AudioFile(name=name, path=path), volume_modifier=volume
         )
+
+    def on_audio_library_playback_finished(self, audio_file: AudioFile):
+        if self._connection_manager:
+            command = AudioLibraryPlaybackFinishedCommand(audio_file=audio_file)
+            self.ensure_async(self._connection_manager.broadcast(command))
 
     # POST /elevenlabs/generate-sfx
     async def generate_sfx_elevenlabs(

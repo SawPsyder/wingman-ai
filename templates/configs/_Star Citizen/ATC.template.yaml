@@ -1,4 +1,5 @@
 name: ATC
+created_with_version: "2.1.0"
 description: |
   Air Traffic Controller for Star Citizen. Manages spacecraft traffic, landing permissions,
   and station operations with professional aviation communication protocols.
@@ -48,6 +49,7 @@ commands:
       - keyboard:
           hotkey: alt+n
   - name: Contact ATC
+    additional_context: Contacting ATC for clearance
     actions:
       - keyboard:
           hotkey: alt+n

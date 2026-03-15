@@ -1034,6 +1034,8 @@ class WingmanConfig(NestedConfig):
     """The "push-to-talk" joystick config for this wingman. Keep it pressed while talking! Don't use the same button for multiple wingmen!"""
     is_voice_activation_default: Optional[bool] = None
     """If voice activation is enabled and this is true, the Wingman will listen to your voice by default and without saying its name."""
+    created_with_version: Optional[str] = None
+    """The version of Wingman AI that created this configuration. Used to detect configs that may benefit from restoring updated defaults."""
 
 
 class Config(NestedConfig):

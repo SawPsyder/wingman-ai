@@ -9,7 +9,7 @@ from api.enums import (
     RecordingDevice,
     ToastType,
 )
-from api.interface import CommandActionConfig, BenchmarkResult
+from api.interface import AudioFile, CommandActionConfig, BenchmarkResult
 
 
 # We use this Marker base class for reflection to "iterate all commands"
@@ -105,6 +105,11 @@ class McpStateChangedCommand(WebSocketCommandModel):
     command: Literal["mcp_state_changed"] = "mcp_state_changed"
     wingman_name: str
     """The wingman whose MCP state changed."""
+
+
+class AudioLibraryPlaybackFinishedCommand(WebSocketCommandModel):
+    command: Literal["audio_library_playback_finished"] = "audio_library_playback_finished"
+    audio_file: AudioFile
 
 
 class CoreStateChangedCommand(WebSocketCommandModel):
