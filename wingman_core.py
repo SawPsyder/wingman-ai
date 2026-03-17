@@ -7,7 +7,7 @@ import threading
 from typing import Optional
 import pygame
 from google.genai import types
-from fastapi import APIRouter, File, UploadFile
+from fastapi import APIRouter, Body, File, UploadFile
 import requests
 import sounddevice as sd
 from showinfm import show_in_file_manager
@@ -1255,7 +1255,9 @@ class WingmanCore(WebSocketUser):
                     await wingman.abort_streaming_playback()
 
     # POST /ask-wingman-conversation-provider
-    async def ask_wingman_conversation_provider(self, text: str, wingman_name: str):
+    async def ask_wingman_conversation_provider(
+        self, wingman_name: str, text: str = Body(...)
+    ):
         wingman = self.tower.get_wingman_by_name(wingman_name)
 
         if wingman and text:
