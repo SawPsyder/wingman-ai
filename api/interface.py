@@ -540,6 +540,12 @@ class StreamingConfig(BaseModel):
     auto_play: bool = True
     """Whether to automatically play TTS audio."""
 
+    tts_playback_offset: float = 0.0
+    """Seconds before the current TTS audio ends to start the next batch.
+    0.0 = no early start (next batch fires as soon as current finishes).
+    Positive values (e.g. 1.0) start the next batch that many seconds before
+    the buffer runs out, eliminating API-latency gaps between parts."""
+
 
 class FeaturesConfig(BaseModel):
     """You can override various AI providers if your Wingman supports it. Our OpenAI wingman does!
