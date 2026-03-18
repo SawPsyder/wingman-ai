@@ -2243,6 +2243,7 @@ class OpenAiWingman(Wingman):
         max_batch_size = 16
         desired_batch_size = 1
         pending_sentences: list[str] = []
+        last_task: asyncio.Task | None = None
 
         try:
             while not self.tts_queue.is_empty() or not self.tts_queue._closed:
@@ -2257,9 +2258,13 @@ class OpenAiWingman(Wingman):
                         if text and text.strip():
                             pending_sentences.append(text.strip())
 
-                        # Check if batch is now full
+                        # Batch is full — fire it as a background task and keep
+                        # collecting. stream_with_effects will wait in the playback
+                        # lock so the new batch pre-buffers while current audio plays.
                         if len(pending_sentences) >= desired_batch_size:
-                            await self._play_tts_batch(pending_sentences)
+                            last_task = asyncio.create_task(
+                                self._play_tts_batch(pending_sentences[:])
+                            )
                             pending_sentences.clear()
                             desired_batch_size = min(desired_batch_size * 2, max_batch_size)
                         continue
@@ -2273,19 +2278,40 @@ class OpenAiWingman(Wingman):
                 if pending_sentences:
                     # If the queue is closed (stream ended), flush immediately
                     if self.tts_queue._closed:
-                        await self._play_tts_batch(pending_sentences)
+                        last_task = asyncio.create_task(
+                            self._play_tts_batch(pending_sentences[:])
+                        )
                         pending_sentences.clear()
                         break
 
-                    # If audio is NOT playing (previous block finished),
-                    # flush what we have so there's no gap — but do NOT
-                    # advance to the next batch size since we didn't fill this one.
-                    if not self.audio_player.is_playing:
-                        await self._play_tts_batch(pending_sentences)
+                    # Normal flush: audio stopped AND no task is waiting in the
+                    # playback lock (prevents spurious double-fire during the brief
+                    # window between lock acquisition and is_playing = True).
+                    no_task_in_flight = last_task is None or last_task.done()
+                    if not self.audio_player.is_playing and no_task_in_flight:
+                        last_task = asyncio.create_task(
+                            self._play_tts_batch(pending_sentences[:])
+                        )
                         pending_sentences.clear()
                         # Keep desired_batch_size the same — don't grow since
                         # we couldn't fill this batch (LLM is slower than TTS)
                         continue
+
+                    # Early flush: current audio has <= tts_playback_offset seconds
+                    # buffered — start next batch now so TTS pre-buffers while A plays.
+                    offset = self.config.features.streaming.tts_playback_offset
+                    if offset > 0:
+                        remaining = self.audio_player.remaining_buffer_duration
+                        if (
+                            remaining is not None
+                            and remaining <= offset
+                            and self.audio_player.is_playing
+                        ):
+                            last_task = asyncio.create_task(
+                                self._play_tts_batch(pending_sentences[:])
+                            )
+                            pending_sentences.clear()
+                            continue
 
                 # Nothing pending and queue looks done
                 if self.tts_queue._closed and self.tts_queue.is_empty():
@@ -2303,11 +2329,17 @@ class OpenAiWingman(Wingman):
             # Flush any remaining sentences
             if pending_sentences:
                 try:
-                    await self._play_tts_batch(pending_sentences)
+                    last_task = asyncio.create_task(
+                        self._play_tts_batch(pending_sentences[:])
+                    )
                 except Exception as e:
                     await printr.print_async(
                         f"Error playing final TTS batch: {str(e)}", color=LogType.ERROR
                     )
+            # Wait for the last (and therefore all) tasks to finish — the playback
+            # lock guarantees they execute sequentially.
+            if last_task and not last_task.done():
+                await last_task
             self.tts_queue._consumer_done = True
 
     async def _play_tts_batch(self, sentences: list[str]):

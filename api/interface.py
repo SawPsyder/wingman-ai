@@ -541,10 +541,17 @@ class StreamingConfig(BaseModel):
     """Whether to automatically play TTS audio."""
 
     tts_playback_offset: float = 0.0
-    """Seconds before the current TTS audio ends to start the next batch.
-    0.0 = no early start (next batch fires as soon as current finishes).
-    Positive values (e.g. 1.0) start the next batch that many seconds before
-    the buffer runs out, eliminating API-latency gaps between parts."""
+    """Seconds before the current TTS audio buffer runs out to flush a partial
+    batch and start the next TTS request.
+
+    TTS pre-generation (HTTP overlap with current playback) always occurs
+    whenever a full batch is ready — this offset only affects partial batches
+    that haven't reached the target batch size yet.
+
+    0.0 (default) = partial batches wait until audio stops before flushing.
+    Positive values (e.g. 1.0) flush partial batches up to that many seconds
+    before the buffer runs out, reducing gaps when the LLM produces sentences
+    slowly relative to TTS playback speed."""
 
 
 class FeaturesConfig(BaseModel):

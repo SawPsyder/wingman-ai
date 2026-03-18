@@ -40,6 +40,17 @@ class AudioPlayer:
         )
         # Audio queue for sequential playback of streaming chunks
         self._audio_queue: asyncio.Queue = asyncio.Queue()
+        # Pre-generation / playback lock support
+        # Both fields are managed lazily inside stream_with_effects.
+        # asyncio.Lock binds to the running loop on first acquire, so we
+        # must recreate it whenever the event loop changes (which happens
+        # between wingman responses in this architecture).
+        self._playback_lock: asyncio.Lock | None = None
+        self._playback_lock_loop: asyncio.AbstractEventLoop | None = None
+        self._stream_remaining_bytes: int = 0
+        self._stream_sample_rate: int = 1
+        self._stream_channels: int = 1
+        self._stream_bytes_per_sample: int = 2
 
     def set_event_loop(self, loop: asyncio.AbstractEventLoop):
         self.event_loop = loop
@@ -472,51 +483,94 @@ class AudioPlayer:
                 outdata[: len(data_chunk_bytes)] = data_chunk_bytes[: len(outdata)]
                 buffer = buffer[num_elements * byte_size :]
 
-        with sd.RawOutputStream(
-            samplerate=sample_rate,
-            channels=channels,
-            dtype=dtype,
-            callback=callback,
-        ) as stream:
-            if self.is_playing:
-                await self.stop_playback()
+        # Acquire the playback lock to serialise audio output.
+        # For run_in_thread=True the download thread was already started above,
+        # so TTS audio pre-buffers in the queue while we wait here for any
+        # currently-playing batch to finish — eliminating the API-latency gap.
+        # Recreate the lock when the event loop changes (e.g. between responses).
+        # asyncio.Lock binds to the running loop on first acquire and raises
+        # "bound to a different event loop" if reused across loops.
+        running_loop = asyncio.get_running_loop()
+        if self._playback_lock is None or self._playback_lock_loop is not running_loop:
+            self._playback_lock = asyncio.Lock()
+            self._playback_lock_loop = running_loop
+        async with self._playback_lock:
+            # Store stream metadata so remaining_buffer_duration can be computed
+            self._stream_sample_rate = sample_rate
+            self._stream_channels = channels
+            self._stream_bytes_per_sample = np.dtype(dtype).itemsize
+            self._stream_remaining_bytes = 0
 
-            self.raw_stream = stream
-            self.is_playing = True
-            await self.notify_playback_started(wingman_name)
+            with sd.RawOutputStream(
+                samplerate=sample_rate,
+                channels=channels,
+                dtype=dtype,
+                callback=callback,
+            ) as stream:
+                self.raw_stream = stream
+                self.is_playing = True
+                await self.notify_playback_started(wingman_name)
 
-            if config.play_beep:
-                self.play_wav_sample("beep.wav", config.volume)
-            elif config.play_beep_apollo:
-                self.play_wav_sample("Apollo_Beep.wav", config.volume)
+                if config.play_beep:
+                    self.play_wav_sample("beep.wav", config.volume)
+                elif config.play_beep_apollo:
+                    self.play_wav_sample("Apollo_Beep.wav", config.volume)
 
-            contains_high_end_radio = SoundEffect.HIGH_END_RADIO in config.effects
-            if contains_high_end_radio:
-                self.play_wav_sample("Radio_Static_Beep.wav", config.volume)
+                contains_high_end_radio = SoundEffect.HIGH_END_RADIO in config.effects
+                if contains_high_end_radio:
+                    self.play_wav_sample("Radio_Static_Beep.wav", config.volume)
 
-            self.raw_stream.start()
+                self.raw_stream.start()
 
-            # Wait for first chunk to arrive before starting to process (for thread mode)
-            if run_in_thread:
-                while audio_queue.empty():
-                    import time
-                    time.sleep(0.001)  # Wait for first chunk
-                    # Check if thread has ended (queue still empty after sleep means no data coming)
-                    if queue_thread is not None and not queue_thread.is_alive():
-                        break
-
-            sound_effects = get_sound_effects(
-                config=config, use_gain_boost=use_gain_boost
-            )
-
-            if run_in_thread:
-                # Read from queue (non-blocking)
-                while True:
-                    try:
-                        chunk = audio_queue.get_nowait()
-                        if chunk is None:
+                # Wait for first chunk to arrive before starting to process (for thread mode)
+                if run_in_thread:
+                    while audio_queue.empty():
+                        await asyncio.sleep(0.001)  # Wait for first chunk
+                        # Check if thread has ended (queue still empty after sleep means no data coming)
+                        if queue_thread is not None and not queue_thread.is_alive():
                             break
-                        data_in_numpy = np.frombuffer(chunk, dtype=dtype).astype(np.float32)
+
+                sound_effects = get_sound_effects(
+                    config=config, use_gain_boost=use_gain_boost
+                )
+
+                if run_in_thread:
+                    # Read from queue (non-blocking)
+                    while True:
+                        try:
+                            chunk = audio_queue.get_nowait()
+                            if chunk is None:
+                                break
+                            data_in_numpy = np.frombuffer(chunk, dtype=dtype).astype(np.float32)
+
+                            for sound_effect in sound_effects:
+                                data_in_numpy = sound_effect(
+                                    data_in_numpy, sample_rate, reset=False
+                                )
+
+                            if mix_layer_file:
+                                noise_chunk = get_mixed_chunk(len(data_in_numpy))
+                                amplitude_factor = 10 ** (mix_layer_gain_boost_db / 20)
+                                data_in_numpy = data_in_numpy + noise_chunk * amplitude_factor
+
+                            data_in_numpy = data_in_numpy * config.volume
+                            processed_buffer = data_in_numpy.astype(dtype).tobytes()
+                            buffer.extend(processed_buffer)
+                            self._stream_remaining_bytes = len(buffer)
+                            await self.stream_event.publish("audio", processed_buffer)
+                        except queue.Empty:
+                            pass
+                        # Yield to other tasks occasionally
+                        await asyncio.sleep(0)
+                    data_received = True
+                else:
+                    # Original blocking behavior
+                    audio_buffer = bytearray(buffer_size)
+                    filled_size = buffer_callback(audio_buffer)
+                    while filled_size > 0:
+                        data_in_numpy = np.frombuffer(
+                            audio_buffer[:filled_size], dtype=dtype
+                        ).astype(np.float32)
 
                         for sound_effect in sound_effects:
                             data_in_numpy = sound_effect(
@@ -525,59 +579,36 @@ class AudioPlayer:
 
                         if mix_layer_file:
                             noise_chunk = get_mixed_chunk(len(data_in_numpy))
+                            # Convert gain boost from dB to amplitude factor
                             amplitude_factor = 10 ** (mix_layer_gain_boost_db / 20)
                             data_in_numpy = data_in_numpy + noise_chunk * amplitude_factor
 
                         data_in_numpy = data_in_numpy * config.volume
                         processed_buffer = data_in_numpy.astype(dtype).tobytes()
                         buffer.extend(processed_buffer)
+                        self._stream_remaining_bytes = len(buffer)
                         await self.stream_event.publish("audio", processed_buffer)
-                    except:
-                        pass
-                    # Yield to other tasks occasionally
-                    await asyncio.sleep(0)
-                data_received = True
-            else:
-                # Original blocking behavior
-                audio_buffer = bytearray(buffer_size)
-                filled_size = buffer_callback(audio_buffer)
-                while filled_size > 0:
-                    data_in_numpy = np.frombuffer(
-                        audio_buffer[:filled_size], dtype=dtype
-                    ).astype(np.float32)
+                        filled_size = buffer_callback(audio_buffer)
 
-                    for sound_effect in sound_effects:
-                        data_in_numpy = sound_effect(
-                            data_in_numpy, sample_rate, reset=False
-                        )
+                    data_received = True
 
-                    if mix_layer_file:
-                        noise_chunk = get_mixed_chunk(len(data_in_numpy))
-                        # Convert gain boost from dB to amplitude factor
-                        amplitude_factor = 10 ** (mix_layer_gain_boost_db / 20)
-                        data_in_numpy = data_in_numpy + noise_chunk * amplitude_factor
+                while not stream_finished:
+                    self._stream_remaining_bytes = len(buffer)
+                    sd.sleep(100)
 
-                    data_in_numpy = data_in_numpy * config.volume
-                    processed_buffer = data_in_numpy.astype(dtype).tobytes()
-                    buffer.extend(processed_buffer)
-                    await self.stream_event.publish("audio", processed_buffer)
-                    filled_size = buffer_callback(audio_buffer)
+                self._stream_remaining_bytes = 0
 
-                data_received = True
-            while not stream_finished:
-                sd.sleep(100)
+                contains_high_end_radio = SoundEffect.HIGH_END_RADIO in config.effects
+                if contains_high_end_radio:
+                    self.play_wav_sample("Radio_Static_Beep.wav", config.volume)
 
-            contains_high_end_radio = SoundEffect.HIGH_END_RADIO in config.effects
-            if contains_high_end_radio:
-                self.play_wav_sample("Radio_Static_Beep.wav", config.volume)
+                if config.play_beep:
+                    self.play_wav_sample("beep.wav", config.volume)
+                elif config.play_beep_apollo:
+                    self.play_wav_sample("Apollo_Beep.wav", config.volume)
 
-            if config.play_beep:
-                self.play_wav_sample("beep.wav", config.volume)
-            elif config.play_beep_apollo:
-                self.play_wav_sample("Apollo_Beep.wav", config.volume)
-
-            self.is_playing = False
-            await self.notify_playback_finished(wingman_name)
+                self.is_playing = False
+                await self.notify_playback_finished(wingman_name)
 
     async def enqueue_stream(self, buffer_callback: Callable[[list], int]) -> None:
         """Add streaming audio to queue for sequential playback."""
@@ -594,3 +625,23 @@ class AudioPlayer:
     def is_queue_empty(self) -> bool:
         """Check if queue has pending audio."""
         return self._audio_queue.empty()
+
+    @property
+    def remaining_buffer_duration(self) -> float | None:
+        """Estimated seconds of audio remaining in the streaming buffer.
+
+        Returns None if not currently streaming.  The estimate is based on
+        bytes still waiting to be sent to sounddevice — it does NOT include
+        sounddevice's own internal hardware buffers, so it may read slightly
+        low. Good enough for early-flush decisions (±100 ms accuracy).
+        """
+        if not self.is_playing:
+            return None
+        denom = (
+            self._stream_sample_rate
+            * self._stream_channels
+            * self._stream_bytes_per_sample
+        )
+        if denom == 0:
+            return None
+        return self._stream_remaining_bytes / denom

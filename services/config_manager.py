@@ -11,6 +11,7 @@ from dataclasses import asdict, is_dataclass
 from pathlib import Path
 
 import yaml
+import psutil
 from api.enums import LogSource, LogType
 from api.interface import (
     Config,
@@ -193,6 +194,74 @@ class ConfigManager:
                 server_only=True,
             )
         return default_dir
+
+    def find_autostart_config(self) -> Optional[ConfigDirInfo]:
+        """Check all profile dirs for autostart.yaml and return the first whose listed
+        processes are currently running. Returns None if no match or on psutil failure."""
+        # 1. Build running process set
+        try:
+            running = set()
+            for proc in psutil.process_iter(["name"]):
+                try:
+                    name = proc.info.get("name") or ""
+                    running.add(name.lower())
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    continue
+        except Exception as e:
+            self.printr.print(
+                f"autostart: failed to read running processes: {e}",
+                color=LogType.WARNING,
+                source=LogSource.SYSTEM,
+                source_name=self.log_source_name,
+                server_only=True,
+            )
+            return None
+
+        # 2. Collect top-level profile dirs safely
+        _, dirs, _ = next(walk(self.config_dir), (None, [], None))
+        if not dirs:
+            return None
+
+        # 3. Sort case-insensitively for deterministic first-match-wins
+        for d in sorted(dirs, key=str.lower):
+            # 4. Skip soft-deleted profiles
+            if d.startswith(DELETED_PREFIX):
+                continue
+
+            # 5. Check for autostart.yaml
+            autostart_path = path.join(self.config_dir, d, "autostart.yaml")
+            if not path.exists(autostart_path):
+                continue
+
+            # 6. Parse YAML
+            try:
+                with open(autostart_path, encoding="utf-8") as f:
+                    data = yaml.safe_load(f)
+            except Exception as e:
+                self.printr.print(
+                    f"autostart: failed to parse '{autostart_path}': {e}",
+                    color=LogType.WARNING,
+                    source=LogSource.SYSTEM,
+                    source_name=self.log_source_name,
+                    server_only=True,
+                )
+                continue
+
+            # 7. Read processes list (None/empty = skip silently)
+            processes = (data or {}).get("processes") or []
+            processes = [str(p).lower() for p in processes if p is not None]
+
+            # 8. Check for a match (skip blank entries — str(None) is "none", but "" from
+            #    a nameless process in `running` could falsely match a blank processes entry)
+            if any(p and p in running for p in processes):
+                return ConfigDirInfo(
+                    directory=d,
+                    name=d.replace(DEFAULT_PREFIX, "", 1) if d.startswith(DEFAULT_PREFIX) else d,
+                    is_default=d.startswith(DEFAULT_PREFIX),
+                    is_deleted=False,
+                )
+
+        return None
 
     def create_config(self, config_name: str, template: Optional[ConfigDirInfo] = None):
         new_dir = get_writable_dir(path.join(self.config_dir, config_name))

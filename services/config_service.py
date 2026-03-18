@@ -40,7 +40,8 @@ class ConfigService:
         self.source_name = "Config Service"
 
         self.current_config_dir: ConfigDirInfo = (
-            self.config_manager.find_default_config()
+            self.config_manager.find_autostart_config()
+            or self.config_manager.find_default_config()
         )
         self.tower: Tower = None
         self.current_config = None

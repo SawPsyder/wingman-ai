@@ -987,6 +987,14 @@ class WingmanCore(WebSocketUser):
 
     # called when AudioRecorder regonized voice
     def on_audio_recorder_speech_recorded(self, recording_file: str):
+        if not self.tower:
+            self.printr.print(
+                "Voice activation: ignoring speech - tower not ready (profile switching?).",
+                server_only=True,
+                color=LogType.WARNING,
+            )
+            return
+
         def run_async_process():
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
@@ -1122,6 +1130,9 @@ class WingmanCore(WebSocketUser):
 
     # called when Azure Speech Recognizer recognized voice
     def on_azure_voice_recognition(self, voice_event):
+        if not self.tower:
+            return
+
         def run_async_process():
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
