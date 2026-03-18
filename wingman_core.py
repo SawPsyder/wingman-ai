@@ -381,6 +381,7 @@ class WingmanCore(WebSocketUser):
         # Joystick thread management
         self._joystick_thread: Optional[threading.Thread] = None
         self._joystick_loop: Optional[asyncio.AbstractEventLoop] = None
+        self._joystick_task: Optional[asyncio.Task] = None
         self._mouse_hook_registered: bool = False
 
         self.settings_service = SettingsService(
@@ -593,57 +594,62 @@ class WingmanCore(WebSocketUser):
         return is_any_wingman_joystick_configured or is_cancel_tts_joystick_configured
 
     async def start_joysticks(self, config: Config):
-        pygame.init()
-        # Get all joystick configs
-        joystick_configs: list[CommandJoystickConfig] = [
-            config.wingmen[wingman].record_joystick_button
-            for wingman in config.wingmen
-            if config.wingmen[wingman].record_joystick_button
-        ]
+        try:
+            pygame.init()
+            # Get all joystick configs
+            joystick_configs: list[CommandJoystickConfig] = [
+                config.wingmen[wingman].record_joystick_button
+                for wingman in config.wingmen
+                if config.wingmen[wingman].record_joystick_button
+            ]
 
-        cancel_tts_joystick_button = getattr(
-            self.settings_service.settings, "cancel_tts_joystick_button", None
-        )
-        if cancel_tts_joystick_button is not None and cancel_tts_joystick_button.guid:
-            joystick_configs.append(cancel_tts_joystick_button)
+            cancel_tts_joystick_button = getattr(
+                self.settings_service.settings, "cancel_tts_joystick_button", None
+            )
+            if cancel_tts_joystick_button is not None and cancel_tts_joystick_button.guid:
+                joystick_configs.append(cancel_tts_joystick_button)
 
-        joysticks = [
-            pygame.joystick.Joystick(x) for x in range(pygame.joystick.get_count())
-        ]
-        for joystick in joysticks:
-            if any(
-                joystick.get_guid() == joystick_config.guid
-                for joystick_config in joystick_configs
-                if joystick_config is not None and joystick_config.guid is not None
-            ):
-                joystick.init()
+            joysticks = [
+                pygame.joystick.Joystick(x) for x in range(pygame.joystick.get_count())
+            ]
+            for joystick in joysticks:
+                if any(
+                    joystick.get_guid() == joystick_config.guid
+                    for joystick_config in joystick_configs
+                    if joystick_config is not None and joystick_config.guid is not None
+                ):
+                    joystick.init()
 
-        running = True
-        while running and pygame.joystick.get_init():
-            for event in pygame.event.get():
-                if event.type == pygame.QUIT:
-                    running = False
-                elif event.type == pygame.JOYBUTTONDOWN:
-                    joystick_origin = pygame.joystick.Joystick(event.joy)
-                    for joystick_config in joystick_configs:
-                        if joystick_origin.get_guid() == joystick_config.guid:
-                            self.on_press(
-                                joystick_config=CommandJoystickConfig(
-                                    guid=joystick_config.guid, button=event.button
+            running = True
+            while running and pygame.joystick.get_init():
+                for event in pygame.event.get():
+                    if event.type == pygame.QUIT:
+                        running = False
+                    elif event.type == pygame.JOYBUTTONDOWN:
+                        joystick_origin = pygame.joystick.Joystick(event.joy)
+                        for joystick_config in joystick_configs:
+                            if joystick_origin.get_guid() == joystick_config.guid:
+                                self.on_press(
+                                    joystick_config=CommandJoystickConfig(
+                                        guid=joystick_config.guid, button=event.button
+                                    )
                                 )
-                            )
-                elif event.type == pygame.JOYBUTTONUP:
-                    joystick_origin = pygame.joystick.Joystick(event.joy)
-                    for joystick_config in joystick_configs:
-                        if joystick_origin.get_guid() == joystick_config.guid:
-                            self.on_release(
-                                joystick_config=CommandJoystickConfig(
-                                    guid=joystick_config.guid, button=event.button
+                    elif event.type == pygame.JOYBUTTONUP:
+                        joystick_origin = pygame.joystick.Joystick(event.joy)
+                        for joystick_config in joystick_configs:
+                            if joystick_origin.get_guid() == joystick_config.guid:
+                                self.on_release(
+                                    joystick_config=CommandJoystickConfig(
+                                        guid=joystick_config.guid, button=event.button
+                                    )
                                 )
-                            )
 
-            # Add a small sleep to prevent the loop from consuming too much CPU
-            await asyncio.sleep(0.01)
+                # Add a small sleep to prevent the loop from consuming too much CPU
+                await asyncio.sleep(0.01)
+        finally:
+            # Always clean up pygame so the next init_joystick call can reinitialize
+            if pygame.get_init():
+                pygame.quit()
 
     async def init_joystick(self, config: Config):
         # Stop any existing joystick thread first to prevent thread accumulation
@@ -655,7 +661,7 @@ class WingmanCore(WebSocketUser):
             self._joystick_loop = loop  # Store reference for cleanup
             try:
                 # Create a task for start_joysticks instead of running it directly
-                loop.create_task(self.start_joysticks(config))
+                self._joystick_task = loop.create_task(self.start_joysticks(config))
                 # Run the event loop forever instead of running until complete
                 loop.run_forever()
             finally:
@@ -667,6 +673,11 @@ class WingmanCore(WebSocketUser):
 
     async def _stop_joystick_thread(self):
         """Stop the joystick event loop and thread."""
+        # Cancel the task via the joystick loop (cross-loop: can't await a task from another loop)
+        # The task's finally block will call pygame.quit() to clean up DirectInput handles
+        if self._joystick_task and not self._joystick_task.done():
+            self._joystick_task.cancel()
+
         if self._joystick_loop and self._joystick_loop.is_running():
             # Schedule the loop to stop from another thread
             try:
@@ -676,22 +687,11 @@ class WingmanCore(WebSocketUser):
 
         if self._joystick_thread and self._joystick_thread.is_alive():
             await asyncio.to_thread(self._joystick_thread.join, 1.0)
-            if self._joystick_thread.is_alive():
-                self.printr.print(
-                    "WARNING: Joystick thread did not stop in time",
-                    color=LogType.WARNING,
-                    server_only=True,
-                )
 
-        # Clean up pygame to allow fresh initialization later
-        if pygame.get_init():
-            try:
-                pygame.quit()
-            except Exception:
-                pass  # May fail if pygame is in an inconsistent state
-
+        # pygame.quit() is called by the task's finally block in start_joysticks
         self._joystick_thread = None
         self._joystick_loop = None
+        self._joystick_task = None
 
     async def refresh_input_hooks(self):
         """Refresh mouse and joystick hooks based on current wingman configurations.
