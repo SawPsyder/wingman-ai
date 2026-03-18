@@ -665,6 +665,12 @@ class WingmanCore(WebSocketUser):
                 # Run the event loop forever instead of running until complete
                 loop.run_forever()
             finally:
+                # Cancel all pending tasks before closing so pygame cleanup runs
+                pending = asyncio.all_tasks(loop)
+                for task in pending:
+                    task.cancel()
+                if pending:
+                    loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
                 loop.close()
 
         self._joystick_thread = threading.Thread(target=run_async_process, daemon=True)
@@ -673,12 +679,11 @@ class WingmanCore(WebSocketUser):
 
     async def _stop_joystick_thread(self):
         """Stop the joystick event loop and thread."""
-        # Cancel the task via the joystick loop (cross-loop: can't await a task from another loop)
-        # The task's finally block will call pygame.quit() to clean up DirectInput handles
-        if self._joystick_task and not self._joystick_task.done():
-            self._joystick_task.cancel()
-
         if self._joystick_loop and self._joystick_loop.is_running():
+            # Cancel the task thread-safely on the joystick loop
+            if self._joystick_task and not self._joystick_task.done():
+                self._joystick_loop.call_soon_threadsafe(self._joystick_task.cancel)
+
             # Schedule the loop to stop from another thread
             try:
                 self._joystick_loop.call_soon_threadsafe(self._joystick_loop.stop)
@@ -687,6 +692,12 @@ class WingmanCore(WebSocketUser):
 
         if self._joystick_thread and self._joystick_thread.is_alive():
             await asyncio.to_thread(self._joystick_thread.join, 1.0)
+            if self._joystick_thread.is_alive():
+                self.printr.print(
+                    "Warning: Joystick thread did not stop within timeout and may still be running.",
+                    color=LogType.WARNING,
+                    server_only=True,
+                )
 
         # pygame.quit() is called by the task's finally block in start_joysticks
         self._joystick_thread = None
