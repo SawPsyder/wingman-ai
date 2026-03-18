@@ -679,6 +679,7 @@ class WingmanCore(WebSocketUser):
 
     async def _stop_joystick_thread(self):
         """Stop the joystick event loop and thread."""
+        stopped_cleanly = True
         if self._joystick_loop and self._joystick_loop.is_running():
             # Cancel the task thread-safely on the joystick loop
             if self._joystick_task and not self._joystick_task.done():
@@ -693,16 +694,19 @@ class WingmanCore(WebSocketUser):
         if self._joystick_thread and self._joystick_thread.is_alive():
             await asyncio.to_thread(self._joystick_thread.join, 1.0)
             if self._joystick_thread.is_alive():
+                stopped_cleanly = False
                 self.printr.print(
                     "Warning: Joystick thread did not stop within timeout and may still be running.",
                     color=LogType.WARNING,
                     server_only=True,
                 )
 
+        # Only clear references if the joystick thread has stopped.
         # pygame.quit() is called by the task's finally block in start_joysticks
-        self._joystick_thread = None
-        self._joystick_loop = None
-        self._joystick_task = None
+        if stopped_cleanly:
+            self._joystick_thread = None
+            self._joystick_loop = None
+            self._joystick_task = None
 
     async def refresh_input_hooks(self):
         """Refresh mouse and joystick hooks based on current wingman configurations.
