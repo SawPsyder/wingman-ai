@@ -666,7 +666,7 @@ class WingmanCore(WebSocketUser):
                 loop.run_forever()
             finally:
                 # Cancel all pending tasks before closing so pygame cleanup runs
-                pending = asyncio.all_tasks(loop)
+                pending = asyncio.all_tasks()
                 for task in pending:
                     task.cancel()
                 if pending:
