@@ -203,10 +203,6 @@ class CommandHandler:
 
         await self.handle_stop_recording(stop_command, None)
 
-        # Always quit pygame to ensure clean state - refresh_input_hooks will restart it if needed
-        if pygame.get_init():
-            pygame.quit()
-
         # Restart joystick thread if there are configured joystick buttons
         await self.core.refresh_input_hooks()
 
