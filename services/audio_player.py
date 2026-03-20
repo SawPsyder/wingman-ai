@@ -54,6 +54,9 @@ class AudioPlayer:
 
     def set_event_loop(self, loop: asyncio.AbstractEventLoop):
         self.event_loop = loop
+        # Also store as the canonical "main" loop so cross-thread callbacks
+        # (fired from the dedicated TTS thread) can be bridged back here.
+        self._bridge_loop = loop
 
     def start_playback(
         self,
@@ -234,6 +237,19 @@ class AudioPlayer:
     async def notify_playback_started(
         self, wingman_name: str, publish_event: bool = True
     ):
+        bridge = getattr(self, "_bridge_loop", None)
+        if bridge:
+            try:
+                current = asyncio.get_running_loop()
+                if current is not bridge:
+                    # Called from the dedicated TTS thread — dispatch to main loop
+                    asyncio.run_coroutine_threadsafe(
+                        self.notify_playback_started(wingman_name, publish_event),
+                        bridge,
+                    )
+                    return
+            except RuntimeError:
+                pass
         if publish_event:
             await self.playback_events.publish("started", wingman_name)
         if callable(self.on_playback_started):
@@ -242,6 +258,19 @@ class AudioPlayer:
     async def notify_playback_finished(
         self, wingman_name: str, publish_event: bool = True
     ):
+        bridge = getattr(self, "_bridge_loop", None)
+        if bridge:
+            try:
+                current = asyncio.get_running_loop()
+                if current is not bridge:
+                    # Called from the dedicated TTS thread — dispatch to main loop
+                    asyncio.run_coroutine_threadsafe(
+                        self.notify_playback_finished(wingman_name, publish_event),
+                        bridge,
+                    )
+                    return
+            except RuntimeError:
+                pass
         if publish_event:
             await self.playback_events.publish("finished", wingman_name)
         if callable(self.on_playback_finished):
@@ -594,7 +623,7 @@ class AudioPlayer:
 
                 while not stream_finished:
                     self._stream_remaining_bytes = len(buffer)
-                    sd.sleep(100)
+                    await asyncio.sleep(0.1)
 
                 self._stream_remaining_bytes = 0
 

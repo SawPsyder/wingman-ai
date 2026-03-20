@@ -2,7 +2,9 @@ import json
 import re
 import time
 import asyncio
+import queue as thread_queue
 import random
+import threading
 import traceback
 import uuid
 from datetime import datetime
@@ -137,6 +139,13 @@ class OpenAiWingman(Wingman):
         # These are initialized in validate() once config is available
         self.sentence_splitter: SentenceSplitter | None = None
         self.tts_queue: TTSQueue | None = None
+
+        # Dedicated TTS thread — runs its own event loop so TTS API calls and
+        # audio playback are completely isolated from the main event loop and
+        # cannot be stalled by LLM streaming or other work on the main loop.
+        self._tts_thread: threading.Thread | None = None
+        self._tts_loop: asyncio.AbstractEventLoop | None = None
+        self._main_loop: asyncio.AbstractEventLoop | None = None
         self._tts_consumer_task: asyncio.Task | None = None
         self._message_complete_fired: bool = False
 
@@ -2150,7 +2159,14 @@ class OpenAiWingman(Wingman):
                             sentence_count += 1
                             await self.tts_queue.enqueue(sub)
                             if not consumer_started:
-                                consumer_task = asyncio.create_task(self._consume_tts_queue())
+                                if self._main_loop is None:
+                                    self._main_loop = asyncio.get_running_loop()
+                                self.audio_player._bridge_loop = self._main_loop
+                                self._ensure_tts_thread()
+                                tts_future = asyncio.run_coroutine_threadsafe(
+                                    self._consume_tts_queue(), self._tts_loop
+                                )
+                                consumer_task = asyncio.wrap_future(tts_future)
                                 consumer_started = True
                         # Yield control to allow consumer to run
                         await asyncio.sleep(0)
@@ -2171,7 +2187,14 @@ class OpenAiWingman(Wingman):
                         continue
                     await self.tts_queue.enqueue(sub)
                     if not consumer_started:
-                        consumer_task = asyncio.create_task(self._consume_tts_queue())
+                        if self._main_loop is None:
+                            self._main_loop = asyncio.get_running_loop()
+                        self.audio_player._bridge_loop = self._main_loop
+                        self._ensure_tts_thread()
+                        tts_future = asyncio.run_coroutine_threadsafe(
+                            self._consume_tts_queue(), self._tts_loop
+                        )
+                        consumer_task = asyncio.wrap_future(tts_future)
                         consumer_started = True
 
             # Signal that no more items will be enqueued so the consumer can exit
@@ -2234,6 +2257,23 @@ class OpenAiWingman(Wingman):
         }
         return model_map.get(self.config.features.conversation_provider)
 
+    def _ensure_tts_thread(self):
+        """Start the dedicated TTS event-loop thread if it is not already running.
+
+        The TTS thread hosts its own asyncio event loop so that TTS API calls,
+        blocking HTTP setup, and the playback wait loop run completely independently
+        of the main event loop.  Sentences are passed in via the thread-safe
+        TTSQueue (queue.Queue) and callbacks are bridged back to the main loop.
+        """
+        if self._tts_thread is None or not self._tts_thread.is_alive():
+            self._tts_loop = asyncio.new_event_loop()
+            self._tts_thread = threading.Thread(
+                target=self._tts_loop.run_forever,
+                daemon=True,
+                name=f"tts-{self.name}",
+            )
+            self._tts_thread.start()
+
     async def _consume_tts_queue(self):
         """Consume TTS queue and play audio in exponentially growing batches.
 
@@ -2257,9 +2297,7 @@ class OpenAiWingman(Wingman):
 
                 if needed > 0:
                     try:
-                        text = await asyncio.wait_for(
-                            self.tts_queue._queue.get(), timeout=0.1
-                        )
+                        text = self.tts_queue._queue.get_nowait()
                         if text and text.strip():
                             pending_sentences.append(text.strip())
 
@@ -2274,9 +2312,9 @@ class OpenAiWingman(Wingman):
                             desired_batch_size = min(desired_batch_size * 2, max_batch_size)
                         continue
 
-                    except asyncio.TimeoutError:
-                        # No new sentence available right now
-                        pass
+                    except thread_queue.Empty:
+                        # No new sentence available right now — yield briefly
+                        await asyncio.sleep(0.01)
 
                 # We timed out waiting for more sentences.
                 # Decide whether to flush what we have or keep waiting.
