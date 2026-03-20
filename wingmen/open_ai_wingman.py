@@ -1419,8 +1419,13 @@ class OpenAiWingman(Wingman):
                 self.config.features.conversation_provider
                 == ConversationProvider.GOOGLE
             ):
-                if self.config.google.conversation_model.startswith("gemini-3"):
-                    # gemini 3 needs a thought signature like this, but we cant fake it:
+                if (
+                    self.config.google.conversation_model.startswith("gemini-3")
+                    or self.config.google.conversation_model == "gemini-flash-latest"
+                    or self.config.google.conversation_model == "gemini-pro-latest"
+                    or self.config.google.conversation_model == "gemini-flash-lite-latest"
+                ):
+                    # gemini 3+ (latest = 3+) needs a thought signature like this, but we cant fake it:
                     # {
                     #     'model_extra': {
                     #         'extra_content': {
