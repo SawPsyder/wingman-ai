@@ -1060,6 +1060,18 @@ class OpenAiWingman(Wingman):
 
         response_message, tool_calls = await self._process_completion(completion)
 
+        # if an instant command was executed, discard any tool calls returned by the LLM
+        # to prevent duplicate or unintended tool executions
+        if instant_command_executed and tool_calls:
+            if self.settings.debug_mode:
+                await printr.print_async(
+                    "Discarded unexpected tool calls after instant command execution.",
+                    color=LogType.WARNING,
+                    server_only=True,
+                )
+            tool_calls = None
+            response_message.tool_calls = None
+
         # add message and dummy tool responses to conversation history
         is_waiting_response_needed, is_summarize_needed = await self._add_gpt_response(
             response_message, tool_calls
