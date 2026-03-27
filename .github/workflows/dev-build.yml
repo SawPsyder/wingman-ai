@@ -22,7 +22,7 @@ jobs:
         id: version
         shell: bash
         run: |
-          version=$(grep -oP 'LOCAL_VERSION\s*=\s*"\K[^"]+' services/system_manager.py)
+          version=$(sed -n 's/.*LOCAL_VERSION *= *"\([^"]*\)".*/\1/p' services/system_manager.py)
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ github.event.inputs.version_label }}" ]; then
