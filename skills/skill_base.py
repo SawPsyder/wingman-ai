@@ -637,7 +637,7 @@ class Skill:
         pass
 
     async def on_add_assistant_message(self, message: str, tool_calls: list) -> None:
-        """Called when a system message is added to the system."""
+        """Called when an assistant message is added to the conversation."""
         pass
 
     async def on_play_to_user(self, text: str, sound_config: SoundConfig) -> str:

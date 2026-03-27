@@ -1,8 +1,8 @@
-# Developing on MacOS
+# Developing on macOS
 
 ## Pre-requisites
 
-You need Python 3.11.7 and some dependencies to run Wingman. We recommend using a virtual environment to keep your system clean. If you don't know what that is, don't worry, we'll guide you through the process. If you don't want to use a virtual environment, you can skip the `pyenv` parts and just run `pip install -r requirements.txt` in the repository root once you have Python installed.
+You need **Python 3.11.7** and some dependencies to run Wingman AI Core. We recommend using a virtual environment via `pyenv`.
 
 ```bash
 brew update && brew upgrade                             # upgrade all packages
@@ -11,13 +11,13 @@ pyenv install 3.11.7                                    # install Python with py
 pyenv global 3.11.7                                     # set your global Python version
 ```
 
-Then add `eval "$(pyenv init --path)"` to your `~/.zshrc` or `~/.bashrc` so that you can just run `python` instead of `python3` in your terminal.
+Then add `eval "$(pyenv init --path)"` to your `~/.zshrc` or `~/.bashrc` so that you can run `python` instead of `python3`.
 
-Restart the terminal. Test with `python --version` and `python3 --version`.
+Restart the terminal. Test with `python --version`.
 
 ## Install dependencies
 
-Checkout the repository and start a terminal in the root folder.
+Fork and clone the repository, then start a terminal in the root folder.
 
 ```bash
 python -m venv venv                 # create a virtual environment
@@ -25,37 +25,57 @@ source venv/bin/activate            # activate the virtual environment
 pip install -r requirements.txt     # install dependencies
 ```
 
+## Copy runtime dependencies
+
+The release version of Wingman AI bundles model files and binaries that are too large for git. For the full experience in your dev environment, you can copy these from an existing Wingman AI installation into your repository root:
+
+| Directory | Purpose | What happens if you skip it |
+| --- | --- | --- |
+| `faster-whisper-models/` | Pre-downloaded speech recognition models | Models auto-download from HuggingFace on first use — can be slow. |
+| `pocket-tts-models/` | PocketTTS text-to-speech model weights | Models auto-download on first use. |
+| `pocket-tts-voices/` | Pre-packaged TTS voice samples | Voices auto-download on first use. |
+
+Copying these is optional — the app will download what it needs on first launch, but this avoids timeouts.
+
+> **Note:** NVIDIA CUDA acceleration is not available on macOS. FasterWhisper and PocketTTS will run on CPU.
+
 ## Setup Visual Studio Code
 
-Once you have everything installed, open the root folder in Visual Studio Code. It should automatically detect the virtual environment (if you created one) and ask you to install the dependencies. If not, you can do so manually by opening the command palette (`Ctrl+Shift+P`) and running `Python: Select Interpreter`. Then select the virtual environment you created.
+Open the root folder in Visual Studio Code. It should automatically detect the virtual environment and suggest the correct Python interpreter. If not, open the command palette (`Cmd+Shift+P`), run `Python: Select Interpreter`, and select the `venv` you created.
 
-Open `main.py` and run it. You should see the Wingman AI window should pop up. If it doesn't, make sure that:
+The repo includes recommended extensions in `.vscode/extensions.json` — install them when prompted.
 
-- you have the virtual environment selected
-- you have installed all dependencies using `pip install -r requirements.txt`
-- the integrated VSCode terminal ran the file from the repository root directory. At least on MacOS, it sometimes runs it from an outside directory, which causes issues with the relative paths. In that case, `cd` into the correct directory and run again.
-- you have `main.py` active in the editor when you hit `F5` to run it
+Press `F5` to launch `main.py` via the preconfigured debugger. The Wingman AI Core API server will start on `127.0.0.1:49111`. Connect the Wingman AI client to use it.
 
-We also suggest to install the recommended extensions if you haven't already. We're not forcing any strict syntactic coding styles right now but that might (have to) change in the future. If that will happen, `pylint` will certainly be used to enforce the style and it can help you with some basic stuff already if you aren't super familiar with Python.
+If it doesn't start, verify that:
+
+- The virtual environment is selected as the Python interpreter
+- All dependencies are installed (`pip install -r requirements.txt`)
+- The integrated terminal is running from the repository root directory — on macOS it sometimes opens in a parent directory, which breaks relative paths
 
 ### Allow access to microphone and input event monitoring
 
-VSCode will ask you to give it access to your mic and to monitor your input events. You have to allow both for Wingman to work. If you start the app from the terminal and see the message
+VSCode will ask you to give it access to your mic and to monitor input events. You have to allow both for Wingman to work. If you start the app from the terminal and see:
 
-```bash
+```text
 This process is not trusted! Input event monitoring will not be possible until it is added to accessibility clients.
 ```
 
-Go to `System Settings > Privacy & Security > Accessibility` and enable VSCode there, too.
+Go to `System Settings > Privacy & Security > Accessibility` and enable VSCode there.
 
-## Setup whispercpp
+## Setup whispercpp (optional)
 
-The release version of Wingman AI bundles and uses whispercpp as local STT service and autostarts the service when neeed.
-Unfortunately, this only works on Windows. On MacOS, you have to start the service manually.
+WhisperCPP is an alternative local STT provider. On macOS, it cannot be autostarted and must be run manually:
 
-- Download the latest stable MacOS release from the [whispercpp repository](https://github.com/ggerganov/whisper.cpp/releases) or build it from source
-- Download a model and copy it to `whispercpp/models` directory. We recommend to start with the `ggml-base.bin` model.
-- Start whispercpp on the host and port configured in Wingman AI. You can check the Wingman AI client and it will tell you the exact start cmd to execute.
-- Restart Wingman AI Core and it should connect to your running whispercpp instance.
+1. Download the latest stable macOS release from the [whispercpp repository](https://github.com/ggerganov/whisper.cpp/releases) or build it from source
+2. Download a model (e.g. `ggml-base.bin`) and place it in your whispercpp models directory
+3. Start whispercpp on the host and port configured in Wingman AI — the client UI will show you the exact command
+4. Restart Wingman AI Core to connect to the running whispercpp instance
 
-You obviously can't change the whispercpp settings in the Wingman AI UI on MacOS but the UI might give you a hint on how you can configure whispercpp server.
+Most developers use FasterWhisper (the default) and don't need whispercpp.
+
+## Developing Skills
+
+See the full [Skills Developer Documentation](../skills/README.md) for everything you need to know about creating skills — discovery metadata, the `@tool` decorator, hooks, custom properties, bundling dependencies, and distribution.
+
+If you're building a major skill or integration, please reach out on [Discord](https://www.shipbit.de/discord) first to make sure it aligns with the project's direction.

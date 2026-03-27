@@ -1087,7 +1087,7 @@ class OpenAiWingman(Wingman):
             )
             return None, None, None, True
 
-        response_message, tool_calls = await self._process_completion(completion)
+        response_message, tool_calls = await self._process_completion(completion, instant_command_executed is False)
 
         # add message and dummy tool responses to conversation history
         is_waiting_response_needed, is_summarize_needed = await self._add_gpt_response(
@@ -2781,7 +2781,7 @@ class OpenAiWingman(Wingman):
 
         return completion
 
-    async def _process_completion(self, completion: ChatCompletion):
+    async def _process_completion(self, completion: ChatCompletion, allow_tool_calls: bool = True):
         """Processes the completion returned by the LLM call.
 
         Args:
@@ -2817,6 +2817,10 @@ class OpenAiWingman(Wingman):
         )
 
         response_message.content = filtered_content if filtered_content else ""
+
+        # remove hallucinated tools, if none were allowed
+        if not allow_tool_calls:
+            response_message.tool_calls = None
 
         # temporary fix for tool calls that have a command name as function name
         if response_message.tool_calls:

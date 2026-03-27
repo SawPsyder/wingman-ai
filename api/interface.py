@@ -885,7 +885,7 @@ class McpServerConfig(BaseModel):
     """Connection timeout in seconds. Defaults to 30s for HTTP/SSE, 60s for stdio."""
 
     # Common settings
-    discoverable_by_default: bool = True
+    discoverable_by_default: bool = False
     """Whether this MCP server is discoverable by default for new wingmen.
     Set to False for specialized MCP servers that most users won't need immediately.
     Users can still make MCP servers discoverable per wingman."""

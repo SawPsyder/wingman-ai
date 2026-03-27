@@ -2,6 +2,7 @@ module: skills.timer.main
 name: Timer
 display_name: Timer
 author: JayMatthew
+discoverable_by_default: true
 tags:
   - Utility
 description:

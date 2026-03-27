@@ -1,9 +1,12 @@
-name: Build, Sign and Release
+name: Dev Build
 
 on:
-  push:
-    tags:
-      - '*'
+  workflow_dispatch:
+    inputs:
+      version_label:
+        description: "Optional suffix (e.g. rc1, beta.2). Leave empty for default."
+        required: false
+        default: ""
 
 jobs:
   build-windows:
@@ -11,16 +14,25 @@ jobs:
     runs-on: windows-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
+      artifact_name: ${{ steps.version.outputs.artifact_name }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Extract version from system_manager.py
+      - name: Determine version and artifact name
         id: version
         shell: bash
         run: |
-          version=$(grep -oE 'LOCAL_VERSION\s*=\s*"[^"]+"' services/system_manager.py | sed 's/.*"\(.*\)"/\1/')
+          version=$(grep -oP 'LOCAL_VERSION\s*=\s*"\K[^"]+' services/system_manager.py)
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "Detected version: $version"
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ github.event.inputs.version_label }}" ]; then
+            artifact_name="WingmanAiCore-${version}-${{ github.event.inputs.version_label }}-x86_64-pc-windows"
+          else
+            short_sha=$(echo "${{ github.sha }}" | cut -c1-7)
+            artifact_name="WingmanAiCore-${version}-dev.${short_sha}-x86_64-pc-windows"
+          fi
+          echo "artifact_name=$artifact_name" >> "$GITHUB_OUTPUT"
+          echo "Artifact name: $artifact_name"
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -54,7 +66,7 @@ jobs:
     needs: build-windows
     runs-on: windows-2022
     steps:
-      - uses: actions/checkout@v4 # for the action
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           name: unsigned-build
@@ -74,28 +86,11 @@ jobs:
       - name: Upload Signed Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: WingmanAiCore-${{ needs.build-windows.outputs.version }}-x86_64-pc-windows
+          name: ${{ needs.build-windows.outputs.artifact_name }}
           path: WingmanAiCore
+          retention-days: 30
 
       - name: Delete unsigned intermediate artifact
         uses: geekyeggo/delete-artifact@v5
         with:
           name: unsigned-build
-
-  release:
-    needs: [build-windows, sign-windows-executable]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: WingmanAiCore-${{ needs.build-windows.outputs.version }}-x86_64-pc-windows
-          path: .
-
-      - name: Create Release
-        id: create_release
-        uses: softprops/action-gh-release@v1
-        with:
-          files: |
-            WingmanAiCore-Windows.zip
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

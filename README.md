@@ -38,8 +38,8 @@ Wingman AI Core acts as a "backend" API (using FastAPI and Pydantic) with the fo
   - X.AI (Grok)
   - Local LLM (any OpenAI-compatible API)
   - Wingman Subscription (optional)
-    - Pro: unlimited access to gpt-4o-mini, Azure TTS and OpenAI TTS
-    - Ultra: additional unlimited access to gpt-5-mini and Inworld TTS
+    - Pro: unlimited access to gpt-4.1-mini, Azure TTS and OpenAI TTS
+    - Ultra: everything in Pro, plus additional unlimited access to Inworld TTS
 - **Speech-to-text providers** (STT) for transcription:
   - FasterWhisper (local, default - bundled with CUDA for GPU acceleration)
   - whispercpp (local, needs to be installed separately)
@@ -48,8 +48,8 @@ Wingman AI Core acts as a "backend" API (using FastAPI and Pydantic) with the fo
   - OpenAI Whisper
   - Wingman Pro (Azure Speech or Azure Whisper)
 - **Text-to-speech** (TTS) providers:
-  - OpenAI-compatible (e.g. xtts2, CoquiTTS local)
-  - XVASynth (local)
+  - PocketTTS (local, free - bundled with CUDA for GPU acceleration)
+  - OpenAI-compatible (e.g. PocketTTS remote server, XVASynth)
   - OpenAI TTS
   - Azure TTS
   - Edge TTS (free)
@@ -120,11 +120,11 @@ The project is intended for two different groups of users:
 
 ### Developers
 
-If you're a developer, you can just clone the repository and start building your own Wingmen. We try to keep the codebase as open and hackable as possible, with lots of hooks and extension points. The base classes you'll need are well documented, and we're happy to help you get started. We also provide a [development guide](#develop-with-wingman-ai) to help you witht the setup. Wingman AI Core is currently 100% written in Python.
+If you're a developer, you can just clone the repository and start building your own Wingmen. We try to keep the codebase as open and hackable as possible, with lots of hooks and extension points. The base classes you'll need are well documented, and we're happy to help you get started. We also provide a [development guide](#develop-with-wingman-ai) to help you with the setup. Wingman AI Core is currently 100% written in Python.
 
 ### Gamers & other interested people
 
-If you're not a developer, you can start with pre-built Wingmen from us or from the community and adapt them to your needs. Since version 2, we offer an [eay-to-use client](https://www.wingman-ai.com) for Windows that you can use to cofigure every single detail of your Wingmen. It also handles multiple configurations and offers system-wide settings like audio device selection.
+If you're not a developer, you can start with pre-built Wingmen from us or from the community and adapt them to your needs. Since version 2, we offer an [easy-to-use client](https://www.wingman-ai.com) for Windows that you can use to configure every single detail of your Wingmen. It also handles multiple configurations and offers system-wide settings like audio device selection.
 
 ## Providers & cost
 
@@ -182,7 +182,11 @@ You can use any LLM offering an OpenAI-compatible API and connect it to Wingman 
 
 ### Can I use a local TTS provider?
 
-Yes! XVASynth is a simple option and installable via Steam. Since version 1.8.0, Wingman AI Core also supports the new OpenAI TTS API and local TTS providers like CoquiTTS, xtts2 and others. If you want to dive into local TTS and voice cloning, we highly recommend you check out [teddybear082's Wingman AI version of CoquiTTS](https://github.com/teddybear082/WingmanAI-Coqui-TTS-Openai-Server).
+Yes! **PocketTTS** is bundled with Wingman AI and works out of the box as a local, free TTS provider with GPU acceleration via CUDA. It supports voice cloning with just a few seconds of reference audio.
+
+If you want to offload TTS to a separate machine (e.g. a more powerful GPU server), you can use the [PocketTTS OpenAI Streaming Server](https://github.com/teddybear082/pocket-tts-openai_streaming_server) — a server wrapper that exposes PocketTTS via an OpenAI-compatible API. Connect to it in Wingman AI using the "OpenAI-compatible" TTS provider and point it at your server's address.
+
+XVASynth is also supported and installable via Steam.
 
 ## Installing Wingman AI
 
@@ -191,7 +195,7 @@ Yes! XVASynth is a simple option and installable via Steam. Since version 1.8.0,
 - Download the installer of the latest version from [wingman-ai.com](https://www.wingman-ai.com).
 - **FasterWhisper with CUDA is now bundled!** If you have a CUDA-compatible NVIDIA GPU, GPU-accelerated speech-to-text will work automatically without additional installation steps.
 - Install it to a directory of your choice and start the client `Wingman AI.exe`.
-  - The client will will auto-start `Wingman AI Core.exe` in the background
+  - The client will auto-start `Wingman AI Core.exe` in the background
 
 If that doesn't work for some reason, try starting `Wingman AI Core.exe` manually and check the terminal or your **logs** directory for errors.
 
@@ -271,7 +275,7 @@ Access secrets in code by using `secret_keeper.py`. You can access everything el
 
 Wingman supports all languages that OpenAI (or your configured AI provider) supports. Setting this up in Wingman is really easy:
 
-Some STT providers need a simple configuration to specifiy a non-English language. Use might also have to find a voice that speaks the desired language.
+Some STT providers need a simple configuration to specify a non-English language. Use might also have to find a voice that speaks the desired language.
 
 Then find the `backstory` setting for the Wingman you want to change and add a simple sentence to the `backstory` prompt: `Always answer in the language I'm using to talk to you.`
 or something like `Always answer in Portuguese.`
@@ -309,6 +313,15 @@ If you want to read some code first and understand how it all works, we recommen
 - `Tower.py` - the factory that creates Wingmen
 
 If you're planning to develop a major feature or new integration, please contact us on [Discord](https://www.shipbit.de/discord) first and let us know what you're up to. We'll be happy to help you get started and make sure your work isn't wasted because we're already working on something similar.
+
+## Contributing
+
+We welcome contributions! Please read our [Contributing Guide](CONTRIBUTING.md) before submitting pull requests. Key points:
+
+- Every PR must be linked to a GitHub issue and target the `develop` branch
+- PRs are squash-merged with linear history (rebase onto develop, no merge commits)
+- At least one approving review is required
+- Use the [Bug Report](https://github.com/ShipBit/wingman-ai/issues/new?template=bug_report.yml) or [Feature Request](https://github.com/ShipBit/wingman-ai/issues/new?template=feature_request.yml) templates when creating issues
 
 ## Acknowledgements
 

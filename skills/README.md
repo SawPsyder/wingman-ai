@@ -5,18 +5,31 @@ This guide explains how skills work in Wingman AI and how to create your own cus
 ## Table of Contents
 
 - [What is a Skill?](#what-is-a-skill)
+- [Setting Up Your Dev Environment](#setting-up-your-dev-environment)
 - [How Skills are Discovered](#how-skills-are-discovered)
   - [Progressive Tool Disclosure](#progressive-tool-disclosure)
+  - [The Capability Registry](#the-capability-registry)
+  - [The SkillManifest](#the-skillmanifest)
+  - [Writing Good Discovery Metadata](#writing-good-discovery-metadata-critical)
   - [Auto-Activation](#auto-activation)
 - [Skill vs MCP: Decision Guide](#skill-vs-mcp-decision-guide)
 - [Skill Types](#skill-types)
   - [Hook-Based Skills](#hook-based-skills)
   - [Tool-Based Skills](#tool-based-skills)
+  - [Combining Hooks and Tools](#combining-hooks-and-tools)
 - [Skill Structure](#skill-structure)
+  - [Required Files](#required-files)
+  - [default_config.yaml - Skill Metadata](#default_configyaml---skill-metadata)
+  - [Custom Properties — Available Types](#custom-properties---available-types)
+  - [Accessing Custom Properties](#accessing-custom-properties-in-your-skill)
 - [Creating a Skill](#creating-a-skill)
-- [Skill Directory Structure](#skill-directory-structure)
 - [Bundling Dependencies](#bundling-dependencies)
+- [Skill Directory Structure](#skill-directory-structure)
 - [AI Agent Bootstrap Checklist](#ai-agent-bootstrap-checklist)
+- [Additional Resources](#additional-resources)
+  - [Example Skills to Study](#example-skills-to-study)
+  - [Key APIs](#key-apis)
+  - [Best Practices](#best-practices)
 
 ---
 
@@ -34,6 +47,17 @@ A skill can:
 
 ---
 
+## Setting Up Your Dev Environment
+
+Before developing skills, you need a working Wingman AI Core dev environment:
+
+- **macOS**: Follow [Developing on macOS](../docs/develop-macos.md)
+- **Windows**: Follow [Developing on Windows](../docs/develop-windows.md)
+
+These guides walk you through Python setup, virtual environment creation, dependency installation, and Visual Studio Code configuration. Once your dev environment is running (press `F5` to launch), you can start building skills.
+
+---
+
 ## How Skills are Discovered
 
 Wingman AI uses a **Progressive Tool Disclosure** system to manage skills and their tools efficiently. This system reduces token usage and improves reliability by only loading tools when needed.
@@ -43,11 +67,7 @@ Wingman AI uses a **Progressive Tool Disclosure** system to manage skills and th
 When Wingman AI starts, not all skill tools are immediately available to the AI. Instead, skills use an **enum-based discovery mechanism**:
 
 1. **Registration**: When a Wingman loads, all its configured skills are registered in the `SkillRegistry`
-2. **Manifest Creation**: Each skill creates a lightweight `SkillManifest` containing:
-   - Display name and description
-   - Tags and discovery keywords
-   - Tool names and summaries
-   - Auto-activation status
+2. **Manifest Creation**: Each skill creates a lightweight `SkillManifest` containing metadata for discovery
 3. **Unified Discovery**: The `CapabilityRegistry` combines skills and MCP servers into a single discovery interface
 4. **Activation**: The AI receives an `activate_capability` tool with an enum of all available capabilities
 
@@ -95,9 +115,28 @@ From the AI's perspective, both are "capabilities" that provide tools. The regis
 - `activate_capability(capability_name)` - Activate a skill or MCP server
 - `list_active_capabilities()` - See what's currently active
 
+### The SkillManifest
+
+Each skill produces a `SkillManifest` dataclass that powers discovery. The manifest is defined in [skill_registry.py](../services/skill_registry.py):
+
+```python
+@dataclass
+class SkillManifest:
+    name: str                          # Internal class name (e.g., 'FileManager')
+    display_name: str                  # Human-readable name (e.g., 'File Manager')
+    description: str                   # What the skill does — shown in the activation enum
+    tags: list[str]                    # Categorical tags like ['Utility', 'Image']
+    tool_names: list[str]              # Names of tools this skill provides
+    tool_summaries: list[str]          # One-line descriptions of each tool
+    is_auto_activated: bool = False    # Always active, hidden from progressive disclosure
+    discovery_keywords: str = ""       # Optional keywords to enhance discovery
+```
+
+Manifests are built automatically from your `default_config.yaml` and `@tool` decorators — you don't need to construct them manually. The `description`, `tags`, and `discovery_keywords` fields come from your config; `tool_names` and `tool_summaries` are extracted from your decorated tools at registration time.
+
 ### Writing Good Discovery Metadata (CRITICAL!)
 
-> ⚠️ **The quality of your skill's discovery metadata directly determines whether the AI can find and activate it correctly. Poor metadata = invisible skill!**
+> **The quality of your skill's discovery metadata directly determines whether the AI can find and activate it correctly. Poor metadata = invisible skill!**
 
 The discovery system relies entirely on your skill's descriptions, keywords, and tags to match user intent. Take great care when writing these:
 
@@ -105,7 +144,7 @@ The discovery system relies entirely on your skill's descriptions, keywords, and
 
 **This is the MOST IMPORTANT field for discovery.** The AI reads this to decide if your skill matches the user's request.
 
-✅ **Good skill descriptions:**
+Good skill descriptions:
 
 - **Clear and concise**: Explain what the skill does in one sentence
 - **Action-focused**: Start with verbs ("Generate images", "Manage files", "Set timers")
@@ -113,24 +152,26 @@ The discovery system relies entirely on your skill's descriptions, keywords, and
 - **Avoid jargon**: Use plain language the AI can understand
 
 ```yaml
-# ✅ GOOD
+# GOOD
 description:
   en: Generate images using DALL-E 3 based on text descriptions. Create artwork, illustrations, and visual content.
 
-# ❌ BAD (too vague)
+# BAD (too vague)
 description:
   en: Image stuff.
 
-# ❌ BAD (too technical)
+# BAD (too technical)
 description:
   en: Integrates with OpenAI's DALL-E 3 API endpoint to perform text-to-image synthesis operations.
 ```
 
 #### Discovery Keywords (`discovery_keywords` in default_config.yaml)
 
-**Critical for semantic matching.** Add ALL variations of how users might ask for your skill's functionality.
+Keywords are **optional but recommended** for any non-auto-activated skill. They enhance semantic matching by listing synonyms and variations of how users might request your skill's functionality.
 
-✅ **Good discovery keywords:**
+If you omit `discovery_keywords`, the AI relies solely on your `description` to find the skill. For simple, well-described skills this may be sufficient, but adding keywords significantly improves discovery.
+
+Good discovery keywords:
 
 - **Synonyms**: All ways to say the same thing ("create image", "generate picture", "draw", "make image")
 - **Domain terms**: Technical terms users might use ("DALL-E", "AI art", "image generation")
@@ -138,7 +179,7 @@ description:
 - **Common phrases**: Natural language requests ("show me", "get me", "I need")
 
 ```yaml
-# ✅ GOOD - comprehensive keyword coverage
+# GOOD - comprehensive keyword coverage
 discovery_keywords:
   - create image
   - generate picture
@@ -150,7 +191,7 @@ discovery_keywords:
   - artwork
   - illustration
 
-# ❌ BAD - missing obvious variations
+# BAD - missing obvious variations
 discovery_keywords:
   - image
 ```
@@ -159,7 +200,7 @@ discovery_keywords:
 
 Once your skill is activated, the AI needs clear tool descriptions to use them correctly.
 
-✅ **Good tool descriptions:**
+Good tool descriptions:
 
 - **Explain WHEN to use the tool**: Include a "WHEN TO USE" section
 - **Describe the outcome**: What happens when this tool is called?
@@ -167,7 +208,7 @@ Once your skill is activated, the AI needs clear tool descriptions to use them c
 - **Examples help**: Mention example scenarios
 
 ```python
-# ✅ GOOD - Clear purpose and guidance
+# GOOD - Clear purpose and guidance
 @tool(
     description="""Generates an image using DALL-E 3 based on a text description.
 
@@ -186,7 +227,7 @@ async def generate_image(self, prompt: str) -> str:
                 Should be detailed and descriptive for best results.
     """
 
-# ❌ BAD - Vague and unhelpful
+# BAD - Vague and unhelpful
 @tool(description="Makes an image")
 async def generate_image(self, prompt: str) -> str:
     """Args: prompt: a prompt"""
@@ -196,20 +237,18 @@ async def generate_image(self, prompt: str) -> str:
 
 **Use for categorization.** Tags help group skills by domain and improve filtering.
 
-✅ **Good tags:**
-
-- Use standard categories: `Utility`, `Image`, `File`, `Internet`, `Audio`, `Game`, `Productivity`
+- Use standard categories: `Utility`, `Image`, `File`, `Internet`, `Audio`, `Game`, `Productivity`, `Overlay`
 - Be specific: Add domain tags like `Star Citizen`, `MSFS2020` for game integrations
 - Keep it short: 2-4 tags maximum
 
 ```yaml
-# ✅ GOOD
+# GOOD
 tags:
   - Image
   - Internet
   - Productivity
 
-# ❌ BAD - too many, too vague
+# BAD - too many, too vague
 tags:
   - Tool
   - Thing
@@ -233,10 +272,10 @@ tags:
 
 **Common discovery failures:**
 
-- ❌ Description too vague: "This skill does things with files"
-- ❌ Missing keywords: User says "draw" but you only have "generate image"
-- ❌ Wrong category: Skill has wrong tags making it hard to filter
-- ❌ Tool descriptions unclear: AI activates skill but doesn't know when to use tools
+- Description too vague: "This skill does things with files"
+- Missing keywords: User says "draw" but you only have "generate image"
+- Wrong category: Skill has wrong tags making it hard to filter
+- Tool descriptions unclear: AI activates skill but doesn't know when to use tools
 
 **Remember:** The AI cannot read your code. It ONLY sees your descriptions, keywords, and tags. Make them count!
 
@@ -253,7 +292,7 @@ Skills can be marked with `auto_activate: true` in their `default_config.yaml`. 
 
 **When to use auto_activate:**
 
-✅ **Use `auto_activate: true` when:**
+Use `auto_activate: true` when:
 
 - Your skill provides **essential functionality** that should always be available
 - The skill has **very few tools** (1-3) with minimal token overhead
@@ -266,7 +305,7 @@ Skills can be marked with `auto_activate: true` in their `default_config.yaml`. 
 
 **When NOT to use auto_activate:**
 
-❌ **Do NOT use `auto_activate: true` when:**
+Do NOT use `auto_activate: true` when:
 
 - Your skill has **many tools** (wastes tokens if not needed)
 - The tools are **specialized** and only used occasionally
@@ -319,14 +358,14 @@ Before creating a skill, decide whether your functionality should be:
 
 ### When to Use Skills
 
-**✅ Use a Skill when you need:**
+**Use a Skill when you need:**
 
 - Access to Wingman's runtime (configs, hooks, audio player, etc.)
 - Lifecycle hooks (on_play_to_user, on_add_message, etc.)
 - Local system integration that requires deep Wingman context
 - Simple distribution via Discord/ZIP files (no infrastructure needed)
 
-**❌ Drawbacks:**
+**Drawbacks:**
 
 - Dependencies must be bundled with the skill
 - Distribution is manual (ZIP files shared on Discord)
@@ -340,13 +379,13 @@ Before creating a skill, decide whether your functionality should be:
 
 ### When to Use Local MCP Servers
 
-**✅ Use Local MCP when you need:**
+**Use Local MCP when you need:**
 
 - Standalone functionality that doesn't need Wingman runtime access
 - Clean separation from Wingman's codebase
 - Standard MCP protocol for potential reuse
 
-**❌ Drawbacks:**
+**Drawbacks:**
 
 - **Too complicated for most users** - requires MCP setup knowledge
 - No access to Wingman runtime (configs, hooks, audio, etc.)
@@ -361,14 +400,14 @@ Before creating a skill, decide whether your functionality should be:
 
 ### When to Use Remote MCP Servers
 
-**✅ Use Remote MCP when you need:**
+**Use Remote MCP when you need:**
 
 - Stateless operations that work the same for all users
 - Easy sharing and distribution (just share the URL)
 - Centralized updates (users always get the latest version)
 - No local installation required
 
-**❌ Drawbacks:**
+**Drawbacks:**
 
 - **Stateless** - can't maintain state between calls
 - No access to Wingman runtime
@@ -386,13 +425,13 @@ Before creating a skill, decide whether your functionality should be:
 
 | Feature                | Skill               | Local MCP  | Remote MCP    |
 | ---------------------- | ------------------- | ---------- | ------------- |
-| Wingman Runtime Access | ✅ Yes              | ❌ No      | ❌ No         |
-| Lifecycle Hooks        | ✅ Yes              | ❌ No      | ❌ No         |
-| Easy Sharing           | ⚠️ Manual (Discord) | ❌ Complex | ✅ URL only   |
-| Maintains State        | ✅ Yes              | ✅ Yes     | ❌ No         |
-| Updates                | Manual              | Manual     | ✅ Automatic  |
-| User Setup Complexity  | ⚠️ Medium           | ❌ High    | ✅ Low        |
-| Hosting Required       | ❌ No               | ❌ No      | ✅ Yes        |
+| Wingman Runtime Access | Yes                 | No         | No            |
+| Lifecycle Hooks        | Yes                 | No         | No            |
+| Easy Sharing           | Manual (Discord)    | Complex    | URL only      |
+| Maintains State        | Yes                 | Yes        | No            |
+| Updates                | Manual              | Manual     | Automatic     |
+| User Setup Complexity  | Medium              | High       | Low           |
+| Hosting Required       | No                  | No         | Yes           |
 | Dependencies           | Bundled             | Separate   | None (remote) |
 
 **TL;DR:** If you need Wingman integration → **Skill**. If you need easy sharing and updates → **Remote MCP**. Avoid Local MCP unless you have a specific reason.
@@ -421,7 +460,7 @@ async def on_add_user_message(self, message: str) -> None:
     pass
 
 async def on_add_assistant_message(self, message: str, tool_calls: list) -> None:
-    """Called when an assistant message is added."""
+    """Called when an assistant message is added to the conversation."""
     pass
 
 async def on_play_to_user(self, text: str, sound_config: SoundConfig) -> str:
@@ -435,6 +474,24 @@ async def prepare(self) -> None:
 async def unload(self) -> None:
     """Called when skill is unloaded. Clean up resources here."""
     pass
+```
+
+**Tool behavior hooks:**
+
+These hooks let you control how the AI handles tool responses without modifying the tool itself:
+
+```python
+async def is_summarize_needed(self, tool_name: str) -> bool:
+    """Returns whether a tool's result should be summarized by the AI.
+    Defaults to True. The @tool decorator's `summarize` parameter sets
+    this per-tool, but you can override this method for dynamic logic."""
+    return True
+
+async def is_waiting_response_needed(self, tool_name: str) -> bool:
+    """Returns whether a 'please wait' message should be shown while
+    the tool executes. Defaults to False. The @tool decorator's
+    `wait_response` parameter sets this per-tool."""
+    return False
 ```
 
 **Example:** [AudioDeviceChanger](audio_device_changer/main.py)
@@ -548,7 +605,7 @@ Every skill requires these files:
 
 ### Required Files
 
-```
+```text
 skills/your_skill_name/
 ├── main.py              # Your Skill class implementation
 ├── default_config.yaml  # Skill metadata and configuration
@@ -582,11 +639,10 @@ class YourSkillName(Skill):
         """
         Validate configuration at startup.
         Call retrieve_custom_property_value() for each config property.
-        DO NOT cache values - retrieve them just-in-time at runtime.
         """
         errors = await super().validate()
 
-        # Validate properties exist (don't cache the values!)
+        # Validate properties exist
         self.retrieve_custom_property_value("your_property", errors)
 
         return errors
@@ -606,7 +662,7 @@ class YourSkillName(Skill):
 
 ### `default_config.yaml` - Skill Metadata
 
-> ⚠️ **IMPORTANT**: The `description` and `discovery_keywords` fields are CRITICAL for skill discovery. The AI uses these to match user intent. See [Writing Good Discovery Metadata](#writing-good-discovery-metadata-critical) for detailed guidance.
+> **IMPORTANT**: The `description` and `discovery_keywords` fields are CRITICAL for skill discovery. The AI uses these to match user intent. See [Writing Good Discovery Metadata](#writing-good-discovery-metadata-critical) for detailed guidance.
 
 ```yaml
 module: skills.your_skill_name.main # Python import path
@@ -619,7 +675,11 @@ tags: # Categories for filtering - use standard categories
   - Internet
 
 auto_activate: false # Auto-enable for all Wingmen? (see Auto-Activation section)
-discoverable_by_default: true # Show in skill discovery by default?
+
+# Controls whether the skill appears in the activation enum by default.
+# Defaults to true if omitted. Set to false for specialized skills that
+# should only be activated when explicitly added to a Wingman's config.
+discoverable_by_default: true
 
 # CRITICAL: This is how the AI finds your skill!
 description:
@@ -629,7 +689,7 @@ description:
     The AI reads this to decide if it matches the user's request.
   de: German description (optional but helpful for international users)
 
-# CRITICAL: All variations of how users might ask for your functionality
+# Optional but recommended: All variations of how users might ask for your functionality
 discovery_keywords:
   - primary action verb (e.g., "generate", "create", "manage")
   - synonyms for your functionality
@@ -650,14 +710,14 @@ custom_properties: # User-configurable settings
     hint: Helpful description for users
     value: default_value # Default value
     required: true # Is this property required?
-    property_type: string # string, number, boolean, audio_device, etc.
+    property_type: string # See "Custom Properties — Available Types" below
 ```
 
-### Custom Properties - Available Types
+### Custom Properties — Available Types
 
 Custom properties allow your skill to be configured by users through the Wingman AI client UI. Each property type renders a specific UI control.
 
-> ⚠️ **IMPORTANT - Use SecretKeeper for API Keys and Secrets!**
+> **IMPORTANT — Use SecretKeeper for API Keys and Secrets!**
 >
 > **Never use custom properties for API keys, passwords, or other sensitive data.** Always use the `SecretKeeper` service instead:
 >
@@ -665,7 +725,7 @@ Custom properties allow your skill to be configured by users through the Wingman
 > async def validate(self) -> list[WingmanInitializationError]:
 >     errors = await super().validate()
 >
->     # ✅ GOOD - Use SecretKeeper for sensitive data
+>     # Use SecretKeeper for sensitive data
 >     api_key = await self.retrieve_secret(
 >         secret_name="your_service_api_key",
 >         errors=errors,
@@ -814,6 +874,31 @@ custom_properties:
 
 ---
 
+#### `color` - Color Picker
+
+Color picker for hex color values. Renders a visual color picker in the UI.
+
+```yaml
+custom_properties:
+  - id: accent_color
+    name: Accent Color
+    hint: Accent color for highlights (hex format).
+    value: "#00aaff"
+    required: false
+    property_type: color
+
+  - id: bg_color
+    name: Background Color
+    hint: Background color (hex format, e.g. #1e212b or #1e212b80 for 50% transparent).
+    value: "#1e212b"
+    required: false
+    property_type: color
+```
+
+**Use for:** Theme colors, accent colors, background colors, any visual color setting. Values are hex strings (e.g., `#00aaff`). Supports optional alpha channel (e.g., `#1e212b80` for 50% transparency).
+
+---
+
 #### `audio_device` - Audio Device Selector
 
 Dropdown populated with available audio devices from the user's system.
@@ -903,13 +988,13 @@ AudioFileConfig(
 
 ### Accessing Custom Properties in Your Skill
 
-Always retrieve custom properties just-in-time, never cache them:
+**Always retrieve custom properties just-in-time, never cache them.** Users can change property values in the UI while the skill is running. Retrieving values fresh ensures your skill always uses current settings without requiring restart or reactivation.
 
 ```python
 class YourSkill(Skill):
     async def validate(self) -> list[WingmanInitializationError]:
         errors = await super().validate()
-        # Validate that required properties exist
+        # Validate that required properties exist (don't cache!)
         self.retrieve_custom_property_value("timeout_seconds", errors)
         self.retrieve_custom_property_value("quality_level", errors)
         return errors
@@ -932,7 +1017,18 @@ class YourSkill(Skill):
         # ... use the values
 ```
 
-**Why just-in-time?** Users can change property values in the UI while the skill is running. Retrieving values fresh ensures your skill always uses current settings without requiring restart or reactivation.
+```python
+# BAD - Don't cache config values:
+async def validate(self):
+    errors = await super().validate()
+    self.my_setting = self.retrieve_custom_property_value("my_setting", errors)  # cached!
+    return errors
+
+# GOOD - Retrieve fresh at runtime:
+def _get_my_setting(self):
+    errors = []
+    return self.retrieve_custom_property_value("my_setting", errors)
+```
 
 ### `logo.png` - Skill Icon
 
@@ -980,108 +1076,129 @@ class YourSkill(Skill):
 
 #### If Your Skill Has New Dependencies
 
-Skills with custom dependencies need special handling to bundle them properly.
+See [Bundling Dependencies](#bundling-dependencies) for the full process.
 
-1. **Create your skill directory** in the repo:
+**Quick summary:**
 
-   ```bash
-   mkdir -p skills/your_skill_name
-   cd skills/your_skill_name
-   ```
+1. Create your skill directory and required files
+2. Create a virtual environment inside your skill directory
+3. Install and develop with your dependencies
+4. Bundle with `pip install -r requirements.txt --target=dependencies`
+5. Remove `venv/` before distributing (only `dependencies/` is needed)
 
-2. **Create the required files** (main.py, default_config.yaml, logo.png)
+---
 
-3. **Create a virtual environment** inside your skill directory:
+## Bundling Dependencies
 
-   ```bash
-   # macOS/Linux:
-   python -m venv venv
-   source venv/bin/activate
+### Why Bundle Dependencies?
 
-   # Windows:
-   python -m venv venv
-   .\venv\Scripts\activate
-   ```
+Wingman AI uses PyInstaller to create standalone executables. Skills with custom dependencies need to bundle those dependencies so they work in the frozen executable environment.
 
-4. **Install your dependencies** with the venv active:
+### Dependency Loading
 
-   ```bash
-   pip install your-package another-package
-   ```
+When a skill has a `dependencies/` directory, Wingman AI automatically adds it to `sys.path` before loading the skill. This allows the skill to import its bundled packages.
 
-5. **Implement and test** your skill
+From `module_manager.py`:
 
-   - The skill will automatically use the venv when running from source
-   - Wingman AI Core loads from `skills/*` directories first for development
+```python
+dependencies_dir = path.join(custom_skill_path, "dependencies")
+with add_to_sys_path(dependencies_dir):
+    # Load skill with access to bundled dependencies
+    spec = util.spec_from_file_location(skill_name, plugin_module_path)
+    module = util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+```
 
-6. **Bundle dependencies for distribution:**
+### Step-by-Step Bundling Process
 
-   ```bash
-   # Make sure venv is still active!
-   pip freeze > requirements.txt
-   pip install -r requirements.txt --target=dependencies
-   ```
+**1. Create a virtual environment inside your skill directory:**
 
-7. **Prepare for release:**
+```bash
+cd skills/your_skill_name
 
-   ```bash
-   # macOS:
-   cp -r skills/your_skill_name ~/Library/Application\ Support/WingmanAI/custom_skills/
-   cd ~/Library/Application\ Support/WingmanAI/custom_skills/your_skill_name
-   rm -rf venv  # Remove venv (only dependencies/ is needed)
+# macOS/Linux:
+python -m venv venv
+source venv/bin/activate
 
-   # Windows:
-   # Copy skills/your_skill_name to %APPDATA%/ShipBit/WingmanAI/custom_skills/
-   # Delete %APPDATA%/ShipBit/WingmanAI/custom_skills/your_skill_name/venv
-   ```
+# Windows:
+python -m venv venv
+.\venv\Scripts\activate
+```
 
-8. **Test the bundled version** using the release/installed version of Wingman AI Core
+**2. Install your dependencies with the venv active:**
 
-9. **Package for distribution:**
-   - ZIP the directory from custom_skills (includes dependencies/, not venv/)
-   - Share on Discord
+```bash
+pip install your-package another-package
+```
+
+**3. Implement and test your skill** (the skill will automatically use the venv when running from source)
+
+**4. Generate requirements.txt:**
+
+```bash
+pip freeze > requirements.txt
+```
+
+**5. Install dependencies to target directory:**
+
+```bash
+pip install -r requirements.txt --target=dependencies
+```
+
+**6. Copy to custom_skills directory and remove venv:**
+
+```bash
+# macOS:
+cp -r skills/your_skill_name ~/Library/Application\ Support/WingmanAI/custom_skills/
+rm -rf ~/Library/Application\ Support/WingmanAI/custom_skills/your_skill_name/venv
+
+# Windows (PowerShell):
+Copy-Item -Recurse skills\your_skill_name $env:APPDATA\ShipBit\WingmanAI\custom_skills\
+Remove-Item -Recurse $env:APPDATA\ShipBit\WingmanAI\custom_skills\your_skill_name\venv
+```
+
+**7. Test with release version:**
+
+- Close VS Code / development environment
+- Run the installed Wingman AI application
+- Verify your skill loads and functions correctly
+
+**8. Create distribution ZIP:**
+
+```bash
+# From custom_skills directory
+cd ~/Library/Application\ Support/WingmanAI/custom_skills  # macOS
+cd %APPDATA%\ShipBit\WingmanAI\custom_skills  # Windows
+
+# Create ZIP
+zip -r your_skill_name.zip your_skill_name/
+```
 
 **To reset and start fresh:**
 
 ```bash
 cd skills/your_skill_name
 rm -rf venv dependencies requirements.txt
-# Start over from step 3
+# Start over from step 1
 ```
 
-### Important Configuration Notes
+### Common Dependency Issues
 
-**DO NOT cache config values!** Always retrieve properties just-in-time:
+**Problem:** Dependency conflicts with Wingman AI's core dependencies
 
-```python
-# ❌ BAD - Don't do this:
-async def validate(self):
-    errors = await super().validate()
-    self.my_setting = self.retrieve_custom_property_value("my_setting", errors)
-    return errors
+**Solution:** Try to use compatible versions. Check Wingman's `requirements.txt` for version constraints.
 
-async def some_method(self):
-    # Uses cached value - won't reflect UI changes!
-    value = self.my_setting
+---
 
-# ✅ GOOD - Do this:
-async def validate(self):
-    errors = await super().validate()
-    # Just validate it exists, don't cache
-    self.retrieve_custom_property_value("my_setting", errors)
-    return errors
+**Problem:** Large dependency size
 
-def _get_my_setting(self):
-    """Retrieve fresh value at runtime."""
-    errors = []
-    return self.retrieve_custom_property_value("my_setting", errors)
+**Solution:** Consider if you really need all the dependencies. Some packages (like `transformers` or `torch`) can be huge and may not be suitable for skill distribution.
 
-async def some_method(self):
-    # Always gets current value from UI
-    value = self._get_my_setting()
-```
+---
 
-This pattern ensures changes made in the UI take effect immediately without requiring skill reactivation.
+**Problem:** Platform-specific dependencies
+
+**Solution:** Document which platforms your skill supports. Some dependencies (especially those with C extensions) may not work on all platforms.
 
 ---
 
@@ -1119,7 +1236,7 @@ Wingman AI loads skills from multiple locations with a specific priority order:
 
 When your skill is fully bundled, it looks like this:
 
-```
+```text
 custom_skills/your_skill_name/
 ├── main.py
 ├── default_config.yaml
@@ -1155,107 +1272,6 @@ This directory:
 
 ---
 
-## Bundling Dependencies
-
-### Why Bundle Dependencies?
-
-Wingman AI uses PyInstaller to create standalone executables. Skills with custom dependencies need to bundle those dependencies so they work in the frozen executable environment.
-
-### Dependency Loading
-
-When a skill has a `dependencies/` directory, Wingman AI automatically adds it to `sys.path` before loading the skill. This allows the skill to import its bundled packages.
-
-From `module_manager.py`:
-
-```python
-dependencies_dir = path.join(custom_skill_path, "dependencies")
-with add_to_sys_path(dependencies_dir):
-    # Load skill with access to bundled dependencies
-    spec = util.spec_from_file_location(skill_name, plugin_module_path)
-    module = util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-```
-
-### Step-by-Step Bundling Process
-
-**1. Activate your skill's virtual environment:**
-
-```bash
-cd skills/your_skill_name
-source venv/bin/activate  # macOS/Linux
-# or
-.\venv\Scripts\activate   # Windows
-```
-
-**2. Generate requirements.txt:**
-
-```bash
-pip freeze > requirements.txt
-```
-
-**3. Install dependencies to target directory:**
-
-```bash
-pip install -r requirements.txt --target=dependencies
-```
-
-**4. Copy to custom_skills directory:**
-
-```bash
-# macOS:
-cp -r skills/your_skill_name ~/Library/Application\ Support/WingmanAI/custom_skills/
-
-# Windows (PowerShell):
-Copy-Item -Recurse skills\your_skill_name $env:APPDATA\ShipBit\WingmanAI\custom_skills\
-```
-
-**5. Remove venv (not needed for distribution):**
-
-```bash
-# macOS:
-rm -rf ~/Library/Application\ Support/WingmanAI/custom_skills/your_skill_name/venv
-
-# Windows:
-Remove-Item -Recurse $env:APPDATA\ShipBit\WingmanAI\custom_skills\your_skill_name\venv
-```
-
-**6. Test with release version:**
-
-- Close VS Code / development environment
-- Run the installed Wingman AI application
-- Verify your skill loads and functions correctly
-
-**7. Create distribution ZIP:**
-
-```bash
-# From custom_skills directory
-cd ~/Library/Application\ Support/WingmanAI/custom_skills  # macOS
-cd %APPDATA%\ShipBit\WingmanAI\custom_skills  # Windows
-
-# Create ZIP
-zip -r your_skill_name.zip your_skill_name/
-```
-
-### Common Dependency Issues
-
-**Problem:** Dependency conflicts with Wingman AI's core dependencies
-
-**Solution:** Try to use compatible versions. Check Wingman's `requirements.txt` for version constraints.
-
----
-
-**Problem:** Large dependency size
-
-**Solution:** Consider if you really need all the dependencies. Some packages (like `transformers` or `torch`) can be huge and may not be suitable for skill distribution.
-
----
-
-**Problem:** Platform-specific dependencies
-
-**Solution:** Document which platforms your skill supports. Some dependencies (especially those with C extensions) may not work on all platforms.
-
----
-
 ## AI Agent Bootstrap Checklist
 
 If you're using an AI agent to create a skill, use this checklist to ensure everything is set up correctly:
@@ -1285,7 +1301,7 @@ If you're using an AI agent to create a skill, use this checklist to ensure ever
 
 - [ ] `__init__` calls `super().__init__()`
 - [ ] `validate()` implemented to check custom properties
-- [ ] Config values retrieved just-in-time (not cached)
+- [ ] Config values retrieved just-in-time (not cached in `validate()`)
 - [ ] `prepare()` implemented for initialization (if needed)
 - [ ] `unload()` implemented for cleanup (if needed)
 - [ ] Tools use `@tool` decorator with type hints
@@ -1337,22 +1353,32 @@ If you're using an AI agent to create a skill, use this checklist to ensure ever
 
 ### Example Skills to Study
 
-**Hook-Based:**
+**Auto-Activated (Hook-Based, always on):**
 
-- [audio_device_changer](audio_device_changer/) - Intercepts audio playback
-- [thinking_sound](thinking_sound/) - Plays sound during processing
-- [auto_screenshot](auto_screenshot/) - Automatic screenshot capture
+- [audio_device_changer](audio_device_changer/) - Routes audio to specific output devices
+- [thinking_sound](thinking_sound/) - Plays sound effects during AI processing
+- [voice_changer](voice_changer/) - Real-time voice modification for TTS
+- [radio_chatter](radio_chatter/) - Background ambient radio audio
+- [hud](hud/) - Transparent HUD overlay for messages and panels
+- [quick_commands](quick_commands/) - Frequently-used shortcut actions
 
-**Tool-Based (Modern @tool decorator):**
+**Tool-Based (Progressive Disclosure):**
 
 - [image_generation](image_generation/) - DALL-E image generation
-- [timer](timer/) - Timer management
-- [vision_ai](vision_ai/) - Image analysis
+- [timer](timer/) - Timer and countdown management
+- [vision_ai](vision_ai/) - Screen capture and image analysis
+- [file_manager](file_manager/) - Local file and folder operations
+- [spotify](spotify/) - Spotify music playback control
+- [api_request](api_request/) - Make HTTP API requests
+- [typing_assistant](typing_assistant/) - Text input and typing automation
+- [control_windows](control_windows/) - Window management and control
+- [auto_screenshot](auto_screenshot/) - Automatic screenshot capture on conversation events
 
-**Both Hooks and Tools:**
+**Game Integrations:**
 
-- [radio_chatter](radio_chatter/) - Background audio management
-- [voice_changer](voice_changer/) - Real-time voice modification
+- [msfs2020_control](msfs2020_control/) - Microsoft Flight Simulator 2020 controls
+- [uexcorp](uexcorp/) - Star Citizen trading data via UEX Corp
+- [ats_telemetry](ats_telemetry/) - American/Euro Truck Simulator telemetry (auto-activated)
 
 ### Key APIs
 
@@ -1377,20 +1403,20 @@ self.settings.audio.output        # Output device config
 ```python
 self.printr.print()               # Log to console
 await self.printr.print_async()   # Async logging
-self.secret_keeper.retrieve()     # Get secrets/API keys
 self.get_generated_files_dir()    # Get persistent storage dir
 ```
 
-**Configuration:**
+**Configuration & Secrets:**
 
 ```python
-self.retrieve_custom_property_value(property_id, errors)
-await self.retrieve_secret(secret_name, errors, hint)
+self.retrieve_custom_property_value(property_id, errors)  # Get config value (just-in-time!)
+await self.retrieve_secret(secret_name, errors, hint)      # Get secret from SecretKeeper
+self.secret_keeper.retrieve()                              # Direct SecretKeeper access
 ```
 
 ### Best Practices
 
-1. **Never cache config values** - retrieve them just-in-time
+1. **Never cache config values** - retrieve them just-in-time so UI changes take effect immediately
 2. **Always implement `unload()`** - clean up resources to prevent memory leaks
 3. **Use type hints** - they auto-generate tool schemas and improve code quality
 4. **Write clear tool descriptions** - include "WHEN TO USE" guidance for the AI
@@ -1403,8 +1429,6 @@ await self.retrieve_secret(secret_name, errors, hint)
 
 ## Getting Help
 
-- **Discord**: Join the Wingman AI Discord for community support
+- **Discord**: Join the [Wingman AI Discord](https://www.shipbit.de/discord) for community support
 - **GitHub**: Check existing skills for examples and patterns
 - **Base Class**: Read [skill_base.py](skill_base.py) for complete API documentation
-
-Happy skill building! 🚀

@@ -2,6 +2,7 @@ module: skills.hud.main
 name: HUD
 display_name: HUD Overlay
 auto_activate: true
+discoverable_by_default: false
 author: JayMatthew
 tags:
   - Utility

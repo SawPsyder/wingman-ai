@@ -178,3 +178,5 @@ pocket-tts-models/
 pocket-tts-voices/
 
 
+
+.claude/settings.json
