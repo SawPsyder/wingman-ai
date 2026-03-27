@@ -231,13 +231,24 @@ class OpenAiWingman(Wingman):
             )
             printr.print(traceback.format_exc(), color=LogType.ERROR, server_only=True)
 
-        # Initialize streaming components if enabled
-        if hasattr(self.config.features, 'streaming') and self.config.features.streaming.enabled:
+        # Initialize streaming components if enabled and not using Wingman Pro
+        # (Wingman Pro does not support streaming for LLM or audio)
+        if (
+            hasattr(self.config.features, 'streaming') and
+            self.config.features.streaming.enabled and
+            not self.uses_provider("wingman_pro")
+        ):
             self.sentence_splitter = SentenceSplitter(
                 min_sentence_length=self.config.features.streaming.min_sentence_length
             )
             self.tts_queue = TTSQueue()
             self.think_filter = ThinkBlockFilter()  # Stateful filter for think blocks
+        elif self.uses_provider("wingman_pro") and hasattr(self.config.features, 'streaming') and self.config.features.streaming.enabled:
+            printr.print(
+                "Streaming is enabled but Wingman Pro is selected as a provider — streaming will be skipped.",
+                color=LogType.WARNING,
+                server_only=True,
+            )
 
         return errors
 
@@ -2481,6 +2492,14 @@ class OpenAiWingman(Wingman):
                     wingman_name=self.name,
                     stream=True,
                 )
+            elif tts_provider == TtsProvider.MINIMAX:
+                await self.minimax_tts.play_audio(
+                    text=text,
+                    config=self.config.minimax,
+                    sound_config=sound_config,
+                    audio_player=self.audio_player,
+                    wingman_name=self.name,
+                )
             elif tts_provider == TtsProvider.WINGMAN_PRO:
                 if self.config.wingman_pro.tts_provider.name == "OPENAI":
                     await self.wingman_pro.generate_openai_speech(
@@ -2511,10 +2530,11 @@ class OpenAiWingman(Wingman):
         # build tools
         tools = self.build_tools() if allow_tool_calls else None
 
-        # Check if streaming is enabled
+        # Check if streaming is enabled — always disabled when any provider is Wingman Pro
         streaming_enabled = (
             hasattr(self.config.features, 'streaming') and
-            self.config.features.streaming.enabled
+            self.config.features.streaming.enabled and
+            not self.uses_provider("wingman_pro")
         )
 
         if self.settings.debug_mode:
