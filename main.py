@@ -486,7 +486,36 @@ async def async_main(host: str, port: int, sidecar: bool):
 
 
 if __name__ == "__main__":
-    
+
+    # ── Windows asyncio IOCP patch ────────────────────────────────────────────
+    # Python 3.12 on Windows has a bug in the IOCP proactor where it calls
+    # f.set_exception() on a Future that is already done (cancelled or resolved),
+    # raising asyncio.InvalidStateError and crashing the entire event loop.
+    # This happens when a socket connection is reset (e.g. Minimax WebSocket,
+    # HUD httpx keep-alive) while the IOCP completion event arrives slightly
+    # after the associated Future was already settled.
+    # Fix: suppress InvalidStateError inside IocpProactor._poll so the loop
+    # keeps running instead of propagating the exception to run_until_complete.
+    # See: https://github.com/python/cpython/issues/97928
+    if sys.platform == "win32":
+        try:
+            import asyncio.windows_events as _win_events
+
+            _orig_iocpproactor_poll = _win_events.IocpProactor._poll
+
+            def _safe_iocpproactor_poll(self, timeout=None):
+                try:
+                    return _orig_iocpproactor_poll(self, timeout)
+                except asyncio.InvalidStateError:
+                    # Swallow: IOCP completion arrived for an already-settled
+                    # Future — harmless cleanup artifact on Windows Python 3.12.
+                    pass
+
+            _win_events.IocpProactor._poll = _safe_iocpproactor_poll
+        except (ImportError, AttributeError):
+            pass
+    # ── End Windows IOCP patch ────────────────────────────────────────────────
+
     parser = argparse.ArgumentParser(description="Run the FastAPI server.")
     parser.add_argument(
         "-H",

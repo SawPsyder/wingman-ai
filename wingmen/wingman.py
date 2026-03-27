@@ -511,6 +511,13 @@ class Wingman:
             - async play_to_user: do something with the response, e.g. play it as audio
         """
 
+        # Tracks whether we need to call on_message_complete in the finally block.
+        # Set to True once we have a non-streaming process_result that requires
+        # cleanup; cleared to False after on_message_complete is fired normally.
+        # The streaming path (OpenAiWingman) always returns process_result=None
+        # and fires its own _fire_message_complete, so it never sets this flag.
+        _needs_message_complete = False
+
         try:
             process_result = None
 
@@ -555,6 +562,8 @@ class Wingman:
                     )
 
             if process_result:
+                _needs_message_complete = True
+
                 if self.settings.streamer_mode:
                     self.tower.save_last_message(self.name, process_result)
 
@@ -573,6 +582,7 @@ class Wingman:
                     command_tag=CommandTag.MESSAGE_COMPLETE,
                     source_name=self.name,
                 )
+                _needs_message_complete = False
                 for skill in self.skills:
                     if skill.is_prepared:
                         try:
@@ -589,6 +599,23 @@ class Wingman:
                 color=LogType.ERROR,
             )
             printr.print(traceback.format_exc(), color=LogType.ERROR, server_only=True)
+        finally:
+            # Safety net: if an exception interrupted the non-streaming path
+            # after showing a message but before on_message_complete was called,
+            # make sure skills (e.g. HUD) can clean up their state so the overlay
+            # does not stay visible indefinitely.
+            if _needs_message_complete:
+                printr.print(
+                    f"[{self.name}] Safety-net: calling on_message_complete after error",
+                    color=LogType.WARNING,
+                    server_only=True,
+                )
+                for skill in self.skills:
+                    if skill.is_prepared:
+                        try:
+                            await skill.on_message_complete()
+                        except Exception:
+                            pass
 
     # ───────────────── virtual methods / hooks ───────────────── #
 

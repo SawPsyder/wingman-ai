@@ -3276,6 +3276,9 @@ class OpenAiWingman(Wingman):
                     wingman_name=self.name,
                 )
             elif self.config.features.tts_provider == TtsProvider.WINGMAN_PRO:
+                # Wingman Pro does not support audio streaming — always force
+                # non-streaming for Azure and Inworld so the simpler HTTP-based
+                # path is used instead of the streaming/WebSocket path.
                 if self.config.wingman_pro.tts_provider == WingmanProTtsProvider.OPENAI:
                     await self.wingman_pro.generate_openai_speech(
                         text=text,
@@ -3289,9 +3292,19 @@ class OpenAiWingman(Wingman):
                 elif (
                     self.config.wingman_pro.tts_provider == WingmanProTtsProvider.AZURE
                 ):
+                    azure_tts_config = self.config.azure.tts
+                    if azure_tts_config.output_streaming:
+                        azure_tts_config = azure_tts_config.model_copy(
+                            update={"output_streaming": False}
+                        )
+                        printr.print(
+                            "Wingman Pro: audio streaming disabled for Azure TTS.",
+                            color=LogType.INFO,
+                            server_only=True,
+                        )
                     await self.wingman_pro.generate_azure_speech(
                         text=text,
-                        config=self.config.azure.tts,
+                        config=azure_tts_config,
                         sound_config=sound_config,
                         audio_player=self.audio_player,
                         wingman_name=self.name,
@@ -3300,9 +3313,19 @@ class OpenAiWingman(Wingman):
                     self.config.wingman_pro.tts_provider
                     == WingmanProTtsProvider.INWORLD
                 ):
+                    inworld_config = self.config.inworld
+                    if inworld_config.output_streaming:
+                        inworld_config = inworld_config.model_copy(
+                            update={"output_streaming": False}
+                        )
+                        printr.print(
+                            "Wingman Pro: audio streaming disabled for Inworld TTS.",
+                            color=LogType.INFO,
+                            server_only=True,
+                        )
                     await self.wingman_pro.generate_inworld_speech(
                         text=text,
-                        config=self.config.inworld,
+                        config=inworld_config,
                         sound_config=sound_config,
                         audio_player=self.audio_player,
                         wingman_name=self.name,

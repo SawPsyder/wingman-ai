@@ -1098,11 +1098,18 @@ class HUD(Skill):
         elif message:
             self.expecting_audio = True
             self.audio_expect_start_time = time.time()
+            # Use a capped fallback duration so the message auto-hides even if
+            # on_message_complete is never called (e.g. app crash / unhandled
+            # exception).  on_message_complete hides it immediately when called
+            # normally, so this only kicks in as a safety net.
+            max_wait = float(self._get_prop("max_display_time", 5))
+            fallback_duration = max_wait + 60.0  # generous buffer for audio playback
             await self._show_message(
                 self.wingman.name,
                 message,
                 accent_color,
-                tools=tools_data
+                tools=tools_data,
+                duration=fallback_duration,
             )
         elif tool_calls and tools_data:
             await self._show_message(self.wingman.name, "", accent_color, tools=tools_data)
