@@ -999,6 +999,7 @@ class HUD(Skill):
         await self._show_loader(False)
         self._streaming_message_shown = False
         self._is_streaming = False
+        self.expecting_audio = False  # prevent audio monitor timeout firing redundantly
         printr.print(
             f"[HUD] on_message_complete done - hide_message + show_loader(False) sent.",
             color=LogType.INFO,

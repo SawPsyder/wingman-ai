@@ -560,6 +560,29 @@ class Wingman:
 
                 # the last step in the chain. You'll probably want to play the response to the user as audio using a TTS provider or mechanism of your choice.
                 await self.play_to_user(str(process_result), not interrupt)
+
+                # Wait for audio playback to finish, then fire MESSAGE_COMPLETE and
+                # on_message_complete for all skills.  This is the non-streaming
+                # completion path — the streaming path (OpenAiWingman) returns
+                # None for process_result and fires its own _fire_message_complete,
+                # so this block is never reached for streaming responses.
+                while self.audio_player.is_playing:
+                    await asyncio.sleep(0.05)
+                await printr.print_async(
+                    "Message complete",
+                    command_tag=CommandTag.MESSAGE_COMPLETE,
+                    source_name=self.name,
+                )
+                for skill in self.skills:
+                    if skill.is_prepared:
+                        try:
+                            await skill.on_message_complete()
+                        except Exception as skill_err:
+                            printr.print(
+                                f"Error in on_message_complete for skill '{skill.name}': {skill_err}",
+                                color=LogType.WARNING,
+                                server_only=True,
+                            )
         except Exception as e:
             await printr.print_async(
                 f"Error during processing of Wingman '{self.name}': {str(e)}",
