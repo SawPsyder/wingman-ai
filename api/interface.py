@@ -578,10 +578,10 @@ class FeaturesConfig(BaseModel):
     """Compress large tool/MCP responses using local AI embeddings and summarization.
     Reduces token usage by replacing large responses with summaries while preserving
     detail access via semantic retrieval."""
-    condense_max_messages: int = 50
+    condense_max_messages: int
     """Maximum number of user messages before forcing condensation, regardless of token count.
     Acts as a safety cap to prevent unbounded message list growth."""
-    condense_keep_recent: int = 6
+    condense_keep_recent: int
     """Number of recent user messages (and their associated assistant/tool messages) to
     always keep verbatim. Older messages get condensed into the running summary."""
 
@@ -1094,18 +1094,20 @@ class Config(NestedConfig):
 
 class MemoryEntryResponse(BaseModel):
     """A persistent memory entry returned from the API."""
+
     id: int
     collection: str
     entry_type: str
     content: str
-    source_wingman: str | None = None
-    session_id: str | None = None
+    source_wingman: Optional[str] = None
+    session_id: Optional[str] = None
     created_at: float
     updated_at: float
 
 
 class MemoryUpdateRequest(BaseModel):
     """Request to update a memory entry's content."""
+
     content: str
 
 
@@ -1183,16 +1185,16 @@ class LlamaCppSettings(BaseModel):
     """GPU backend for llama-server: 'vulkan' (default, works on all GPUs), 'cuda' (NVIDIA only, fastest), 'cpu' (no GPU)."""
     support_model: str = "Qwen3.5-2B-Q4_K_M.gguf"
     embed_model: str = "nomic-embed-text-v1.5.f16.gguf"
-    n_ctx: int = 4096
+    n_ctx: int
     """Context window size for the support model. Minimum 2048."""
-    n_threads: int = 0
+    n_threads: int
     """Number of CPU threads for local inference. 0 = auto (half of logical cores, max 8)."""
-    reasoning_effort: int = 0
+    reasoning_effort: int
     """Reasoning effort for the support model. 0 = disabled (fastest), 1 = enabled (slow)."""
-    support_remote_host: str = "http://127.0.0.1"
-    support_remote_port: int = 49152
-    embed_remote_host: str = "http://127.0.0.1"
-    embed_remote_port: int = 49153
+    support_remote_host: str
+    support_remote_port: int
+    embed_remote_host: str
+    embed_remote_port: int
 
 
 class SettingsConfig(BaseModel):
