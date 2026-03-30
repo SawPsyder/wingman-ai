@@ -438,51 +438,69 @@ async def get_dummy_benchmark():
 
 
 async def async_main(host: str, port: int, sidecar: bool):
-    # Set MIGRATING state before migrations
-    await core.set_core_state(CoreState.MIGRATING)
-    await core.config_service.migrate_configs(system_manager)
-
-    # Set LOADING_CONFIG state
-    await core.set_core_state(CoreState.LOADING_CONFIG)
-    await core.config_service.load_config()
-
-    saved_secrets: list[str] = []
-    for error in core.tower_errors:
-        if (
-            not sidecar  # running standalone
-            and error.error_type == WingmanInitializationErrorType.MISSING_SECRET
-            and not error.secret_name in saved_secrets
-        ):
-            secret = input(f"Please enter your '{error.secret_name}' API key/secret: ")
-            if secret:
-                secret_keeper.secrets[error.secret_name] = secret
-                await secret_keeper.save()
-                saved_secrets.append(error.secret_name)
-            else:
-                return
-        else:
-            core.startup_errors.append(error)
-
+    # Start uvicorn FIRST so Client can connect and see progress updates
     try:
-        await core.startup()
-        event_loop = asyncio.get_running_loop()
-        core.audio_player.set_event_loop(event_loop)
-        asyncio.create_task(core.process_events())
-        # Set READY state - this also sets is_started = True
-        await core.set_core_state(CoreState.READY)
-    except Exception as e:
-        printr.print(f"Error starting Wingman AI Core: {str(e)}", color=LogType.ERROR)
-        printr.print(traceback.format_exc(), color=LogType.ERROR, server_only=True)
-        return
+        uvi_config = uvicorn.Config(app=app, host=host, port=port, lifespan="on")
+        server = uvicorn.Server(uvi_config)
+        server_task = asyncio.create_task(server.serve())
 
-    try:
-        config = uvicorn.Config(app=app, host=host, port=port, lifespan="on")
-        server = uvicorn.Server(config)
-        await server.serve()
+        # Wait for server to bind the port
+        while not server.started:
+            await asyncio.sleep(0.05)
+
+        printr.print(
+            f"Server listening on {host}:{port}",
+            color=LogType.STARTUP,
+            server_only=True,
+        )
     except Exception as e:
         printr.print(f"Error starting uvicorn server: {str(e)}", color=LogType.ERROR)
         printr.print(traceback.format_exc(), color=LogType.ERROR, server_only=True)
         return
+
+    try:
+        # Set MIGRATING state before migrations
+        await core.set_core_state(CoreState.MIGRATING, message="Migrating configurations...")
+        await core.config_service.migrate_configs(system_manager)
+
+        # Set LOADING_CONFIG state
+        await core.set_core_state(CoreState.LOADING_CONFIG, message="Loading configuration...")
+        await core.config_service.load_config()
+
+        saved_secrets: list[str] = []
+        for error in core.tower_errors:
+            if (
+                not sidecar  # running standalone
+                and error.error_type == WingmanInitializationErrorType.MISSING_SECRET
+                and not error.secret_name in saved_secrets
+            ):
+                secret = input(f"Please enter your '{error.secret_name}' API key/secret: ")
+                if secret:
+                    secret_keeper.secrets[error.secret_name] = secret
+                    await secret_keeper.save()
+                    saved_secrets.append(error.secret_name)
+                else:
+                    return
+            else:
+                core.startup_errors.append(error)
+
+        try:
+            await core.startup()
+            event_loop = asyncio.get_running_loop()
+            core.audio_player.set_event_loop(event_loop)
+            asyncio.create_task(core.process_events())
+            # Set READY state - this also sets is_started = True
+            await core.set_core_state(CoreState.READY)
+        except Exception as e:
+            printr.print(f"Error starting Wingman AI Core: {str(e)}", color=LogType.ERROR)
+            printr.print(traceback.format_exc(), color=LogType.ERROR, server_only=True)
+            return
+
+        # Keep process alive via the server task
+        await server_task
+    finally:
+        server.should_exit = True
+        await server_task
 
 
 if __name__ == "__main__":

@@ -108,7 +108,9 @@ class McpStateChangedCommand(WebSocketCommandModel):
 
 
 class AudioLibraryPlaybackFinishedCommand(WebSocketCommandModel):
-    command: Literal["audio_library_playback_finished"] = "audio_library_playback_finished"
+    command: Literal["audio_library_playback_finished"] = (
+        "audio_library_playback_finished"
+    )
     audio_file: AudioFile
 
 
@@ -124,3 +126,41 @@ class CoreStateChangedCommand(WebSocketCommandModel):
     command: Literal["core_state_changed"] = "core_state_changed"
     state: CoreState
     """The current state of Wingman AI Core."""
+    message: Optional[str] = None
+    """Human-readable sub-step detail (e.g. 'Downloading Qwen3.5-2B...')."""
+    progress: Optional[float] = None
+    """0.0–1.0 progress for operations with known duration (e.g. downloads)."""
+
+
+class ConversationCondensationCommand(WebSocketCommandModel):
+    """Sent when conversation condensation starts or finishes for a wingman."""
+
+    command: Literal["conversation_condensation"] = "conversation_condensation"
+    wingman_name: str
+    """The wingman whose conversation is being condensed."""
+    status: str
+    """'started' or 'finished'."""
+    messages_condensed: Optional[int] = None
+    """Number of messages that were condensed (only on finish)."""
+    messages_remaining: Optional[int] = None
+    """Number of messages remaining after condensation (only on finish)."""
+    summary_length: Optional[int] = None
+    """Character length of the summary (only on finish)."""
+    estimated_tokens_saved: Optional[int] = None
+    """Rough estimate of tokens saved by condensation (only on finish)."""
+    summary_text: Optional[str] = None
+    """The actual summary text (only on finish)."""
+
+
+class ConversationTokenUsageCommand(WebSocketCommandModel):
+    """Sent after each LLM call with actual API-reported token usage."""
+
+    command: Literal["conversation_token_usage"] = "conversation_token_usage"
+    wingman_name: str
+    """The wingman that made the LLM call."""
+    prompt_tokens: int
+    """Tokens sent to the LLM (system prompt + history + tools)."""
+    completion_tokens: int
+    """Tokens in the LLM response."""
+    is_local: bool = False
+    """True for LOCAL_LLM provider (free, not billed)."""

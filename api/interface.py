@@ -79,6 +79,10 @@ class CoreStatusResponse(BaseModel):
 
     state: CoreState
     """The current lifecycle state of Wingman AI Core."""
+    message: Optional[str] = None
+    """Human-readable sub-step detail for the current state."""
+    progress: Optional[float] = None
+    """0.0–1.0 progress for operations with known duration."""
 
 
 class VoiceInfo(BaseModel):
@@ -145,7 +149,10 @@ class XVASynthSettings(BaseModel):
 
 class PocketTTSSettings(BaseModel):
     enable: bool
+    run_locally: bool = True
     custom_model_path: Optional[str] = None
+    host: str
+    port: int
 
 
 class WhispercppSttConfig(BaseModel):
@@ -172,6 +179,26 @@ class FasterWhisperTranscript(BaseModel):
     text: str
     language: str
     language_probability: float
+
+
+class ParakeetSettings(BaseModel):
+    enable: bool
+    run_locally: bool = True
+    model_variant: str
+    """v2 (English) or v3 (Multilingual, 25 languages)"""
+    execution_provider: str
+    """cpu, directml, coreml, or cuda"""
+    host: str
+    port: int
+
+
+class ParakeetSttConfig(BaseModel):
+    language: Optional[str] = None
+    temperature: float
+
+
+class ParakeetTranscript(BaseModel):
+    text: str
 
 
 class AzureInstanceConfig(BaseModel):
@@ -524,8 +551,10 @@ class VoiceActivationSettings(BaseModel):
     azure: AzureSttConfig
     whispercpp: WhispercppSettings
     fasterwhisper: FasterWhisperSettings
+    parakeet: ParakeetSettings
     whispercpp_config: WhispercppSttConfig
     fasterwhisper_config: FasterWhisperSttConfig
+    parakeet_config: ParakeetSttConfig
 
 
 class FeaturesConfig(BaseModel):
@@ -540,6 +569,21 @@ class FeaturesConfig(BaseModel):
     remember_messages: Optional[int] = None
     image_generation_provider: ImageGenerationProvider
     use_generic_instant_responses: bool
+    condense_conversation: bool
+    """Enable automatic conversation condensation using the local support model.
+    When enabled, older messages are automatically summarized when the conversation
+    approaches the support model's context window capacity, saving tokens while
+    preserving key information."""
+    compress_tool_responses: bool
+    """Compress large tool/MCP responses using local AI embeddings and summarization.
+    Reduces token usage by replacing large responses with summaries while preserving
+    detail access via semantic retrieval."""
+    condense_max_messages: int = 50
+    """Maximum number of user messages before forcing condensation, regardless of token count.
+    Acts as a safety cap to prevent unbounded message list growth."""
+    condense_keep_recent: int = 6
+    """Number of recent user messages (and their associated assistant/tool messages) to
+    always keep verbatim. Older messages get condensed into the running summary."""
 
 
 class AudioFile(BaseModel):
@@ -921,6 +965,19 @@ class McpServerState(BaseModel):
     """Error message if connection failed."""
 
 
+class TestConnectionResult(BaseModel):
+    """Result of testing a provider connection."""
+
+    success: bool
+    """Whether the connection test succeeded."""
+
+    provider: str
+    """The provider/secret name that was tested."""
+
+    error: Optional[str] = None
+    """Error message if the test failed."""
+
+
 class McpConnectResult(BaseModel):
     """Result of attempting to connect to an MCP server."""
 
@@ -969,6 +1026,7 @@ class NestedConfig(BaseModel):
     pocket_tts: PocketTTSConfig
     whispercpp: WhispercppSttConfig
     fasterwhisper: FasterWhisperSttConfig
+    parakeet: ParakeetSttConfig
     wingman_pro: WingmanProConfig
     perplexity: PerplexityConfig
     xai: XaiConfig
@@ -1019,6 +1077,8 @@ class WingmanConfig(NestedConfig):
     """The "push-to-talk" joystick config for this wingman. Keep it pressed while talking! Don't use the same button for multiple wingmen!"""
     is_voice_activation_default: Optional[bool] = None
     """If voice activation is enabled and this is true, the Wingman will listen to your voice by default and without saying its name."""
+    persistent_memory: bool = True
+    """Enable persistent memory — automatically remember and recall facts across sessions using local AI."""
     created_with_version: Optional[str] = None
     """The version of Wingman AI that created this configuration. Used to detect configs that may benefit from restoring updated defaults."""
 
@@ -1030,6 +1090,23 @@ class Config(NestedConfig):
 
     wingmen: Optional[dict[str, WingmanConfig]] = None
     """The Wingmen in this config. You can add as many as you want!"""
+
+
+class MemoryEntryResponse(BaseModel):
+    """A persistent memory entry returned from the API."""
+    id: int
+    collection: str
+    entry_type: str
+    content: str
+    source_wingman: str | None = None
+    session_id: str | None = None
+    created_at: float
+    updated_at: float
+
+
+class MemoryUpdateRequest(BaseModel):
+    """Request to update a memory entry's content."""
+    content: str
 
 
 class ConfigsInfo(BaseModel):
@@ -1063,6 +1140,13 @@ class DuplicateWingmanResult(BaseModel):
     wingman_file: WingmanConfigFileInfo
 
 
+class DuplicateConfigRequest(BaseModel):
+    """Request payload for duplicating an entire config/context."""
+
+    source_config_dir: ConfigDirInfo
+    new_name: str
+
+
 class HudServerSettings(BaseModel):
     """HUD Server settings for global configuration."""
 
@@ -1088,12 +1172,36 @@ class HudServerSettings(BaseModel):
     """Which screen/monitor to render the HUD on (1 = primary, 2 = secondary, etc.)."""
 
 
+class PlaygroundChatRequest(BaseModel):
+    system_message: str
+    user_message: str
+
+
+class LlamaCppSettings(BaseModel):
+    run_locally: bool = False
+    gpu_backend: str = "vulkan"
+    """GPU backend for llama-server: 'vulkan' (default, works on all GPUs), 'cuda' (NVIDIA only, fastest), 'cpu' (no GPU)."""
+    support_model: str = "Qwen3.5-2B-Q4_K_M.gguf"
+    embed_model: str = "nomic-embed-text-v1.5.f16.gguf"
+    n_ctx: int = 4096
+    """Context window size for the support model. Minimum 2048."""
+    n_threads: int = 0
+    """Number of CPU threads for local inference. 0 = auto (half of logical cores, max 8)."""
+    reasoning_effort: int = 0
+    """Reasoning effort for the support model. 0 = disabled (fastest), 1 = enabled (slow)."""
+    support_remote_host: str = "http://127.0.0.1"
+    support_remote_port: int = 49152
+    embed_remote_host: str = "http://127.0.0.1"
+    embed_remote_port: int = 49153
+
+
 class SettingsConfig(BaseModel):
     audio: Optional[AudioSettings] = None
     voice_activation: VoiceActivationSettings
     wingman_pro: WingmanProSettings
     xvasynth: XVASynthSettings
     pocket_tts: PocketTTSSettings
+    llama_cpp: LlamaCppSettings = LlamaCppSettings()
     hud_server: HudServerSettings
     debug_mode: bool
     streamer_mode: bool

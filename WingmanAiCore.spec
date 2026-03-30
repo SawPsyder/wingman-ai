@@ -43,6 +43,7 @@ datas = [
     ('templates/configs', 'templates/configs'),
     ('templates/migration', 'templates/migration'),
     ('audio_samples', 'audio_samples'),
+    ('prompts', 'prompts'),
     ('LICENSE', '.'),
 ]
 
@@ -186,7 +187,7 @@ hiddenimports = [
 
     # ctranslate2 for FasterWhisper
     'ctranslate2',
-	
+
 	# for pocket-tts
 	'engineio.async_drivers.threading',
     'torch',
@@ -218,6 +219,18 @@ ptts_datas, ptts_binaries, ptts_hidden = collect_all('pocket_tts')
 datas += ptts_datas
 binaries += ptts_binaries
 hiddenimports += ptts_hidden
+
+# Collect tiktoken encoding data (e.g. cl100k_base BPE ranks)
+tiktoken_datas, tiktoken_binaries, tiktoken_hidden = collect_all('tiktoken')
+datas += tiktoken_datas
+binaries += tiktoken_binaries
+hiddenimports += tiktoken_hidden
+
+# Collect all onnx-asr (Parakeet STT)
+onnx_asr_datas, onnx_asr_binaries, onnx_asr_hidden = collect_all('onnx_asr')
+datas += onnx_asr_datas
+binaries += onnx_asr_binaries
+hiddenimports += onnx_asr_hidden
 
 # ============================================================================
 # ANALYSIS

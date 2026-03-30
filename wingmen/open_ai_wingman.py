@@ -46,16 +46,22 @@ from providers.x_ai import XAi
 from providers.wingman_pro import WingmanPro
 from api.commands import McpStateChangedCommand
 from services.benchmark import Benchmark
+from services.file import get_prompt
+from services.token_utils import count_tokens, truncate_to_tokens
 from services.markdown import cleanup_text
 from services.printr import Printr
 from services.skill_registry import SkillRegistry
 from services.mcp_client import McpClient
 from services.mcp_registry import McpRegistry
 from services.capability_registry import CapabilityRegistry
+from services.tool_response_cache import ToolResponseCompressor
 from skills.skill_base import Skill
 from wingmen.wingman import Wingman
 
 printr = Printr()
+
+# Max seconds to wait for the local support model during conversation condensation.
+_CONDENSE_TIMEOUT = 120.0
 
 
 class OpenAiWingman(Wingman):
@@ -102,6 +108,17 @@ class OpenAiWingman(Wingman):
         self.last_used_instant_responses = []
 
         self.messages = []
+        self.conversation_summary: str = ""
+        self._last_compiled_context: str = ""
+        self._is_condensing = False
+        self._condense_task: asyncio.Task | None = None
+        self._last_prompt_tokens: int = 0
+        """Last API-reported prompt_tokens from the conversation LLM."""
+        self._support_token_ratio: float = 1.35
+        """Calibration ratio: support-model tokens / cl100k_base tokens.
+        Starts at 1.35 (conservative — Qwen typically tokenizes English text
+        ~20-40% heavier than cl100k_base). Updated after the first support
+        call using real usage reported by the model's own tokenizer."""
         """The conversation history that is used for the GPT calls"""
 
         self.azure_api_keys = {key: None for key in self.AZURE_SERVICES}
@@ -128,6 +145,18 @@ class OpenAiWingman(Wingman):
             self.skill_registry, self.mcp_registry
         )
 
+        # Local AI service — set externally by WingmanCore if available
+        self.local_ai_service = None
+
+        # Persistent memory — initialized lazily when local_ai_service is available
+        self.persistent_memory_service = None
+        self._memory_recall_notified = False
+        self._background_tasks: set[asyncio.Task] = set()
+
+        # Stateless tool response compressor — summarizes large tool/MCP responses
+        # via local AI before the cloud LLM sees them
+        self._tool_response_compressor = ToolResponseCompressor()
+
     def _broadcast_mcp_state_changed(self):
         """Broadcast MCP state change to UI via WebSocket."""
         if printr._connection_manager:
@@ -146,6 +175,9 @@ class OpenAiWingman(Wingman):
 
             if self.uses_provider("fasterwhisper"):
                 self.fasterwhisper.validate(errors)
+
+            if self.uses_provider("parakeet"):
+                self.parakeet.validate(errors)
 
             if self.uses_provider("pocket_tts"):
                 self.pocket_tts.validate(errors)
@@ -295,6 +327,8 @@ class OpenAiWingman(Wingman):
             return self.config.features.stt_provider == SttProvider.WHISPERCPP
         elif provider_type == "fasterwhisper":
             return self.config.features.stt_provider == SttProvider.FASTER_WHISPER
+        elif provider_type == "parakeet":
+            return self.config.features.stt_provider == SttProvider.PARAKEET
         elif provider_type == "wingman_pro":
             return any(
                 [
@@ -337,6 +371,49 @@ class OpenAiWingman(Wingman):
                 color=LogType.ERROR,
             )
             printr.print(traceback.format_exc(), color=LogType.ERROR, server_only=True)
+
+    def ensure_memory_initialized(self) -> bool:
+        """Initialize persistent memory service if not yet done.
+
+        Returns True if the service is available after this call.
+        """
+        if self.persistent_memory_service:
+            return True
+        if self.config.persistent_memory and self.local_ai_service:
+            from services.persistent_memory import PersistentMemoryService
+
+            self.persistent_memory_service = PersistentMemoryService(
+                wingman_name=self.name,
+                local_ai_service=self.local_ai_service,
+            )
+            self.persistent_memory_service.initialize()
+            return True
+        return False
+
+    async def unload(self):
+        """Extract memories, close clients, and close DB before unloading."""
+        # Wait for any background memory extraction tasks to finish
+        if self._background_tasks:
+            await asyncio.gather(*self._background_tasks, return_exceptions=True)
+            self._background_tasks.clear()
+
+        if self.persistent_memory_service:
+            from services.persistent_memory import MIN_MESSAGES_FOR_EXTRACTION
+
+            if len(self.messages) >= MIN_MESSAGES_FOR_EXTRACTION:
+                try:
+                    await self.persistent_memory_service.extract_memories(
+                        self.messages, generate_summary=True
+                    )
+                except Exception:
+                    pass
+            self.persistent_memory_service.close()
+
+        if self.google:
+            await self.google.aclose()
+            self.google = None
+
+        await super().unload()
 
     async def unload_skills(self):
         await super().unload_skills()
@@ -706,6 +783,8 @@ class OpenAiWingman(Wingman):
     async def validate_and_set_google(self, errors: list[WingmanInitializationError]):
         api_key = await self.retrieve_secret("google", errors)
         if api_key:
+            if self.google:
+                await self.google.aclose()
             self.google = GoogleGenAI(api_key=api_key)
 
     async def validate_and_set_openrouter(
@@ -970,6 +1049,11 @@ class OpenAiWingman(Wingman):
                     config=self.config.fasterwhisper,
                     hotwords=list(set(hotwords)),
                 )
+            elif self.config.features.stt_provider == SttProvider.PARAKEET:
+                transcript = self.parakeet.transcribe(
+                    config=self.config.parakeet,
+                    filename=audio_input_wav,
+                )
             elif self.config.features.stt_provider == SttProvider.WINGMAN_PRO:
                 if (
                     self.config.wingman_pro.stt_provider
@@ -1010,7 +1094,7 @@ class OpenAiWingman(Wingman):
         return result
 
     async def _get_response_for_transcript(
-        self, transcript: str, benchmark: Benchmark
+        self, transcript: str, benchmark: Benchmark, images: list[tuple[str, str]] = None
     ) -> tuple[str | None, str | None, Skill | None, bool]:
         """Gets the response for a given transcript.
 
@@ -1023,7 +1107,9 @@ class OpenAiWingman(Wingman):
         Returns:
             tuple[str | None, str | None, Skill | None, bool]: A tuple containing the final response, the instant response (if any), the skill that was used, and a boolean indicating whether the current audio should be interrupted.
         """
-        await self.add_user_message(transcript)
+        self.ensure_memory_initialized()
+
+        await self.add_user_message(transcript, images=images)
 
         benchmark.start_snapshot("Instant activation commands")
         instant_response, instant_command_executed = await self._try_instant_activation(
@@ -1058,7 +1144,14 @@ class OpenAiWingman(Wingman):
             )
             return None, None, None, True
 
-        response_message, tool_calls = await self._process_completion(completion, instant_command_executed is False)
+        response_message, tool_calls, usage = await self._process_completion(
+            completion, instant_command_executed is False
+        )
+
+        # Track token usage across the turn (last prompt_tokens, summed completion_tokens)
+        turn_prompt_tokens = usage[0]
+        turn_completion_tokens = usage[1]
+        self._last_prompt_tokens = turn_prompt_tokens
 
         # add message and dummy tool responses to conversation history
         is_waiting_response_needed, is_summarize_needed = await self._add_gpt_response(
@@ -1098,6 +1191,7 @@ class OpenAiWingman(Wingman):
             tool_timings.extend(iteration_timings)
 
             if instant_response:
+                await self._trim_tool_responses()
                 # Add snapshots before returning
                 self._add_benchmark_snapshot(
                     benchmark, "LLM Processing", llm_processing_time_ms
@@ -1106,6 +1200,9 @@ class OpenAiWingman(Wingman):
                     self._add_tool_execution_snapshot(
                         benchmark, tool_execution_time_ms, tool_timings
                     )
+                await self._broadcast_token_usage(
+                    turn_prompt_tokens, turn_completion_tokens
+                )
                 return None, instant_response, None, interrupt
 
             if is_summarize_needed:
@@ -1115,6 +1212,7 @@ class OpenAiWingman(Wingman):
                 llm_processing_time_ms += (time.perf_counter() - llm_start) * 1000
 
                 if completion is None:
+                    await self._trim_tool_responses()
                     self._add_benchmark_snapshot(
                         benchmark, "LLM Processing", llm_processing_time_ms
                     )
@@ -1122,17 +1220,26 @@ class OpenAiWingman(Wingman):
                         self._add_tool_execution_snapshot(
                             benchmark, tool_execution_time_ms, tool_timings
                         )
+                    await self._broadcast_token_usage(
+                        turn_prompt_tokens, turn_completion_tokens
+                    )
                     return None, None, None, True
 
-                response_message, tool_calls = await self._process_completion(
+                response_message, tool_calls, usage = await self._process_completion(
                     completion
                 )
+                # Last call's prompt_tokens is most meaningful (includes full context)
+                turn_prompt_tokens = usage[0]
+                turn_completion_tokens += usage[1]
+                self._last_prompt_tokens = turn_prompt_tokens
+
                 is_waiting_response_needed, is_summarize_needed = (
                     await self._add_gpt_response(response_message, tool_calls)
                 )
                 if tool_calls:
                     interrupt = False
             elif is_waiting_response_needed:
+                await self._trim_tool_responses()
                 self._add_benchmark_snapshot(
                     benchmark, "LLM Processing", llm_processing_time_ms
                 )
@@ -1140,7 +1247,13 @@ class OpenAiWingman(Wingman):
                     self._add_tool_execution_snapshot(
                         benchmark, tool_execution_time_ms, tool_timings
                     )
+                await self._broadcast_token_usage(
+                    turn_prompt_tokens, turn_completion_tokens
+                )
                 return None, None, None, interrupt
+
+        # Trim oversized tool responses now that the LLM has processed them
+        await self._trim_tool_responses()
 
         # Add final snapshots
         self._add_benchmark_snapshot(
@@ -1150,6 +1263,7 @@ class OpenAiWingman(Wingman):
             self._add_tool_execution_snapshot(
                 benchmark, tool_execution_time_ms, tool_timings
             )
+        await self._broadcast_token_usage(turn_prompt_tokens, turn_completion_tokens)
         return response_message.content, response_message.content, None, interrupt
 
     def _add_benchmark_snapshot(
@@ -1206,6 +1320,29 @@ class OpenAiWingman(Wingman):
                 execution_time_ms=total_time_ms,
                 formatted_execution_time=formatted_time,
                 snapshots=nested_snapshots if nested_snapshots else None,
+            )
+        )
+
+    async def _broadcast_token_usage(self, prompt_tokens: int, completion_tokens: int):
+        """Broadcast actual API-reported token usage to the client."""
+        self.last_turn_prompt_tokens = prompt_tokens
+        self.last_turn_completion_tokens = completion_tokens
+        if prompt_tokens == 0 and completion_tokens == 0:
+            return
+        if not printr._connection_manager:
+            return
+
+        from api.commands import ConversationTokenUsageCommand
+
+        is_local = (
+            self.config.features.conversation_provider == ConversationProvider.LOCAL_LLM
+        )
+        await printr._connection_manager.broadcast(
+            ConversationTokenUsageCommand(
+                wingman_name=self.name,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                is_local=is_local,
             )
         )
 
@@ -1359,19 +1496,98 @@ class OpenAiWingman(Wingman):
 
         return False
 
-    async def add_user_message(self, content: str):
+    async def _trim_tool_responses(self, max_tokens: int = 500):
+        """Trim oversized tool responses in conversation history.
+
+        Called after the LLM has finished processing a turn with tool calls.
+        The LLM already had full access to the data; this just prevents stale
+        bulk data from inflating the context on subsequent turns.
+
+        If significant trimming occurs, broadcasts a condensation notification
+        so the client UI can display a summary indicator.
+        """
+        total_tokens_saved = 0
+        for msg in self.messages:
+            if self.__get_message_role(msg) != "tool":
+                continue
+            content = msg.get("content", "")
+            if not content:
+                continue
+            token_count = count_tokens(content)
+            if token_count <= max_tokens:
+                continue
+            total_tokens_saved += token_count - max_tokens
+            trimmed = truncate_to_tokens(content, max_tokens)
+            msg["content"] = (
+                f"{trimmed}\n\n[...trimmed from ~{token_count} to "
+                f"~{max_tokens} tokens for conversation history. "
+                f"Full response was processed.]"
+            )
+
+        # Notify the client when significant trimming occurs so the UI can
+        # show a "Show history" indicator explaining the token drop.
+        # Skip if condensation is already running to avoid interfering with
+        # its own started/finished broadcast cycle.
+        if (
+            total_tokens_saved > 1000
+            and printr._connection_manager
+            and not self._is_condensing
+        ):
+            from api.commands import ConversationCondensationCommand
+
+            if self.conversation_summary:
+                summary = (
+                    f"{self.conversation_summary}\n\n---\n\n"
+                    f"[Latest turn: tool responses trimmed — ~{total_tokens_saved:,} tokens saved]"
+                )
+            else:
+                summary = (
+                    f"Tool responses were automatically trimmed after LLM processing.\n"
+                    f"~{total_tokens_saved:,} tokens saved.\n\n"
+                    f"The LLM had full access to the complete data when generating "
+                    f"its response. Responses are trimmed afterwards to keep the "
+                    f"conversation context efficient."
+                )
+
+            await printr._connection_manager.broadcast(
+                ConversationCondensationCommand(
+                    wingman_name=self.name,
+                    status="finished",
+                    estimated_tokens_saved=total_tokens_saved,
+                    summary_text=summary,
+                )
+            )
+
+    async def add_user_message(self, content: str, images: list[tuple[str, str]] = None):
         """Shortens the conversation history if needed and adds a user message to it.
 
         Args:
             content (str): The message content to add.
+            images (list[tuple[str, str]]): Optional list of (base64_data, mime_type) tuples to attach.
         """
+        self._memory_recall_notified = False
+
         # call skill hooks (only for prepared/activated skills)
         for skill in self.skills:
             if skill.is_prepared:
                 await skill.on_add_user_message(content)
 
-        msg = {"role": "user", "content": content}
+        if images:
+            msg_content = []
+            for img_b64, mime in images:
+                msg_content.append({
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:{mime};base64,{img_b64}",
+                        "detail": "auto",
+                    },
+                })
+            msg_content.append({"type": "text", "text": content})
+            msg = {"role": "user", "content": msg_content}
+        else:
+            msg = {"role": "user", "content": content}
         await self._cleanup_conversation_history()
+        await self._maybe_condense_history()
         self.messages.append(msg)
 
     async def add_assistant_message(self, content: str):
@@ -1423,7 +1639,8 @@ class OpenAiWingman(Wingman):
                     self.config.google.conversation_model.startswith("gemini-3")
                     or self.config.google.conversation_model == "gemini-flash-latest"
                     or self.config.google.conversation_model == "gemini-pro-latest"
-                    or self.config.google.conversation_model == "gemini-flash-lite-latest"
+                    or self.config.google.conversation_model
+                    == "gemini-flash-lite-latest"
                 ):
                     # gemini 3+ (latest = 3+) needs a thought signature like this, but we cant fake it:
                     # {
@@ -1456,7 +1673,9 @@ class OpenAiWingman(Wingman):
         await self._add_gpt_response(message, message.tool_calls)
         for tool_call in message.tool_calls:
             command = tool_id_to_command[tool_call.id]
-            await self._update_tool_response(tool_call.id, command.additional_context or "OK")
+            await self._update_tool_response(
+                tool_call.id, command.additional_context or "OK"
+            )
 
     async def _cleanup_conversation_history(self):
         """Cleans up the conversation history by removing messages that are too old."""
@@ -1506,14 +1725,606 @@ class OpenAiWingman(Wingman):
 
         return total_deleted_messages
 
-    def reset_conversation_history(self):
+    def _estimate_conversation_tokens(self) -> int:
+        """Estimate the total token count of the current conversation history."""
+        return sum(count_tokens(self._message_text_content(m)) for m in self.messages)
+
+    def _get_support_capacity(self) -> int:
+        """Get the effective input capacity of the support model for a single pass.
+
+        Returns the number of conversation tokens that can fit in one summarization
+        pass, accounting for system prompt, framing text, and output budget.
+        """
+        system_prompt = get_prompt("condense-conversation")
+        budget = self.local_ai_service.get_token_budget(system_prompt)
+        # Subtract framing overhead (prefix/suffix around the conversation text)
+        framing_overhead = 80
+        return max(0, budget.max_input_tokens - framing_overhead)
+
+    async def _maybe_condense_history(self):
+        """Check if condensation should run and fire it as a background task.
+
+        Uses a token-based trigger: condenses when the conversation approaches
+        70% of what the support model can handle in a single pass, so we
+        avoid chunking. Also has a message count safety cap.
+
+        The cl100k_base token estimate is multiplied by _support_token_ratio
+        (calibrated from real support model usage) to account for tokenizer
+        differences between the estimation tokenizer and the actual model.
+        """
+        if not self.config.features.condense_conversation:
+            return
+        if not self.local_ai_service or not self.local_ai_service.is_ready():
+            return
+        if self.pending_tool_calls:
+            return  # Never interrupt chained tool calls
+        if self._is_condensing:
+            return
+
+        # Token-based trigger: condense when conversation reaches 70% of
+        # what the support model can handle in one pass.
+        # Apply _support_token_ratio to correct for tokenizer differences
+        # between cl100k_base (used for estimation) and the actual model.
+        capacity = self._get_support_capacity()
+        cl100k_tokens = self._estimate_conversation_tokens()
+        conversation_tokens = int(cl100k_tokens * self._support_token_ratio)
+        token_trigger = conversation_tokens >= int(capacity * 0.7)
+
+        # Message count safety cap
+        user_msg_count = sum(
+            1 for m in self.messages if self.__get_message_role(m) == "user"
+        )
+        message_trigger = user_msg_count >= self.config.features.condense_max_messages
+
+        if not token_trigger and not message_trigger:
+            return
+
+        # Runs in background so user is never blocked.
+        # Store the task reference to prevent garbage collection mid-execution.
+        self._condense_task = asyncio.create_task(self._condense_history())
+        self._condense_task.add_done_callback(
+            lambda _: setattr(self, "_condense_task", None)
+        )
+
+    async def _condense_history(self, force: bool = False):
+        """Condense older conversation messages into a running summary using local AI.
+
+        This preserves the most recent messages verbatim while summarizing older ones,
+        saving tokens without losing important context. Tool call/response pairs are
+        never split.
+
+        Args:
+            force: If True, skip the threshold check (used for manual trigger).
+        """
+        if self._is_condensing:
+            await printr.print_async(
+                "Condensation skipped — already in progress.",
+                color=LogType.WARNING,
+                server_only=True,
+                source_name=self.name,
+                source=LogSource.WINGMAN,
+            )
+            return
+        if not self.local_ai_service or not self.local_ai_service.is_ready():
+            await printr.print_async(
+                "Condensation skipped — local AI service not available.",
+                color=LogType.WARNING,
+                server_only=True,
+                source_name=self.name,
+                source=LogSource.WINGMAN,
+            )
+            return
+
+        keep_recent = (
+            self.config.features.condense_keep_recent
+            if not force
+            else min(self.config.features.condense_keep_recent, 2)
+        )
+        total_msg_count = len(self.messages)
+
+        # Need at least something to condense beyond what we keep
+        if total_msg_count <= keep_recent:
+            await printr.print_async(
+                f"Condensation skipped — only {total_msg_count} messages, need more than {keep_recent} to condense.",
+                color=LogType.LOCALMODEL,
+                source_name=self.name,
+                source=LogSource.WINGMAN,
+            )
+            return
+
+        self._is_condensing = True
+        _condensation_stats: dict = {}
+
+        # Broadcast start
+        from api.commands import ConversationCondensationCommand
+
+        if printr._connection_manager:
+            await printr._connection_manager.broadcast(
+                ConversationCondensationCommand(
+                    wingman_name=self.name,
+                    status="started",
+                )
+            )
+
+        await printr.print_async(
+            "Conversation condensation started.",
+            color=LogType.INFO,
+            server_only=True,
+            source_name=self.name,
+            source=LogSource.WINGMAN,
+        )
+
+        try:
+            # Wait for any pending tool calls to finish
+            for _ in range(30):  # max 15 seconds
+                if not self.pending_tool_calls:
+                    break
+                await asyncio.sleep(0.5)
+            else:
+                await printr.print_async(
+                    "Condensation aborted — tool calls still pending after 15s.",
+                    color=LogType.WARNING,
+                    server_only=True,
+                    source_name=self.name,
+                    source=LogSource.WINGMAN,
+                )
+                return
+
+            # Find the cutoff: keep the most recent `keep_recent` user messages
+            kept_user_count = 0
+            cutoff_index = len(self.messages)
+            for i in range(len(self.messages) - 1, -1, -1):
+                if self.__get_message_role(self.messages[i]) == "user":
+                    kept_user_count += 1
+                    if kept_user_count == keep_recent:
+                        cutoff_index = i
+                        break
+
+            if cutoff_index <= 0:
+                await printr.print_async(
+                    f"Condensation skipped — cutoff_index={cutoff_index}, nothing to condense (kept_user_count={kept_user_count}, keep_recent={keep_recent}, total={len(self.messages)}).",
+                    color=LogType.LOCALMODEL,
+                    source_name=self.name,
+                    source=LogSource.WINGMAN,
+                )
+                return
+
+            # Adjust cutoff forward to avoid orphaning tool responses
+            while cutoff_index < len(self.messages):
+                msg = self.messages[cutoff_index]
+                if self.__get_message_role(msg) == "tool":
+                    cutoff_index += 1
+                else:
+                    break
+
+            if cutoff_index <= 0:
+                await printr.print_async(
+                    "Condensation skipped — no messages to condense after tool adjustment.",
+                    color=LogType.LOCALMODEL,
+                    source_name=self.name,
+                    source=LogSource.WINGMAN,
+                )
+                return
+
+            to_condense = self.messages[:cutoff_index]
+
+            # Extract memories from messages about to be condensed (background, non-blocking)
+            if self.persistent_memory_service:
+                try:
+                    task = asyncio.create_task(
+                        self.persistent_memory_service.extract_memories(
+                            to_condense, generate_summary=True
+                        )
+                    )
+                    self._background_tasks.add(task)
+                    task.add_done_callback(self._background_tasks.discard)
+                except Exception:
+                    pass  # Don't let memory extraction block condensation
+
+            condensed_text = self._messages_to_text(to_condense)
+            if not condensed_text.strip():
+                await printr.print_async(
+                    "Condensation skipped — messages produced no text content.",
+                    color=LogType.LOCALMODEL,
+                    source_name=self.name,
+                    source=LogSource.WINGMAN,
+                )
+                return
+
+            # Estimate original token count
+            estimated_original_tokens = sum(
+                count_tokens(self._message_text_content(m)) for m in to_condense
+            )
+
+            # Build the summarization prompt
+            existing_summary_section = ""
+            if self.conversation_summary:
+                existing_summary_section = (
+                    "EXISTING SUMMARY (incorporate and update — do not repeat verbatim):\n"
+                    + self.conversation_summary
+                    + "\n\n"
+                )
+
+            system_prompt = get_prompt("condense-conversation")
+            budget = self.local_ai_service.get_token_budget(system_prompt)
+
+            user_prompt_prefix = (
+                existing_summary_section + "CONVERSATION TO SUMMARIZE:\n"
+            )
+            user_prompt_suffix = (
+                "\n\n---\n"
+                "Now list every fact from the conversation above as bullet points.\n"
+                "Start from the FIRST message, end at the LAST. Include all secrets, names, preferences, and creative content:"
+            )
+            prefix_suffix_tokens = count_tokens(user_prompt_prefix) + count_tokens(
+                user_prompt_suffix
+            )
+
+            # How much conversation text fits in one pass?
+            available_tokens = budget.max_input_tokens - prefix_suffix_tokens
+
+            # Apply tokenizer ratio to decide if chunking is needed.
+            corrected_text_tokens = int(
+                count_tokens(condensed_text) * self._support_token_ratio
+            )
+            corrected_available = int(available_tokens / self._support_token_ratio)
+
+            if corrected_text_tokens > available_tokens:
+                # Chunk: summarize in segments, then merge
+                support_result = await asyncio.wait_for(
+                    self._chunked_support(
+                        condensed_text,
+                        system_prompt,
+                        existing_summary_section,
+                        corrected_available,
+                    ),
+                    timeout=_CONDENSE_TIMEOUT,
+                )
+            else:
+                user_prompt = (
+                    f"{user_prompt_prefix}{condensed_text}{user_prompt_suffix}"
+                )
+                support_result = await asyncio.wait_for(
+                    asyncio.get_event_loop().run_in_executor(
+                        None,
+                        lambda: self.local_ai_service.support(
+                            text=user_prompt,
+                            system_prompt=system_prompt,
+                        ),
+                    ),
+                    timeout=_CONDENSE_TIMEOUT,
+                )
+
+            summary = support_result.text if support_result else None
+
+            # Calibrate tokenizer ratio from real model usage
+            if support_result and support_result.prompt_tokens > 0:
+                cl100k_input = (
+                    budget.system_tokens
+                    + count_tokens(condensed_text)
+                    + prefix_suffix_tokens
+                )
+                if cl100k_input > 0:
+                    self._support_token_ratio = (
+                        support_result.prompt_tokens / cl100k_input
+                    )
+
+            # Detect truncated output
+            if support_result and support_result.truncated:
+                await printr.print_async(
+                    f"Condensation output was truncated (finish_reason=length). "
+                    f"Model used {support_result.prompt_tokens} prompt tokens, "
+                    f"generated {support_result.completion_tokens} tokens. "
+                    f"Token ratio calibrated to {self._support_token_ratio:.2f}.",
+                    color=LogType.WARNING,
+                    server_only=True,
+                    source_name=self.name,
+                    source=LogSource.WINGMAN,
+                )
+
+            if not summary:
+                await printr.print_async(
+                    "Conversation condensation failed — local AI returned no result.",
+                    color=LogType.WARNING,
+                    server_only=True,
+                    source_name=self.name,
+                    source=LogSource.WINGMAN,
+                )
+                return
+
+            # Clean pending tool calls being removed
+            for msg in to_condense:
+                if (
+                    self.__get_message_role(msg) == "tool"
+                    and msg.get("tool_call_id") in self.pending_tool_calls
+                ):
+                    self.pending_tool_calls.remove(msg.get("tool_call_id"))
+
+            # Replace old messages
+            del self.messages[:cutoff_index]
+            self.conversation_summary = summary
+
+            estimated_summary_tokens = count_tokens(summary)
+            estimated_tokens_saved = max(
+                0, estimated_original_tokens - estimated_summary_tokens
+            )
+
+            await printr.print_async(
+                f"Condensed {cutoff_index} messages into summary "
+                f"({len(summary)} chars, ~{estimated_summary_tokens} tokens). "
+                f"{len(self.messages)} messages remaining. "
+                f"~{estimated_tokens_saved} tokens saved. "
+                f"Token ratio: {self._support_token_ratio:.2f}.",
+                color=LogType.INFO,
+                server_only=True,
+                source_name=self.name,
+                source=LogSource.WINGMAN,
+            )
+
+            # Record stats for the broadcast in finally
+            _condensation_stats = {
+                "messages_condensed": cutoff_index,
+                "messages_remaining": len(self.messages),
+                "summary_length": len(summary),
+                "estimated_tokens_saved": estimated_tokens_saved,
+                "summary_text": summary,
+            }
+
+        except asyncio.TimeoutError:
+            await printr.print_async(
+                "Condensation timed out — local model took too long.",
+                color=LogType.WARNING,
+                server_only=True,
+                source_name=self.name,
+                source=LogSource.WINGMAN,
+            )
+        except Exception as e:
+            await printr.print_async(
+                f"Conversation condensation error: {e}",
+                color=LogType.ERROR,
+                server_only=True,
+                source_name=self.name,
+                source=LogSource.WINGMAN,
+            )
+        finally:
+            self._is_condensing = False
+            # Always broadcast finished so the client UI doesn't get stuck.
+            # Include summary_text if condensation produced one (even if a
+            # later step failed), so the client can show the view-history button.
+            if printr._connection_manager:
+                try:
+                    await printr._connection_manager.broadcast(
+                        ConversationCondensationCommand(
+                            wingman_name=self.name,
+                            status="finished",
+                            **_condensation_stats,
+                        )
+                    )
+                except Exception as e:
+                    await printr.print_async(
+                        f"Failed to broadcast condensation finish: {e}",
+                        color=LogType.WARNING,
+                        server_only=True,
+                        source_name=self.name,
+                        source=LogSource.WINGMAN,
+                    )
+
+    async def _chunked_support(
+        self,
+        full_text: str,
+        system_prompt: str,
+        existing_summary_section: str,
+        chunk_max_tokens: int,
+    ) -> "SupportResult":
+        """Process text that exceeds the model's context window by chunking.
+
+        Each chunk is processed independently, then results are merged into
+        one final summary. Returns a SupportResult from the merge step.
+        """
+        from providers.llama_cpp_provider import SupportResult
+
+        budget = self.local_ai_service.get_token_budget(system_prompt)
+
+        # Convert token budget to approximate char limit for splitting
+        # (splitting needs char positions; we use ~4 chars/token as a rough guide,
+        # then verify with count_tokens)
+        approx_chunk_chars = chunk_max_tokens * 4
+        chunks = []
+        remaining = full_text
+        while remaining:
+            if count_tokens(remaining) <= chunk_max_tokens:
+                chunks.append(remaining)
+                break
+            # Try to split at a newline boundary
+            split_at = remaining.rfind("\n", 0, approx_chunk_chars)
+            if split_at <= 0:
+                split_at = approx_chunk_chars
+            chunks.append(remaining[:split_at])
+            remaining = remaining[split_at:].lstrip()
+
+        loop = asyncio.get_event_loop()
+        chunk_summaries = []
+        for i, chunk in enumerate(chunks):
+            user_prompt = (
+                f"{existing_summary_section if i == 0 else ''}"
+                f"CONVERSATION TO SUMMARIZE (part {i + 1}/{len(chunks)}):\n{chunk}\n\n"
+                "---\nList every fact from the above as bullet points. Include all secrets, names, preferences, and creative content:"
+            )
+
+            # Safety: if chunk input exceeds budget, truncate chunk text
+            chunk_text_tokens = count_tokens(chunk)
+            prompt_overhead = count_tokens(user_prompt) - chunk_text_tokens
+            if prompt_overhead + chunk_text_tokens > budget.max_input_tokens:
+                safe_text_tokens = budget.max_input_tokens - prompt_overhead
+                if safe_text_tokens > 0:
+                    chunk = truncate_to_tokens(chunk, safe_text_tokens)
+                    user_prompt = (
+                        f"{existing_summary_section if i == 0 else ''}"
+                        f"CONVERSATION TO SUMMARIZE (part {i + 1}/{len(chunks)}):\n{chunk}\n\n"
+                        "---\nList every fact from the above as bullet points. Include all secrets, names, preferences, and creative content:"
+                    )
+                await printr.print_async(
+                    f"Chunk {i + 1}/{len(chunks)} exceeded context budget, truncated to fit.",
+                    color=LogType.WARNING,
+                    server_only=True,
+                    source_name=self.name,
+                    source=LogSource.WINGMAN,
+                )
+
+            result = await loop.run_in_executor(
+                None,
+                lambda p=user_prompt: self.local_ai_service.support(
+                    text=p,
+                    system_prompt=system_prompt,
+                ),
+            )
+            if result.text:
+                chunk_summaries.append(result.text)
+
+                # Calibrate tokenizer ratio from real model usage.
+                cl100k_input = count_tokens(system_prompt) + count_tokens(user_prompt)
+                if result.prompt_tokens > 0 and cl100k_input > 0:
+                    self._support_token_ratio = result.prompt_tokens / cl100k_input
+
+                if result.truncated:
+                    await printr.print_async(
+                        f"Chunk {i + 1}/{len(chunks)} output truncated "
+                        f"(prompt={result.prompt_tokens}, "
+                        f"completion={result.completion_tokens}).",
+                        color=LogType.WARNING,
+                        server_only=True,
+                        source_name=self.name,
+                        source=LogSource.WINGMAN,
+                    )
+
+        if not chunk_summaries:
+            return SupportResult(text=None)
+        if len(chunk_summaries) == 1:
+            return SupportResult(text=chunk_summaries[0])
+
+        # Merge all chunk summaries into one final summary
+        combined = "\n\n".join(
+            f"Part {i + 1}:\n{s}" for i, s in enumerate(chunk_summaries)
+        )
+        merge_prompt = (
+            f"{existing_summary_section}"
+            f"PARTIAL SUMMARIES TO MERGE:\n{combined}\n\n"
+            "Merge these into a single coherent summary. Keep all key facts:"
+        )
+
+        # Safety: truncate combined summaries if they exceed budget
+        if count_tokens(merge_prompt) > budget.max_input_tokens:
+            overhead = count_tokens(merge_prompt) - count_tokens(combined)
+            safe_combined = budget.max_input_tokens - overhead
+            if safe_combined > 0:
+                combined = truncate_to_tokens(combined, safe_combined)
+                merge_prompt = (
+                    f"{existing_summary_section}"
+                    f"PARTIAL SUMMARIES TO MERGE:\n{combined}\n\n"
+                    "Merge these into a single coherent summary. Keep all key facts:"
+                )
+            await printr.print_async(
+                f"Merge input exceeded context budget, truncated to fit.",
+                color=LogType.WARNING,
+                server_only=True,
+                source_name=self.name,
+                source=LogSource.WINGMAN,
+            )
+
+        return await loop.run_in_executor(
+            None,
+            lambda: self.local_ai_service.support(
+                text=merge_prompt,
+                system_prompt=system_prompt,
+            ),
+        )
+
+    def _extract_text_content(self, content) -> str:
+        """Extract text from message content, handling both string and multimodal list formats."""
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            # Multimodal content: extract text parts only
+            parts = []
+            for part in content:
+                if isinstance(part, dict) and part.get("type") == "text":
+                    parts.append(part.get("text", ""))
+                elif isinstance(part, str):
+                    parts.append(part)
+            return " ".join(parts)
+        return ""
+
+    def _message_text_content(self, msg) -> str:
+        """Extract text content from a message for token estimation."""
+        if isinstance(msg, Mapping):
+            return self._extract_text_content(msg.get("content", "")) or ""
+        elif hasattr(msg, "content"):
+            return self._extract_text_content(msg.content) or ""
+        return ""
+
+    def _messages_to_text(self, messages: list) -> str:
+        """Convert a list of conversation messages to plain text for summarization."""
+        lines = []
+        for msg in messages:
+            role = self.__get_message_role(msg)
+            content = ""
+            if isinstance(msg, Mapping):
+                content = self._extract_text_content(msg.get("content", ""))
+            elif hasattr(msg, "content"):
+                content = self._extract_text_content(msg.content) or ""
+
+            if role == "user":
+                lines.append(f"User: {content}")
+            elif role == "assistant":
+                if content:
+                    lines.append(f"Assistant: {content}")
+                # Include tool call info
+                tool_calls = None
+                if isinstance(msg, Mapping):
+                    tool_calls = msg.get("tool_calls")
+                elif hasattr(msg, "tool_calls"):
+                    tool_calls = msg.tool_calls
+                if tool_calls:
+                    for tc in tool_calls:
+                        fn = (
+                            tc.function
+                            if hasattr(tc, "function")
+                            else tc.get("function", {})
+                        )
+                        name = fn.name if hasattr(fn, "name") else fn.get("name", "?")
+                        args = (
+                            fn.arguments
+                            if hasattr(fn, "arguments")
+                            else fn.get("arguments", "")
+                        )
+                        lines.append(f"  [Tool call: {name}({args})]")
+            elif role == "tool":
+                tool_name = (
+                    msg.get("name", "tool") if isinstance(msg, Mapping) else "tool"
+                )
+                lines.append(f"  [Tool result ({tool_name}): {content[:200]}]")
+        return "\n".join(lines)
+
+    async def reset_conversation_history(self):
         """Resets the conversation history and skill activation state.
 
         When the conversation is reset, the LLM loses all memory of which skills
         were activated and why. So we must also reset the skill registry and MCP
         registry to ensure the progressive disclosure state matches the LLM's memory.
         """
+        # Extract memories before clearing (if enabled and enough messages)
+        if self.persistent_memory_service and len(self.messages) >= 4:
+            try:
+                await self.persistent_memory_service.extract_memories(
+                    self.messages, generate_summary=True
+                )
+            except Exception:
+                pass  # Don't let extraction failure prevent reset
+
         self.messages = []
+        self.conversation_summary = ""
+        self._last_prompt_tokens = 0
+        # Keep _support_token_ratio — it's model-specific, not conversation-specific
         self.skill_registry.reset_activations()
         self.mcp_registry.reset_activations()
 
@@ -1601,14 +2412,121 @@ class OpenAiWingman(Wingman):
         # Build user context with environment metadata
         user_context = self._build_user_context()
 
+        # Sanity check: truncate if someone bypasses the client's 2048-token limit
+        MAX_BACKSTORY_TOKENS = 2048
+        backstory = self.config.prompts.backstory
+
+        if backstory and count_tokens(backstory) > MAX_BACKSTORY_TOKENS:
+            original_tokens = count_tokens(backstory)
+            backstory = truncate_to_tokens(backstory, MAX_BACKSTORY_TOKENS)
+            await printr.print_async(
+                f"[{self.name}] Backstory will be truncated to {MAX_BACKSTORY_TOKENS} tokens for conversations (is {original_tokens}). "
+                f"Your saved backstory is unchanged. Consider shortening it.",
+                color=LogType.WARNING,
+                source_name=self.name,
+                source=LogSource.SYSTEM,
+            )
+
+        # Build conversation summary section
+        conversation_summary = ""
+        if self.conversation_summary:
+            conversation_summary = (
+                "# CONVERSATION SUMMARY\n"
+                "The following is a summary of earlier parts of this conversation. "
+                "Treat it as factual context — the user and you discussed these topics previously.\n\n"
+                + self.conversation_summary
+            )
+
+        # Persistent memory injection
+        persistent_memory_context = ""
+        if self.persistent_memory_service and self.messages:
+            # Use the most recent user message as the query
+            last_user_msg = ""
+            for msg in reversed(self.messages):
+                role = msg.get("role") if isinstance(msg, dict) else getattr(msg, "role", None)
+                raw_content = msg.get("content", "") if isinstance(msg, dict) else getattr(msg, "content", "")
+                # Extract plain text from multimodal content (images etc.)
+                content = self._extract_text_content(raw_content) if raw_content else ""
+                if role == "user" and content:
+                    last_user_msg = content
+                    break
+            if last_user_msg:
+                try:
+                    persistent_memory_context = await self.persistent_memory_service.build_memory_context(last_user_msg)
+                    if persistent_memory_context and not self._memory_recall_notified:
+                        self._memory_recall_notified = True
+                        # Count restored fact lines (lines starting with "- ")
+                        fact_count = sum(
+                            1 for line in persistent_memory_context.splitlines()
+                            if line.startswith("- ")
+                        )
+                        if fact_count > 0:
+                            await printr.print_async(
+                                f"Memory recalled: {fact_count} relevant {'memory' if fact_count == 1 else 'memories'} loaded.",
+                                color=LogType.MEMORY,
+                                source_name=self.name,
+                            )
+                except Exception:
+                    pass  # Don't let memory failures break conversation
+
         context = self.config.prompts.system_prompt.format(
-            backstory=self.config.prompts.backstory,
+            backstory=backstory,
             skills=skill_prompts,
             ttsprompt=tts_prompt,
             user_context=user_context,
+            conversation_summary=conversation_summary,
         )
 
+        # If the system prompt template doesn't include {conversation_summary},
+        # append the summary at the end so it's never lost.
+        if (
+            conversation_summary
+            and "{conversation_summary}" not in self.config.prompts.system_prompt
+        ):
+            context += "\n\n" + conversation_summary
+
+        # Append persistent memory context
+        if persistent_memory_context:
+            context += "\n\n" + persistent_memory_context
+
+        # Persistent memory tool instructions
+        if self.persistent_memory_service:
+            context += (
+                "\n\n# PERSISTENT MEMORY\n"
+                "You have persistent memory. Important facts and past conversation summaries "
+                "are provided in the [Memory] sections above (if any). "
+                "You can use the `remember`, `recall`, and `forget` tools when the user "
+                "explicitly asks you to remember, recall, or forget something. "
+                "You don't need to use `remember` for routine information — that is handled automatically."
+            )
+
+        self._last_compiled_context = context
         return context
+
+    def get_last_context(self) -> str:
+        """Return the last compiled system context (cached from the most recent LLM call)."""
+        return self._last_compiled_context
+
+    def get_conversation_messages(self, strip_nulls: bool = True) -> list[dict]:
+        """Return the conversation messages as a list of plain dicts for debugging."""
+
+        def _strip_none(obj):
+            if isinstance(obj, dict):
+                return {k: _strip_none(v) for k, v in obj.items() if v is not None}
+            if isinstance(obj, list):
+                return [_strip_none(item) for item in obj]
+            return obj
+
+        result = []
+        for msg in self.messages:
+            if hasattr(msg, "model_dump"):
+                d = msg.model_dump()
+            else:
+                d = msg
+            if strip_nulls:
+                d = _strip_none(d)
+            result.append(d)
+        return result
 
     def _build_user_context(self) -> str:
         """Build user context metadata for the system prompt.
@@ -1664,7 +2582,9 @@ class OpenAiWingman(Wingman):
         return "No additional context available."
 
     async def add_context(self, messages):
-        messages.insert(0, {"role": "system", "content": (await self.get_context())})
+        context = await self.get_context()
+
+        messages.insert(0, {"role": "system", "content": context})
 
     async def generate_image(self, text: str) -> str:
         """
@@ -1845,14 +2765,16 @@ class OpenAiWingman(Wingman):
 
         return completion
 
-    async def _process_completion(self, completion: ChatCompletion, allow_tool_calls: bool = True):
+    async def _process_completion(
+        self, completion: ChatCompletion, allow_tool_calls: bool = True
+    ):
         """Processes the completion returned by the LLM call.
 
         Args:
             completion: The completion object from an OpenAI call.
 
         Returns:
-            A tuple containing the message response and tool calls from the completion.
+            A tuple containing the message response, tool calls, and usage (prompt_tokens, completion_tokens) from the completion.
         """
 
         response_message = completion.choices[0].message
@@ -1871,7 +2793,18 @@ class OpenAiWingman(Wingman):
                 response_message.tool_calls
             )
 
-        return response_message, response_message.tool_calls
+        # Extract token usage from the API response
+        prompt_tokens = 0
+        completion_tokens = 0
+        if completion.usage:
+            prompt_tokens = completion.usage.prompt_tokens or 0
+            completion_tokens = completion.usage.completion_tokens or 0
+
+        return (
+            response_message,
+            response_message.tool_calls,
+            (prompt_tokens, completion_tokens),
+        )
 
     async def _handle_tool_calls(self, tool_calls):
         """Processes all the tool calls identified in the response message.
@@ -1915,6 +2848,23 @@ class OpenAiWingman(Wingman):
                 if tool_label:
                     tool_timings.append((tool_label, tool_time_ms))
 
+                # Compress large tool responses via local AI before the cloud LLM sees them
+                if (
+                    tool_call.id
+                    and self.config.features.compress_tool_responses
+                    and self.local_ai_service
+                    and self.local_ai_service.is_ready()
+                    and self._tool_response_compressor.should_compress(
+                        str(function_response)
+                    )
+                ):
+                    function_response = await self._tool_response_compressor.compress(
+                        response_text=str(function_response),
+                        local_ai_service=self.local_ai_service,
+                        wingman_name=self.name,
+                        tool_name=function_name,
+                    )
+
                 if tool_call.id:
                     # updating the dummy tool response with the actual response
                     await self._update_tool_response(tool_call.id, function_response)
@@ -1952,6 +2902,48 @@ class OpenAiWingman(Wingman):
         instant_response = ""
         used_skill = None
         tool_label = None
+
+        # Handle persistent memory tools
+        if function_name in ("memory_remember", "memory_recall", "memory_forget") and self.persistent_memory_service:
+            if function_name == "memory_remember":
+                text = function_args.get("text", "")
+                if text:
+                    await self.persistent_memory_service.add_memory(
+                        entry_type="fact", content=text
+                    )
+                    function_response = f"I'll remember that: \"{text}\""
+                    await printr.print_async(
+                        f"Memory stored: {text}",
+                        color=LogType.MEMORY,
+                        source_name=self.name,
+                    )
+                else:
+                    function_response = "Nothing to remember — no text provided."
+
+            elif function_name == "memory_recall":
+                query = function_args.get("query", "")
+                if query:
+                    results = await self.persistent_memory_service.search(query, limit=10)
+                    if results:
+                        lines = [f"- {r.content}" for r in results]
+                        function_response = "Here's what I remember:\n" + "\n".join(lines)
+                    else:
+                        function_response = "I don't have any memories matching that."
+                else:
+                    function_response = "No query provided for memory recall."
+
+            elif function_name == "memory_forget":
+                query = function_args.get("query", "")
+                if query:
+                    deleted = await self.persistent_memory_service.forget_by_query(query)
+                    if deleted:
+                        function_response = f"Done — I've forgotten the memory related to \"{query}\"."
+                    else:
+                        function_response = "I couldn't find a memory closely matching that to forget."
+                else:
+                    function_response = "No query provided for memory forget."
+
+            return function_response, None, None, f"💾 memory: {function_name}"
 
         # Handle unified capability meta-tools (activate_capability, list_active_capabilities)
         if self.capability_registry.is_meta_tool(function_name):
@@ -2340,7 +3332,9 @@ class OpenAiWingman(Wingman):
             )
             printr.print(traceback.format_exc(), color=LogType.ERROR, server_only=True)
 
-    async def _execute_command(self, command: CommandConfig, is_instant=False) -> tuple[str | None, str]:
+    async def _execute_command(
+        self, command: CommandConfig, is_instant=False
+    ) -> tuple[str | None, str]:
         """Executes a command by delegating to the Wingman base implementation.
 
         Returns:
@@ -2425,6 +3419,60 @@ class OpenAiWingman(Wingman):
 
         for _, tool in self.mcp_registry.get_active_tools():
             tools.append(tool)
+
+        # Persistent memory tools — auto-injected when enabled
+        if self.persistent_memory_service:
+            tools.append({
+                "type": "function",
+                "function": {
+                    "name": "memory_remember",
+                    "description": "Store an important fact or detail for future reference. Use when the user explicitly asks you to remember something.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "text": {
+                                "type": "string",
+                                "description": "The fact or detail to remember.",
+                            },
+                        },
+                        "required": ["text"],
+                    },
+                },
+            })
+            tools.append({
+                "type": "function",
+                "function": {
+                    "name": "memory_recall",
+                    "description": "Search your memory for relevant information. Use when the user asks what you remember or know about a topic.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {
+                                "type": "string",
+                                "description": "What to search for in memory.",
+                            },
+                        },
+                        "required": ["query"],
+                    },
+                },
+            })
+            tools.append({
+                "type": "function",
+                "function": {
+                    "name": "memory_forget",
+                    "description": "Remove a specific memory. Use when the user explicitly asks you to forget something.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {
+                                "type": "string",
+                                "description": "Description of the memory to forget.",
+                            },
+                        },
+                        "required": ["query"],
+                    },
+                },
+            })
 
         return tools
 

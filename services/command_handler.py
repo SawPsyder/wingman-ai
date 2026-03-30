@@ -5,6 +5,7 @@ import keyboard.keyboard as keyboard
 from api.commands import (
     ActionsRecordedCommand,
     ClientLoggedOutCommand,
+    CoreStateChangedCommand,
     RecordJoystickActionsCommand,
     RecordKeyboardActionsCommand,
     RecordMouseActionsCommand,
@@ -13,7 +14,7 @@ from api.commands import (
     WebSocketCommandModel,
     ClientLoggedInCommand,
 )
-from api.enums import KeyboardRecordingType, LogSource, RecordingDevice, ToastType
+from api.enums import CoreState, KeyboardRecordingType, LogSource, RecordingDevice, ToastType
 from api.interface import (
     CommandActionConfig,
     CommandJoystickConfig,
@@ -86,6 +87,15 @@ class CommandHandler:
 
     async def handle_client_ready(self, websocket: WebSocket):
         await self.connection_manager.client_ready(websocket)
+
+        # Send current core state so late-connecting clients get the right status
+        # (core_state_changed is not queued when no clients are connected)
+        state_command = CoreStateChangedCommand(
+            state=self.core.core_state,
+            message=self.core.core_state_message,
+            progress=self.core.core_state_progress,
+        )
+        await self.connection_manager.send_to(state_command, websocket)
 
     # todo: make this a POST request - was just a demo for commands with params
     async def handle_secret(self, command: SaveSecretCommand, websocket: WebSocket):
@@ -277,6 +287,15 @@ class CommandHandler:
         if self.core.is_client_logged_in:
             # retrieved keepalive / token refresh from Azure but Tower is still initialized
             return
+
+        # Wait until config is loaded before proceeding — the server now starts
+        # before startup completes, so this command may arrive early.
+        while self.core.core_state in (
+            CoreState.STARTING,
+            CoreState.MIGRATING,
+            CoreState.LOADING_CONFIG,
+        ):
+            await asyncio.sleep(0.1)
 
         self.core.is_client_logged_in = True
         self.core.client_plan = command.plan

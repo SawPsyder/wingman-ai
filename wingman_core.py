@@ -7,18 +7,25 @@ import threading
 from typing import Optional
 import pygame
 from google.genai import types
-from fastapi import APIRouter, Body, File, UploadFile
+from fastapi import APIRouter, Body, File, Form, HTTPException, UploadFile
 import requests
 import sounddevice as sd
 from showinfm import show_in_file_manager
 import azure.cognitiveservices.speech as speechsdk
 import keyboard.keyboard as keyboard
 import mouse.mouse as mouse
-from api.commands import AudioLibraryPlaybackFinishedCommand, CoreStateChangedCommand, VoiceActivationMutedCommand
+from api.commands import (
+    AudioLibraryPlaybackFinishedCommand,
+    CoreStateChangedCommand,
+    LogCommand,
+    VoiceActivationMutedCommand,
+)
 from api.enums import (
     AzureRegion,
     CommandTag,
+    ConversationProvider,
     CoreState,
+    LogSource,
     LogType,
     VoiceActivationSttProvider,
     WingmanInitializationErrorType,
@@ -32,13 +39,21 @@ from api.interface import (
     ConfigWithDirInfo,
     CoreStatusResponse,
     ElevenlabsModel,
+    MemoryEntryResponse,
+    MemoryUpdateRequest,
     OpenRouterEndpointResult,
+    PlaygroundChatRequest,
+    ParakeetSttConfig,
+    TestConnectionResult,
     VoiceActivationSettings,
     WingmanInitializationError,
 )
 from providers.elevenlabs import ElevenLabs
 from providers.faster_whisper import FasterWhisper
+from providers.parakeet import Parakeet
 from providers.google import GoogleGenAI
+from providers.llama_cpp_provider import LlamaCppProvider
+from providers.llama_cpp_remote import LlamaCppRemote
 from providers.open_ai import OpenAi
 from providers.whispercpp import Whispercpp
 from providers.wingman_pro import WingmanPro
@@ -46,12 +61,24 @@ from providers.xvasynth import XVASynth
 from providers.pocket_tts import PocketTTS
 from wingmen.open_ai_wingman import OpenAiWingman
 from wingmen.wingman import Wingman
-from services.file import get_writable_dir, get_audio_library_dir, get_custom_voices_dir
+from services.file import (
+    get_writable_dir,
+    get_audio_library_dir,
+    get_custom_voices_dir,
+    get_local_models_dir,
+    get_prompt,
+)
+from services.local_ai_service import LocalAiService
+from services.token_utils import count_tokens
+from services.local_model_manager import LocalModelManager
 from services.voice_service import VoiceService
 from services.settings_service import SettingsService
 from services.config_service import ConfigService
 from services.audio_player import AudioPlayer
 from services.audio_library import AudioLibrary
+from services.benchmark import Benchmark
+from services.image_processing import process_image, validate_image_mime
+from services.model_metadata import ModelMetadataService
 from services.audio_recorder import RECORDING_PATH, AudioRecorder
 from services.config_manager import ConfigManager
 from services.printr import Printr
@@ -114,6 +141,12 @@ class WingmanCore(WebSocketUser):
         )
         self.router.add_api_route(
             methods=["POST"],
+            path="/generate-greeting",
+            endpoint=self.generate_greeting,
+            tags=tags,
+        )
+        self.router.add_api_route(
+            methods=["POST"],
             path="/ask-wingman-conversation-provider",
             endpoint=self.ask_wingman_conversation_provider,
             tags=tags,
@@ -134,6 +167,26 @@ class WingmanCore(WebSocketUser):
             methods=["POST"],
             path="/reset-conversation-history",
             endpoint=self.reset_conversation_history,
+            tags=tags,
+        )
+        self.router.add_api_route(
+            methods=["POST"],
+            path="/condense-conversation",
+            endpoint=self.condense_conversation,
+            tags=tags,
+        )
+        self.router.add_api_route(
+            methods=["GET"],
+            path="/wingman-context",
+            response_model=str,
+            endpoint=self.get_wingman_context,
+            tags=tags,
+        )
+        self.router.add_api_route(
+            methods=["GET"],
+            path="/wingman-conversation",
+            response_model=list[dict],
+            endpoint=self.get_wingman_conversation,
             tags=tags,
         )
         self.router.add_api_route(
@@ -226,6 +279,12 @@ class WingmanCore(WebSocketUser):
             tags=tags,
         )
         self.router.add_api_route(
+            methods=["POST"],
+            path="/open-filemanager/local-models",
+            endpoint=self.open_local_models_directory,
+            tags=tags,
+        )
+        self.router.add_api_route(
             methods=["GET"],
             path="/models/openrouter",
             response_model=list,
@@ -288,6 +347,18 @@ class WingmanCore(WebSocketUser):
             endpoint=self.get_google_models,
             tags=tags,
         )
+        self.router.add_api_route(
+            methods=["GET"],
+            path="/models/metadata",
+            endpoint=self.get_model_metadata_all,
+            tags=tags,
+        )
+        self.router.add_api_route(
+            methods=["GET"],
+            path="/models/metadata/{model_id:path}",
+            endpoint=self.get_model_metadata,
+            tags=tags,
+        )
         # TODO: Refactor - move these to a new AudioLibrary service:
         self.router.add_api_route(
             methods=["GET"],
@@ -300,6 +371,131 @@ class WingmanCore(WebSocketUser):
             methods=["POST"],
             path="/audio-library/play",
             endpoint=self.play_from_audio_library,
+            tags=tags,
+        )
+        # ── Local AI Routes ──────────────────────────────────────────
+        self.router.add_api_route(
+            methods=["GET"],
+            path="/settings/local-ai/status",
+            endpoint=self.get_local_ai_status,
+            tags=tags,
+        )
+        self.router.add_api_route(
+            methods=["POST"],
+            path="/settings/local-ai/download-models",
+            endpoint=self.download_local_ai_models,
+            tags=tags,
+        )
+        self.router.add_api_route(
+            methods=["GET"],
+            path="/settings/local-ai/backends",
+            endpoint=self.get_local_ai_backends,
+            tags=tags,
+        )
+        self.router.add_api_route(
+            methods=["GET"],
+            path="/settings/local-ai/support-models",
+            endpoint=self.get_local_ai_support_models,
+            tags=tags,
+        )
+        self.router.add_api_route(
+            methods=["GET"],
+            path="/settings/local-ai/embed-models",
+            endpoint=self.get_local_ai_embed_models,
+            tags=tags,
+        )
+        self.router.add_api_route(
+            methods=["POST"],
+            path="/settings/local-ai/playground/chat",
+            endpoint=self.playground_chat,
+            tags=tags,
+        )
+        self.router.add_api_route(
+            methods=["POST"],
+            path="/settings/local-ai/playground/embed",
+            endpoint=self.playground_embed,
+            tags=tags,
+        )
+        self.router.add_api_route(
+            methods=["POST"],
+            path="/settings/local-ai/playground/benchmark",
+            endpoint=self.playground_benchmark,
+            tags=tags,
+        )
+
+        # Connection test endpoints
+        self.router.add_api_route(
+            methods=["POST"],
+            path="/settings/test/whispercpp",
+            endpoint=self.test_whispercpp,
+            response_model=TestConnectionResult,
+            tags=tags,
+        )
+        self.router.add_api_route(
+            methods=["POST"],
+            path="/settings/test/parakeet",
+            endpoint=self.test_parakeet,
+            response_model=TestConnectionResult,
+            tags=tags,
+        )
+        self.router.add_api_route(
+            methods=["POST"],
+            path="/settings/test/xvasynth",
+            endpoint=self.test_xvasynth,
+            response_model=TestConnectionResult,
+            tags=tags,
+        )
+        self.router.add_api_route(
+            methods=["POST"],
+            path="/settings/test/local-ai/support",
+            endpoint=self.test_local_ai_support,
+            response_model=TestConnectionResult,
+            tags=tags,
+        )
+        self.router.add_api_route(
+            methods=["POST"],
+            path="/settings/test/local-ai/embed",
+            endpoint=self.test_local_ai_embed,
+            response_model=TestConnectionResult,
+            tags=tags,
+        )
+        self.router.add_api_route(
+            methods=["POST"],
+            path="/settings/test/hud-server",
+            endpoint=self.test_hud_server,
+            response_model=TestConnectionResult,
+            tags=tags,
+        )
+        self.router.add_api_route(
+            methods=["POST"],
+            path="/settings/test/pocket-tts",
+            endpoint=self.test_pocket_tts,
+            response_model=TestConnectionResult,
+            tags=tags,
+        )
+
+        self.router.add_api_route(
+            methods=["POST"],
+            path="/local-ai/support",
+            endpoint=self.api_support,
+            tags=tags,
+        )
+        self.router.add_api_route(
+            methods=["POST"],
+            path="/local-ai/enhance-backstory",
+            endpoint=self.api_enhance_backstory,
+            tags=tags,
+        )
+        self.router.add_api_route(
+            methods=["GET"],
+            path="/local-ai/enhance-backstory-budget",
+            endpoint=self.api_enhance_backstory_budget,
+            tags=tags,
+        )
+        self.router.add_api_route(
+            methods=["POST"],
+            path="/local-ai/embed",
+            endpoint=self.api_embed,
             tags=tags,
         )
         self.router.add_api_route(
@@ -335,6 +531,36 @@ class WingmanCore(WebSocketUser):
             endpoint=self.get_wingman_pro_regions,
             tags=tags,
         )
+        self.router.add_api_route(
+            methods=["GET"],
+            path="/memories/{wingman_name}",
+            endpoint=self.get_memories,
+            tags=tags,
+        )
+        self.router.add_api_route(
+            methods=["PUT"],
+            path="/memories/{entry_id}",
+            endpoint=self.update_memory,
+            tags=tags,
+        )
+        self.router.add_api_route(
+            methods=["DELETE"],
+            path="/memories/{entry_id}",
+            endpoint=self.delete_memory,
+            tags=tags,
+        )
+        self.router.add_api_route(
+            methods=["DELETE"],
+            path="/memories/{wingman_name}/all",
+            endpoint=self.clear_memories,
+            tags=tags,
+        )
+        self.router.add_api_route(
+            methods=["POST"],
+            path="/memories/{wingman_name}/test-extraction",
+            endpoint=self.test_memory_extraction,
+            tags=tags,
+        )
 
         self.config_manager = config_manager
         self.config_manager.perform_hardware_scan(self.system_manager)
@@ -368,6 +594,8 @@ class WingmanCore(WebSocketUser):
         self.is_started = False
         self.core_state: CoreState = CoreState.STARTING
         self._last_logged_state: Optional[CoreState] = None
+        self.core_state_message: str | None = None
+        self.core_state_progress: float | None = None
         self.startup_errors: list[WingmanInitializationError] = []
         self.tower_errors: list[WingmanInitializationError] = []
 
@@ -412,13 +640,33 @@ class WingmanCore(WebSocketUser):
             app_root_path=app_root_path,
             app_is_bundled=app_is_bundled,
         )
+        self.parakeet = Parakeet(
+            settings=self.settings_service.settings.voice_activation.parakeet,
+        )
         self.xvasynth = XVASynth(settings=self.settings_service.settings.xvasynth)
         self.pocket_tts = PocketTTS(settings=self.settings_service.settings.pocket_tts)
+
+        # Local AI (llama.cpp for summarization + embedding)
+        llama_cpp_settings = self.settings_service.settings.llama_cpp
+        self.local_model_manager = LocalModelManager(settings=llama_cpp_settings)
+        self.llama_cpp_provider = LlamaCppProvider(
+            settings=llama_cpp_settings,
+            model_manager=self.local_model_manager,
+        )
+        self.llama_cpp_remote = LlamaCppRemote(settings=llama_cpp_settings)
+        self.local_ai_service = LocalAiService(
+            provider=self.llama_cpp_provider,
+            remote=self.llama_cpp_remote,
+            settings=llama_cpp_settings,
+        )
+
         self.settings_service.initialize(
             whispercpp=self.whispercpp,
             fasterwhisper=self.fasterwhisper,
+            parakeet=self.parakeet,
             xvasynth=self.xvasynth,
             pocket_tts=self.pocket_tts,
+            local_ai_service=self.local_ai_service,
         )
 
         self.voice_service = VoiceService(
@@ -427,6 +675,8 @@ class WingmanCore(WebSocketUser):
             xvasynth=self.xvasynth,
             pocket_tts=self.pocket_tts,
         )
+
+        self.model_metadata_service = ModelMetadataService()
 
         # restore settings
         self.audio_recorder = AudioRecorder(
@@ -444,7 +694,71 @@ class WingmanCore(WebSocketUser):
         if self.settings_service.settings.voice_activation.enabled:
             await self.set_voice_activation(is_enabled=True)
 
+        # Auto-download local AI models if run_locally is on but models are missing
+        llama_settings = self.settings_service.settings.llama_cpp
+        if (
+            llama_settings.run_locally
+            and not self.local_model_manager.models_available()
+        ):
+            await self.printr.print_async(
+                "Local AI models not found — downloading automatically...",
+                color=LogType.INFO,
+                server_only=True,
+            )
+
+            # Progress callback — store latest progress, then flush to clients
+            progress_state = {}
+
+            def on_download_progress(filename, pct, downloaded_mb, total_mb):
+                progress_state["filename"] = filename
+                progress_state["pct"] = pct
+                progress_state["downloaded_mb"] = downloaded_mb
+                progress_state["total_mb"] = total_mb
+
+            # Kick off download with progress callback
+            download_task = asyncio.create_task(
+                self.local_model_manager.download_models(
+                    on_progress=on_download_progress
+                )
+            )
+
+            # Poll progress_state and broadcast updates while download runs
+            while not download_task.done():
+                if progress_state:
+                    fname = progress_state.get("filename", "")
+                    pct = progress_state.get("pct", 0)
+                    dl_mb = progress_state.get("downloaded_mb", 0)
+                    t_mb = progress_state.get("total_mb", 0)
+                    short_name = (
+                        fname.split("-")[0]
+                        if "-" in fname
+                        else fname.replace(".gguf", "")
+                    )
+                    await self.set_core_state(
+                        CoreState.LOADING_CONFIG,
+                        message=f"Downloading {short_name}... ({dl_mb} / {t_mb} MB)",
+                        progress=pct / 100.0 if pct else None,
+                    )
+                await asyncio.sleep(0.5)
+
+            # Await to propagate exceptions
+            await download_task
+
+        # Initialize local AI service (loads models if run_locally + available)
+        if llama_settings.run_locally and self.local_model_manager.models_available():
+            await self.set_core_state(
+                CoreState.LOADING_CONFIG,
+                message="Loading local AI models...",
+            )
+        await self.local_ai_service.initialize()
+
         # Start HUD Server if enabled
+        hud_settings = getattr(self.settings_service.settings, "hud_server", None)
+        if hud_settings and hud_settings.enabled:
+            await self.set_core_state(
+                CoreState.LOADING_CONFIG,
+                message="Starting HUD server...",
+            )
         await self._start_hud_server_if_enabled()
 
     def _get_validated_hud_settings(
@@ -543,20 +857,31 @@ class WingmanCore(WebSocketUser):
             await self._hud_server.stop()
             self._hud_server = None
 
-    async def set_core_state(self, state: CoreState) -> None:
+    async def set_core_state(
+        self,
+        state: CoreState,
+        message: str | None = None,
+        progress: float | None = None,
+    ) -> None:
         """Update the core state and broadcast to all connected clients.
 
         Args:
             state: The new CoreState
+            message: Optional human-readable sub-step detail
+            progress: Optional 0.0-1.0 progress for operations with known duration
         """
         self.core_state = state
+        self.core_state_message = message
+        self.core_state_progress = progress
 
         # Update is_started for backwards compatibility
         self.is_started = state == CoreState.READY
 
         # Broadcast state change to connected clients
         if self._connection_manager:
-            command = CoreStateChangedCommand(state=state)
+            command = CoreStateChangedCommand(
+                state=state, message=message, progress=progress
+            )
             await self._connection_manager.broadcast(command)
 
         # Only log actual state changes, not progress updates within the same state
@@ -572,6 +897,8 @@ class WingmanCore(WebSocketUser):
         """Get the current core status for the /ping endpoint."""
         return CoreStatusResponse(
             state=self.core_state,
+            message=self.core_state_message,
+            progress=self.core_state_progress,
         )
 
     def is_mouse_configured(self, config: Config) -> bool:
@@ -626,7 +953,10 @@ class WingmanCore(WebSocketUser):
                 elif event.type == pygame.JOYBUTTONUP:
                     joystick_origin = pygame.joystick.Joystick(event.joy)
                     # In recording mode, capture the button press and signal the caller
-                    if self._joystick_recording_active and self._joystick_recording_event:
+                    if (
+                        self._joystick_recording_active
+                        and self._joystick_recording_event
+                    ):
                         self._joystick_recording_result = {
                             "button": event.button,
                             "guid": joystick_origin.get_guid(),
@@ -704,7 +1034,9 @@ class WingmanCore(WebSocketUser):
                 if task and not task.done():
                     task.cancel()
                     try:
-                        loop.run_until_complete(asyncio.gather(task, return_exceptions=True))
+                        loop.run_until_complete(
+                            asyncio.gather(task, return_exceptions=True)
+                        )
                     except Exception:
                         pass
                 loop.close()
@@ -713,7 +1045,7 @@ class WingmanCore(WebSocketUser):
         self._joystick_thread.name = "JoystickEventLoop"
         self._joystick_thread.start()
 
-    async def record_joystick_action(self) -> dict|None:
+    async def record_joystick_action(self) -> dict | None:
         """Record a single joystick button press using the existing joystick event loop.
 
         If no joystick thread is running, starts one for recording.
@@ -721,9 +1053,7 @@ class WingmanCore(WebSocketUser):
         """
         if not self._joystick_thread or not self._joystick_thread.is_alive():
             config = (
-                self.tower.config
-                if self.tower
-                else self.config_service.current_config
+                self.tower.config if self.tower else self.config_service.current_config
             )
             await self.init_joystick(config)
 
@@ -847,12 +1177,18 @@ class WingmanCore(WebSocketUser):
             audio_library=self.audio_library,
             whispercpp=self.whispercpp,
             fasterwhisper=self.fasterwhisper,
+            parakeet=self.parakeet,
             xvasynth=self.xvasynth,
             pocket_tts=self.pocket_tts,
         )
         self.tower_errors = await self.tower.instantiate_wingmen(
             self.config_manager.settings_config
         )
+
+        for wingman in self.tower.wingmen:
+            if isinstance(wingman, OpenAiWingman):
+                wingman.local_ai_service = self.local_ai_service
+
         # Only show toast errors for non-MCP errors (MCP errors are already logged in mcp_client.py)
         for error in self.tower_errors:
             if error.error_type != WingmanInitializationErrorType.MCP_CONNECTION_FAILED:
@@ -1138,6 +1474,13 @@ class WingmanCore(WebSocketUser):
                 hotwords=list(set(combined_hotwords)),
             )
             text = transcription.text
+        elif provider == VoiceActivationSttProvider.PARAKEET:
+            transcription = self.parakeet.transcribe(
+                config=self.settings_service.settings.voice_activation.parakeet_config,
+                filename=recording_file,
+            )
+            if transcription:
+                text = transcription.text
 
         if text:
             wingman = self.tower.get_wingman_from_text(text)
@@ -1332,20 +1675,173 @@ class WingmanCore(WebSocketUser):
         return None
 
     # POST /send-text-to-wingman
-    async def send_text_to_wingman(self, text: str, wingman_name: str):
+    async def send_text_to_wingman(
+        self,
+        text: str = Form(""),
+        wingman_name: str = Form(""),
+        images: list[UploadFile] = None,
+    ):
         wingman = self.tower.get_wingman_by_name(wingman_name)
+        if not wingman or not text:
+            return
+
+        processed_images = None
+        if images:
+            if len(images) > 2:
+                raise HTTPException(
+                    status_code=422, detail="Maximum 2 images allowed per message."
+                )
+
+            # Resolve the active conversation model ID from the wingman config.
+            # The model lives under the provider-specific sub-config, not features.
+            model_id = ""
+            if hasattr(wingman, "config") and hasattr(wingman.config, "features"):
+                provider = wingman.config.features.conversation_provider
+                cfg = wingman.config
+                if provider == ConversationProvider.OPENAI and cfg.openai:
+                    model_id = cfg.openai.conversation_model or ""
+                elif provider == ConversationProvider.MISTRAL and cfg.mistral:
+                    model_id = cfg.mistral.conversation_model or ""
+                elif provider == ConversationProvider.GROQ and cfg.groq:
+                    model_id = cfg.groq.conversation_model or ""
+                elif provider == ConversationProvider.CEREBRAS and cfg.cerebras:
+                    model_id = cfg.cerebras.conversation_model or ""
+                elif provider == ConversationProvider.GOOGLE and cfg.google:
+                    model_id = cfg.google.conversation_model or ""
+                elif provider == ConversationProvider.OPENROUTER and cfg.openrouter:
+                    model_id = cfg.openrouter.conversation_model or ""
+                elif provider == ConversationProvider.LOCAL_LLM and cfg.local_llm:
+                    model_id = cfg.local_llm.conversation_model or ""
+                elif provider == ConversationProvider.WINGMAN_PRO and cfg.wingman_pro:
+                    model_id = cfg.wingman_pro.conversation_deployment or ""
+                elif provider == ConversationProvider.AZURE and cfg.azure and cfg.azure.conversation:
+                    model_id = cfg.azure.conversation.deployment_name or ""
+                elif provider == ConversationProvider.PERPLEXITY and cfg.perplexity:
+                    pmodel = cfg.perplexity.conversation_model
+                    model_id = pmodel.value if hasattr(pmodel, "value") else str(pmodel)
+                elif provider == ConversationProvider.XAI and cfg.xai:
+                    model_id = cfg.xai.conversation_model or ""
+
+            if model_id:
+                supports_vision = await self.model_metadata_service.supports_vision(model_id)
+                if not supports_vision:
+                    raise HTTPException(
+                        status_code=422,
+                        detail="The configured conversation model does not support vision/images.",
+                    )
+
+            processed_images = []
+            for img_file in images:
+                if not validate_image_mime(img_file.content_type or ""):
+                    raise HTTPException(
+                        status_code=422,
+                        detail=f"Unsupported image type: {img_file.content_type}. Allowed: PNG, JPEG, WebP, GIF.",
+                    )
+                img_bytes = await img_file.read()
+                b64, mime = process_image(img_bytes)
+                processed_images.append((b64, mime))
 
         def run_async_process():
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             try:
-                loop.run_until_complete(wingman.process(transcript=text))
+                loop.run_until_complete(
+                    wingman.process(transcript=text, images=processed_images)
+                )
             finally:
                 loop.close()
 
-        if wingman and text:
-            play_thread = threading.Thread(target=run_async_process)
-            play_thread.start()
+        play_thread = threading.Thread(target=run_async_process)
+        play_thread.start()
+
+    # POST /generate-greeting
+    async def generate_greeting(self, wingman_name: str):
+        """Generate an in-character greeting using the support model. UI-only — not sent to TTS or conversation history."""
+        wingman = self.tower.get_wingman_by_name(wingman_name)
+        if not wingman:
+            return
+
+        config = wingman.config
+
+        # Build context about how the user communicates with this wingman
+        settings = self.config_manager.settings_config
+        va_enabled = settings.voice_activation.enabled if settings.voice_activation else False
+
+        if va_enabled and config.is_voice_activation_default:
+            comm_context = "You are always listening — the user just speaks naturally to talk to you."
+        elif va_enabled:
+            comm_context = f"The user must say your name '{config.name}' somewhere in their sentence to talk to you."
+        else:
+            key = config.record_key or config.record_mouse_button or "a key"
+            comm_context = f"The user talks to you by holding the `{key}` key."
+
+        backstory = ""
+        if config.prompts and config.prompts.backstory:
+            backstory = config.prompts.backstory
+
+        # Check for a previous session summary to personalize the greeting
+        session_summary = ""
+        if hasattr(wingman, "ensure_memory_initialized"):
+            wingman.ensure_memory_initialized()
+        mem_service = getattr(wingman, "persistent_memory_service", None)
+        if mem_service:
+            try:
+                summaries = mem_service.get_all(entry_type="session_summary")
+                if summaries:
+                    session_summary = summaries[0].content
+            except Exception as e:
+                await self.printr.print_async(
+                    text=f"[{wingman_name}] Failed to retrieve session summary: {e}",
+                    color=LogType.WARNING,
+                    source=LogSource.SYSTEM,
+                    server_only=True,
+                )
+
+        await self.printr.print_async(
+            text=f"[{wingman_name}] Greeting: mem_service={'yes' if mem_service else 'no'}, session_summary={'yes' if session_summary else 'no'}",
+            color=LogType.INFO,
+            source=LogSource.SYSTEM,
+            server_only=True,
+        )
+
+        if session_summary:
+            system_prompt = get_prompt("greeting-returning").format(
+                name=config.name,
+                backstory=backstory,
+                session_summary=session_summary,
+                comm_context=comm_context,
+            )
+        else:
+            system_prompt = get_prompt("greeting-default").format(
+                name=config.name,
+                backstory=backstory,
+                comm_context=comm_context,
+            )
+
+        try:
+            response = self.local_ai_service.support(
+                text="Generate your greeting.",
+                system_prompt=system_prompt,
+            )
+
+            if response and self._connection_manager:
+                # Broadcast directly to set wingman_name explicitly
+                # (printr uses stack inspection which won't find a Wingman instance here)
+                await self._connection_manager.broadcast(
+                    LogCommand(
+                        text=response.text,
+                        log_type=LogType.LOCALMODEL,
+                        source=LogSource.WINGMAN,
+                        source_name=wingman_name,
+                        wingman_name=wingman_name,
+                    )
+                )
+        except Exception as e:
+            await self.printr.print_async(
+                text=f"Could not generate greeting: {e}",
+                color=LogType.WARNING,
+                source=LogSource.SYSTEM,
+            )
 
     # POST /send-audio-to-wingman
     async def send_audio_to_wingman(
@@ -1379,21 +1875,47 @@ class WingmanCore(WebSocketUser):
             play_thread.start()
 
     # POST /reset-conversation-history
-    def reset_conversation_history(self, wingman_name: Optional[str] = None):
+    async def reset_conversation_history(self, wingman_name: Optional[str] = None):
         if wingman_name:
             wingman = self.tower.get_wingman_by_name(wingman_name)
             if wingman:
-                wingman.reset_conversation_history()
+                await wingman.reset_conversation_history()
                 self.printr.toast(
                     f"Conversation history cleared for {wingman_name}.",
                 )
         else:
             for wingman in self.tower.wingmen:
-                wingman.reset_conversation_history()
+                await wingman.reset_conversation_history()
             self.printr.toast(
                 "Conversation history cleared.",
             )
         return True
+
+    # POST /condense-conversation
+    async def condense_conversation(self, wingman_name: str):
+        wingman = self.tower.get_wingman_by_name(wingman_name)
+        if not wingman:
+            return False
+        if not hasattr(wingman, "_condense_history"):
+            return False
+        await wingman._condense_history(force=True)
+        return True
+
+    # GET /wingman-context
+    def get_wingman_context(self, wingman_name: str) -> str:
+        wingman = self.tower.get_wingman_by_name(wingman_name)
+        if not wingman or not hasattr(wingman, "get_last_context"):
+            return ""
+        return wingman.get_last_context()
+
+    # GET /wingman-conversation
+    def get_wingman_conversation(
+        self, wingman_name: str, strip_nulls: bool = True
+    ) -> list[dict]:
+        wingman = self.tower.get_wingman_by_name(wingman_name)
+        if not wingman or not hasattr(wingman, "get_conversation_messages"):
+            return []
+        return wingman.get_conversation_messages(strip_nulls=strip_nulls)
 
     # GET /fasterwhisper/modelsizes
     def get_fasterwhisper_modelsizes(self):
@@ -1521,6 +2043,10 @@ class WingmanCore(WebSocketUser):
     # POST /open-filemanager/custom-voices
     def open_custom_voices_directory(self):
         show_in_file_manager(get_custom_voices_dir())
+
+    # POST /open-filemanager/local-models
+    def open_local_models_directory(self):
+        show_in_file_manager(get_local_models_dir())
 
     # GET /models/openrouter
     async def get_openrouter_models(self):
@@ -1689,6 +2215,19 @@ class WingmanCore(WebSocketUser):
         except ValueError as e:
             self.printr.toast_error(f"Google: \n{str(e)}")
             return []
+        finally:
+            await google.aclose()
+
+    # GET /models/metadata
+    async def get_model_metadata_all(self):
+        return await self.model_metadata_service.get_all()
+
+    # GET /models/metadata/{model_id}
+    async def get_model_metadata(self, model_id: str):
+        result = await self.model_metadata_service.get(model_id)
+        if result is None:
+            return {}
+        return result
 
     # GET /audio-library
     async def get_audio_library(self):
@@ -1706,6 +2245,539 @@ class WingmanCore(WebSocketUser):
         if self._connection_manager:
             command = AudioLibraryPlaybackFinishedCommand(audio_file=audio_file)
             self.ensure_async(self._connection_manager.broadcast(command))
+
+    # ── Local AI Endpoints ────────────────────────────────────────
+
+    # GET /settings/local-ai/status
+    async def get_local_ai_status(self) -> dict:
+        status = self.local_model_manager.get_status()
+        status["is_ready"] = self.local_ai_service.is_ready()
+        status["cuda_available"] = self.system_manager.is_cuda_available()
+        return status
+
+    # GET /settings/local-ai/backends
+    def get_local_ai_backends(self) -> list[str]:
+        backends = self.local_model_manager.get_available_backends()
+        # Filter CUDA out if not available on this machine
+        if not self.system_manager.is_cuda_available():
+            backends = [b for b in backends if b != "cuda"]
+        return backends
+
+    # GET /settings/local-ai/support-models
+    def get_local_ai_support_models(self) -> list[dict]:
+        return self.local_model_manager.get_support_models()
+
+    # GET /settings/local-ai/embed-models
+    def get_local_ai_embed_models(self) -> list[dict]:
+        return self.local_model_manager.get_embed_models()
+
+    # POST /settings/local-ai/download-models
+    async def download_local_ai_models(self) -> dict:
+        success = await self.local_model_manager.download_models(
+            cuda_available=self.system_manager.is_cuda_available()
+        )
+        if success:
+            await self.local_ai_service.initialize()
+        return {
+            "success": success,
+            **self.local_model_manager.get_status(),
+        }
+
+    # POST /settings/local-ai/playground/chat
+    async def playground_chat(self, request: PlaygroundChatRequest) -> dict:
+        """Test the support model with a system + user message."""
+        if not self.local_ai_service.is_ready():
+            return {
+                "success": False,
+                "error": "Local AI service is not ready. Make sure models are loaded.",
+            }
+
+        benchmark = Benchmark("playground_chat")
+        benchmark.start_snapshot("inference")
+        result = self.local_ai_service.support(
+            text=request.user_message,
+            system_prompt=request.system_message,
+        )
+        benchmark.finish_snapshot()
+        bench_result = benchmark.finish()
+
+        if result.text is None:
+            return {"success": False, "error": "Support model returned no result."}
+
+        return {
+            "success": True,
+            "response": result.text,
+            "benchmark": bench_result.model_dump(),
+        }
+
+    # POST /settings/local-ai/playground/embed
+    async def playground_embed(self, texts: list[str] = Body(...)) -> dict:
+        """Test the embedding model with one or more texts."""
+        if not self.local_ai_service.is_ready():
+            return {
+                "success": False,
+                "error": "Local AI service is not ready. Make sure models are loaded.",
+            }
+
+        benchmark = Benchmark("playground_embed")
+        benchmark.start_snapshot("inference")
+        result = self.local_ai_service.embed(texts)
+        benchmark.finish_snapshot()
+        bench_result = benchmark.finish()
+
+        if result is None:
+            return {"success": False, "error": "Embedding returned no result."}
+
+        return {
+            "success": True,
+            "embeddings": [
+                {"text": t, "dimensions": len(e), "preview": e[:8]}
+                for t, e in zip(texts, result)
+            ],
+            "benchmark": bench_result.model_dump(),
+        }
+
+    # POST /settings/local-ai/playground/benchmark
+    async def playground_benchmark(
+        self,
+        iterations: int = 3,
+    ) -> dict:
+        """Run an automated benchmark suite over both models."""
+        if not self.local_ai_service.is_ready():
+            return {
+                "success": False,
+                "error": "Local AI service is not ready. Make sure models are loaded.",
+            }
+
+        iterations = max(1, min(iterations, 20))
+
+        benchmark = Benchmark("full_benchmark")
+        results = {"support_runs": [], "embed_runs": []}
+
+        # Support model benchmark
+        test_texts = [
+            "The quick brown fox jumps over the lazy dog. This is a short test sentence.",
+            "Artificial intelligence is transforming how we interact with technology. Large language models can understand and generate human-like text, while embedding models convert text into numerical vectors that capture semantic meaning. These capabilities enable powerful applications like semantic search, text summarization, and conversational AI assistants.",
+            "In a galaxy far, far away, there existed a civilization that had mastered the art of faster-than-light travel. Their ships could traverse the vast emptiness between star systems in mere hours. The key to their technology was a crystal found only in the deepest mines of their home world. This crystal, when properly refined and charged, could bend the fabric of spacetime itself, creating tunnels through which spacecraft could pass almost instantaneously. However, the supply of this precious mineral was dwindling, and the civilization faced an existential crisis as they searched for alternatives.",
+        ]
+
+        for i in range(iterations):
+            for j, text in enumerate(test_texts):
+                label = f"support_iter{i+1}_text{j+1}_{len(text)}chars"
+                benchmark.start_snapshot(label)
+                res = self.local_ai_service.support(text)
+                benchmark.finish_snapshot()
+
+                # Compute tokens/sec from the snapshot we just finished
+                snap = benchmark.snapshots[-1] if benchmark.snapshots else None
+                elapsed_sec = (snap.execution_time_ms / 1000.0) if snap else 0
+                completion_tokens = (
+                    res.completion_tokens if res.completion_tokens else 0
+                )
+                tokens_per_sec = (
+                    completion_tokens / elapsed_sec
+                    if elapsed_sec > 0 and completion_tokens > 0
+                    else 0
+                )
+
+                results["support_runs"].append(
+                    {
+                        "iteration": i + 1,
+                        "input_length": len(text),
+                        "output_length": len(res.text) if res.text else 0,
+                        "prompt_tokens": res.prompt_tokens if res.prompt_tokens else 0,
+                        "completion_tokens": completion_tokens,
+                        "tokens_per_sec": round(tokens_per_sec, 1),
+                        "label": label,
+                    }
+                )
+
+        # Embed benchmark
+        embed_inputs = [
+            ["Hello world"],
+            ["The quick brown fox", "jumps over the lazy dog"],
+            [
+                "Artificial intelligence",
+                "machine learning",
+                "deep neural networks",
+                "natural language processing",
+            ],
+        ]
+
+        for i in range(iterations):
+            for j, texts in enumerate(embed_inputs):
+                label = f"embed_iter{i+1}_batch{j+1}_{len(texts)}texts"
+                benchmark.start_snapshot(label)
+                res = self.local_ai_service.embed(texts)
+                benchmark.finish_snapshot()
+                results["embed_runs"].append(
+                    {
+                        "iteration": i + 1,
+                        "num_texts": len(texts),
+                        "dimensions": len(res[0]) if res else 0,
+                        "label": label,
+                    }
+                )
+
+        bench_result = benchmark.finish()
+        snapshots = bench_result.snapshots or []
+
+        # Calculate averages
+        sum_times = [
+            s.execution_time_ms for s in snapshots if s.label.startswith("support_")
+        ]
+        emb_times = [
+            s.execution_time_ms for s in snapshots if s.label.startswith("embed_")
+        ]
+
+        # Tokens/sec stats from support runs
+        tps_values = [
+            r["tokens_per_sec"]
+            for r in results["support_runs"]
+            if r["tokens_per_sec"] > 0
+        ]
+        avg_tokens_per_sec = (
+            round(sum(tps_values) / len(tps_values), 1) if tps_values else 0
+        )
+
+        return {
+            "success": True,
+            "iterations": iterations,
+            "total_time_ms": bench_result.execution_time_ms,
+            "formatted_total_time": bench_result.formatted_execution_time,
+            "support_avg_ms": sum(sum_times) / len(sum_times) if sum_times else 0,
+            "embed_avg_ms": sum(emb_times) / len(emb_times) if emb_times else 0,
+            "avg_tokens_per_sec": avg_tokens_per_sec,
+            "snapshots": [s.model_dump() for s in snapshots],
+            "runs": results,
+        }
+
+    # POST /settings/test/whispercpp
+    async def test_whispercpp(self) -> TestConnectionResult:
+        """Test the whisper.cpp server by sending a short audio file for transcription."""
+        settings = self.settings_service.settings.voice_activation.whispercpp
+        try:
+            response = requests.get(
+                url=f"{settings.host}:{settings.port}",
+                timeout=5,
+            )
+            if response.ok:
+                return TestConnectionResult(success=True, provider="whispercpp")
+            return TestConnectionResult(
+                success=False,
+                provider="whispercpp",
+                error=f"Server returned status {response.status_code}",
+            )
+        except requests.ConnectionError:
+            return TestConnectionResult(
+                success=False,
+                provider="whispercpp",
+                error=f"Could not connect to {settings.host}:{settings.port}. Is the server running?",
+            )
+        except Exception as e:
+            return TestConnectionResult(
+                success=False, provider="whispercpp", error=str(e)
+            )
+
+    # POST /settings/test/parakeet
+    async def test_parakeet(self) -> TestConnectionResult:
+        """Test Parakeet by transcribing a short audio sample (locally or remotely)."""
+        settings = self.settings_service.settings.voice_activation.parakeet
+
+        if not settings.enable:
+            return TestConnectionResult(
+                success=False,
+                provider="parakeet",
+                error="Parakeet is not enabled.",
+            )
+
+        wav_path = os.path.join(self.app_root_path, "audio_samples", "beep.wav")
+        config = ParakeetSttConfig(temperature=0.0)
+
+        if settings.run_locally:
+            if not self.parakeet.model:
+                return TestConnectionResult(
+                    success=False,
+                    provider="parakeet",
+                    error="Parakeet model is not loaded. Enable Parakeet in settings first.",
+                )
+
+        try:
+            result = self.parakeet.transcribe(config=config, filename=wav_path)
+            if result and result.text is not None:
+                return TestConnectionResult(success=True, provider="parakeet")
+            return TestConnectionResult(
+                success=False,
+                provider="parakeet",
+                error="Transcription returned no result.",
+            )
+        except Exception as e:
+            return TestConnectionResult(
+                success=False, provider="parakeet", error=str(e)
+            )
+
+    # POST /settings/test/xvasynth
+    async def test_xvasynth(self) -> TestConnectionResult:
+        """Test the XVASynth server connection."""
+        settings = self.settings_service.settings.xvasynth
+        try:
+            response = requests.get(
+                url=f"{settings.host}:{settings.port}",
+                timeout=10,
+            )
+            if response.ok:
+                return TestConnectionResult(success=True, provider="xvasynth")
+            return TestConnectionResult(
+                success=False,
+                provider="xvasynth",
+                error=f"Server returned status {response.status_code}",
+            )
+        except requests.ConnectionError:
+            return TestConnectionResult(
+                success=False,
+                provider="xvasynth",
+                error=f"Could not connect to {settings.host}:{settings.port}. Is the server running?",
+            )
+        except Exception as e:
+            return TestConnectionResult(
+                success=False, provider="xvasynth", error=str(e)
+            )
+
+    # POST /settings/test/local-ai/support
+    async def test_local_ai_support(self) -> TestConnectionResult:
+        """Test the local AI support model."""
+        if not self.local_ai_service.is_ready():
+            return TestConnectionResult(
+                success=False,
+                provider="local_ai_support",
+                error="Local AI service is not ready. Make sure models are loaded.",
+            )
+        try:
+            result = self.local_ai_service.support(
+                text="The quick brown fox jumps over the lazy dog.",
+            )
+            if result and result.text:
+                return TestConnectionResult(success=True, provider="local_ai_support")
+            return TestConnectionResult(
+                success=False,
+                provider="local_ai_support",
+                error="Support model returned no result.",
+            )
+        except Exception as e:
+            return TestConnectionResult(
+                success=False, provider="local_ai_support", error=str(e)
+            )
+
+    # POST /settings/test/local-ai/embed
+    async def test_local_ai_embed(self) -> TestConnectionResult:
+        """Test the local AI embedding model."""
+        if not self.local_ai_service.is_ready():
+            return TestConnectionResult(
+                success=False,
+                provider="local_ai_embed",
+                error="Local AI service is not ready. Make sure models are loaded.",
+            )
+        try:
+            result = self.local_ai_service.embed(["hello world"])
+            if result and len(result) > 0:
+                return TestConnectionResult(success=True, provider="local_ai_embed")
+            return TestConnectionResult(
+                success=False,
+                provider="local_ai_embed",
+                error="Embedding returned no result.",
+            )
+        except Exception as e:
+            return TestConnectionResult(
+                success=False, provider="local_ai_embed", error=str(e)
+            )
+
+    # POST /settings/test/hud-server
+    async def test_hud_server(self) -> TestConnectionResult:
+        """Test the HUD server connection via its health endpoint."""
+        settings = self.settings_service.settings.hud_server
+        try:
+            host = settings.host or "127.0.0.1"
+            port = settings.port or 7862
+            # Ensure host has a scheme
+            if not host.startswith("http"):
+                host = f"http://{host}"
+            response = requests.get(
+                url=f"{host}:{port}/health",
+                timeout=5,
+            )
+            if response.ok:
+                data = response.json()
+                if data.get("status") == "healthy":
+                    return TestConnectionResult(success=True, provider="hud_server")
+                return TestConnectionResult(
+                    success=False,
+                    provider="hud_server",
+                    error=f"HUD server responded but status is '{data.get('status', 'unknown')}'",
+                )
+            return TestConnectionResult(
+                success=False,
+                provider="hud_server",
+                error=f"Server returned status {response.status_code}",
+            )
+        except requests.ConnectionError:
+            return TestConnectionResult(
+                success=False,
+                provider="hud_server",
+                error=f"Could not connect to HUD server. Is it running?",
+            )
+        except Exception as e:
+            return TestConnectionResult(
+                success=False, provider="hud_server", error=str(e)
+            )
+
+    # POST /settings/test/pocket-tts
+    async def test_pocket_tts(self) -> TestConnectionResult:
+        """Test PocketTTS: check local model is loaded or remote server is reachable."""
+        settings = self.settings_service.settings.pocket_tts
+        if not settings.enable:
+            return TestConnectionResult(
+                success=False,
+                provider="pocket_tts",
+                error="PocketTTS is not enabled.",
+            )
+
+        if settings.run_locally:
+            if self.pocket_tts.model is not None:
+                return TestConnectionResult(success=True, provider="pocket_tts")
+            return TestConnectionResult(
+                success=False,
+                provider="pocket_tts",
+                error="PocketTTS model is not loaded. Try toggling PocketTTS off and on.",
+            )
+
+        # Remote mode — hit the server's health endpoint
+        try:
+            base = PocketTTS.normalize_remote_url(settings.host, settings.port)
+            response = requests.get(
+                url=f"{base}/health",
+                timeout=5,
+            )
+            if response.ok:
+                return TestConnectionResult(success=True, provider="pocket_tts")
+            return TestConnectionResult(
+                success=False,
+                provider="pocket_tts",
+                error=f"Server returned status {response.status_code}",
+            )
+        except requests.ConnectionError:
+            return TestConnectionResult(
+                success=False,
+                provider="pocket_tts",
+                error=f"Could not connect to PocketTTS server at {base}. Is it running?",
+            )
+        except Exception as e:
+            return TestConnectionResult(
+                success=False, provider="pocket_tts", error=str(e)
+            )
+
+    # POST /local-ai/support
+    async def api_support(
+        self,
+        text: str = Body(..., embed=True),
+        system_prompt: str = Body(
+            "",
+            embed=True,
+        ),
+    ) -> dict:
+        """Public API: Process text using the local AI support model.
+
+        Output token budget is computed automatically from the context window.
+        """
+        if not self.local_ai_service.is_ready():
+            raise HTTPException(
+                status_code=503,
+                detail="Local AI service is not ready. Make sure models are loaded.",
+            )
+        result = self.local_ai_service.support(
+            text=text, system_prompt=system_prompt
+        )
+        if result.text is None:
+            raise HTTPException(status_code=500, detail="Support model call failed.")
+        return {"result": result.text}
+
+    # POST /local-ai/enhance-backstory
+    async def api_enhance_backstory(
+        self,
+        backstory: str = Body(..., embed=True),
+    ) -> dict:
+        """Enhance a wingman backstory using the local AI service."""
+        if not self.local_ai_service.is_ready():
+            raise HTTPException(
+                status_code=503,
+                detail="Local AI service is not ready. Make sure models are loaded.",
+            )
+        system_prompt = get_prompt("enhance-backstory")
+        budget = self.local_ai_service.get_token_budget(system_prompt)
+
+        # Hard cap on backstory size (cost control + conversation model budget)
+        MAX_BACKSTORY_TOKENS = 2048
+        backstory_tokens = count_tokens(backstory)
+
+        if backstory_tokens > MAX_BACKSTORY_TOKENS:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Backstory too long: ~{backstory_tokens} tokens "
+                    f"(max {MAX_BACKSTORY_TOKENS}). "
+                    f"Consider shortening your backstory."
+                ),
+            )
+
+        if backstory_tokens > budget.max_input_tokens:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Backstory too long: ~{backstory_tokens} tokens "
+                    f"(max ~{budget.max_input_tokens} for current context size "
+                    f"of {budget.n_ctx}). "
+                    f"Shorten the backstory or increase the Local AI context size."
+                ),
+            )
+
+        result = self.local_ai_service.support(
+            text=backstory,
+            system_prompt=system_prompt,
+        )
+        if result.text is None:
+            raise HTTPException(status_code=500, detail="Backstory enhancement failed.")
+        return {"result": result.text}
+
+    # GET /local-ai/enhance-backstory-budget
+    async def api_enhance_backstory_budget(self) -> dict:
+        """Return the max backstory tokens for enhancement based on current settings.
+
+        The output scales dynamically (model gets as many output tokens as input tokens),
+        so the max input is roughly half the available space after the prompt.
+        We reserve a minimum of 256 output tokens.
+        """
+        system_prompt = get_prompt("enhance-backstory")
+        budget = self.local_ai_service.get_token_budget(system_prompt)
+        # Hard cap for cost control, also limited by local AI context
+        MAX_BACKSTORY_TOKENS = 2048
+        max_backstory_tokens = min(MAX_BACKSTORY_TOKENS, budget.max_input_tokens)
+        return {
+            "max_backstory_tokens": max_backstory_tokens,
+            "n_ctx": budget.n_ctx,
+            "system_tokens": budget.system_tokens,
+        }
+
+    # POST /local-ai/embed
+    async def api_embed(self, texts: list[str] = Body(...)) -> dict:
+        """Public API: Generate embeddings using the local AI service."""
+        if not self.local_ai_service.is_ready():
+            raise HTTPException(
+                status_code=503,
+                detail="Local AI service is not ready. Make sure models are loaded.",
+            )
+        result = self.local_ai_service.embed(texts)
+        if result is None:
+            raise HTTPException(status_code=500, detail="Embedding failed.")
+        return {"embeddings": result}
 
     # POST /elevenlabs/generate-sfx
     async def generate_sfx_elevenlabs(
@@ -1784,6 +2856,10 @@ class WingmanCore(WebSocketUser):
             self.stop_xvasynth()
         if self.settings_service.settings.pocket_tts.enable:
             self.stop_pocket_tts()
+
+        # Stop managed llama-server processes
+        self.llama_cpp_provider.unload_models()
+
         await self.unload_tower()
 
         self.printr.print(
@@ -1791,3 +2867,118 @@ class WingmanCore(WebSocketUser):
             server_only=True,
             color=LogType.SYSTEM,
         )
+
+    # GET /memories/{wingman_name}
+    def get_memories(self, wingman_name: str):
+        wingman = self.tower.get_wingman_by_name(wingman_name)
+        if not wingman or not hasattr(wingman, "ensure_memory_initialized"):
+            return []
+        wingman.ensure_memory_initialized()
+        if not wingman.persistent_memory_service:
+            return []
+        entries = wingman.persistent_memory_service.get_all()
+        return [
+            MemoryEntryResponse(
+                id=e.id,
+                collection=e.collection,
+                entry_type=e.entry_type,
+                content=e.content,
+                source_wingman=e.source_wingman,
+                session_id=e.session_id,
+                created_at=e.created_at,
+                updated_at=e.updated_at,
+            )
+            for e in entries
+        ]
+
+    # PUT /memories/{entry_id}
+    async def update_memory(self, entry_id: int, request: MemoryUpdateRequest):
+        for wingman in self.tower.wingmen:
+            if hasattr(wingman, "persistent_memory_service") and wingman.persistent_memory_service:
+                entries = wingman.persistent_memory_service.get_all()
+                if any(e.id == entry_id for e in entries):
+                    await wingman.persistent_memory_service.update_memory(entry_id, request.content)
+                    return True
+        return False
+
+    # DELETE /memories/{entry_id}
+    def delete_memory(self, entry_id: int):
+        for wingman in self.tower.wingmen:
+            if hasattr(wingman, "persistent_memory_service") and wingman.persistent_memory_service:
+                entries = wingman.persistent_memory_service.get_all()
+                if any(e.id == entry_id for e in entries):
+                    wingman.persistent_memory_service.delete_memory(entry_id)
+                    return True
+        return False
+
+    # DELETE /memories/{wingman_name}/all
+    def clear_memories(self, wingman_name: str):
+        wingman = self.tower.get_wingman_by_name(wingman_name)
+        if wingman and hasattr(wingman, "persistent_memory_service") and wingman.persistent_memory_service:
+            wingman.persistent_memory_service.clear_collection()
+            self.printr.toast(f"All memories cleared for {wingman_name}.")
+            return True
+        return False
+
+    # POST /memories/{wingman_name}/test-extraction
+    async def test_memory_extraction(
+        self,
+        wingman_name: str,
+        messages: list[dict] = Body(...),
+    ):
+        """Test memory extraction with a canned conversation.
+
+        Send a list of messages like:
+        [
+            {"role": "user", "content": "I was born in 1986."},
+            {"role": "assistant", "content": "Noted! I'll remember that."},
+            {"role": "user", "content": "I fly a Constellation Taurus."},
+            ...
+        ]
+
+        Returns the raw extraction result (facts + summary) without storing anything.
+        """
+        wingman = self.tower.get_wingman_by_name(wingman_name)
+        if not wingman or not hasattr(wingman, "ensure_memory_initialized"):
+            raise HTTPException(404, f"Wingman '{wingman_name}' not found")
+
+        wingman.ensure_memory_initialized()
+        svc = wingman.persistent_memory_service
+        if not svc:
+            raise HTTPException(400, f"Persistent memory not enabled for '{wingman_name}'")
+
+        from services.file import get_prompt
+
+        # Format messages the same way extract_memories does
+        text_parts = []
+        for msg in messages:
+            role = msg.get("role", "unknown")
+            content = msg.get("content", "")
+            if content and role in ("user", "assistant"):
+                text_parts.append(f"{role}: {content}")
+
+        if not text_parts:
+            raise HTTPException(400, "No valid user/assistant messages provided")
+
+        conversation_text = "\n".join(text_parts)
+        system_prompt = get_prompt("extract-memories")
+
+        # Call the support model (sync, run in thread)
+        result = await asyncio.to_thread(
+            svc.local_ai_service.support,
+            text=conversation_text,
+            system_prompt=system_prompt,
+        )
+
+        if not result or not result.text:
+            return {"raw_response": None, "parsed": None, "error": "No response from support model"}
+
+        # Parse JSON (with repair for small-model quirks)
+        parsed = svc._parse_json_response(result.text)
+
+        return {
+            "raw_response": result.text,
+            "parsed": parsed,
+            "message_count": len(messages),
+            "conversation_length": len(conversation_text),
+        }

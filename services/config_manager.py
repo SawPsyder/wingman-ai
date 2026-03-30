@@ -135,9 +135,7 @@ class ConfigManager:
 
             if err_type == "missing":
                 field = loc[-1] if loc else "?"
-                lines.append(
-                    f"  • {path_str}: required field '{field}' is missing"
-                )
+                lines.append(f"  • {path_str}: required field '{field}' is missing")
             else:
                 lines.append(f"  • {path_str}: {raw_msg}")
 
@@ -210,6 +208,26 @@ class ConfigManager:
         return ConfigDirInfo(
             name=config_name,
             directory=config_name,
+            is_default=False,
+            is_deleted=False,
+        )
+
+    def duplicate_config(self, source_config_dir: ConfigDirInfo, new_name: str) -> ConfigDirInfo:
+        source_path = path.join(self.config_dir, source_config_dir.directory)
+        if not path.isdir(source_path):
+            raise FileNotFoundError(
+                f"Source config directory not found: {source_config_dir.directory}"
+            )
+
+        dest_path = path.join(self.config_dir, new_name)
+        if path.exists(dest_path):
+            raise FileExistsError(f"Config '{new_name}' already exists.")
+
+        shutil.copytree(source_path, dest_path)
+
+        return ConfigDirInfo(
+            name=new_name,
+            directory=new_name,
             is_default=False,
             is_deleted=False,
         )
@@ -446,7 +464,9 @@ class ConfigManager:
                 if filename.endswith(".yaml") and not filename.startswith("."):
                     wingman_config = self.read_config(path.join(root, filename))
                     try:
-                        merged_config = self.merge_configs(default_config, wingman_config)
+                        merged_config = self.merge_configs(
+                            default_config, wingman_config
+                        )
                     except ConfigValidationError as e:
                         # Re-raise with the source YAML file name prepended so the
                         # user immediately knows which file to open and fix.
@@ -1385,6 +1405,7 @@ class ConfigManager:
         if system_manager.is_cuda_available():
             self.settings_config.voice_activation.fasterwhisper.device = "cuda"
             self.settings_config.voice_activation.fasterwhisper.compute_type = "auto"
+            self.settings_config.llama_cpp.gpu_backend = "cuda"
             self.printr.print(
                 f"- GPU detected: {system_manager.get_gpu_name()}",
                 color=LogType.STARTUP,
@@ -1394,6 +1415,13 @@ class ConfigManager:
             )
             self.printr.print(
                 "- Auto-configured FasterWhisper to use CUDA",
+                color=LogType.STARTUP,
+                server_only=True,
+                source=LogSource.SYSTEM,
+                source_name=self.log_source_name,
+            )
+            self.printr.print(
+                "- Auto-configured Local AI to use CUDA",
                 color=LogType.STARTUP,
                 server_only=True,
                 source=LogSource.SYSTEM,
@@ -1652,6 +1680,7 @@ class ConfigManager:
             "pocket_tts",
             "wingman_pro",
             "perplexity",
+            "parakeet",
             "xai",
             "openai_compatible_tts",
         ]:

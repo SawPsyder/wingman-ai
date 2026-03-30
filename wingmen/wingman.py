@@ -28,6 +28,7 @@ from api.enums import (
     WingmanInitializationErrorType,
 )
 from providers.faster_whisper import FasterWhisper
+from providers.parakeet import Parakeet
 from providers.whispercpp import Whispercpp
 from providers.xvasynth import XVASynth
 from providers.pocket_tts import PocketTTS
@@ -65,6 +66,7 @@ class Wingman:
         audio_library: AudioLibrary,
         whispercpp: Whispercpp,
         fasterwhisper: FasterWhisper,
+        parakeet: Parakeet,
         xvasynth: XVASynth,
         pocket_tts: PocketTTS,
         tower: "Tower",
@@ -106,14 +108,20 @@ class Wingman:
         self.fasterwhisper = fasterwhisper
         """A class that handles local transcriptions using FasterWhisper."""
 
+        self.parakeet = parakeet
+        """A class that handles local transcriptions using NVIDIA Parakeet TDT via ONNX Runtime."""
+
         self.xvasynth = xvasynth
         """A class that handles the communication with the XVASynth server for TTS."""
-        
+
         self.pocket_tts = pocket_tts
         """A class that handles the communication with the PocketTTS server for TTS."""
 
         self.tower = tower
         """The Tower instance that manages all Wingmen in the same config dir."""
+
+        self.last_turn_prompt_tokens: int = 0
+        self.last_turn_completion_tokens: int = 0
 
         self.skills: list[Skill] = []
 
@@ -260,7 +268,12 @@ class Wingman:
         # Get discoverable skills list (whitelist)
         discoverable_skills = self.config.discoverable_skills
 
-        for skill_folder_name, skill_config_path, _is_custom, _is_local in available_skills:
+        for (
+            skill_folder_name,
+            skill_config_path,
+            _is_custom,
+            _is_local,
+        ) in available_skills:
             try:
                 # Load default skill config first to get the display name
                 skill_config_dict = ModuleManager.read_config(skill_config_path)
@@ -386,7 +399,12 @@ class Wingman:
                 folder_name = _get_skill_folder_from_module(skill_config.module)
                 user_skill_configs[folder_name] = skill_config
 
-        for skill_folder_name, skill_config_path, _is_custom, _is_local in available_skills:
+        for (
+            skill_folder_name,
+            skill_config_path,
+            _is_custom,
+            _is_local,
+        ) in available_skills:
             try:
                 skill_config_dict = ModuleManager.read_config(skill_config_path)
                 if not skill_config_dict:
@@ -487,14 +505,14 @@ class Wingman:
             printr.print(traceback.format_exc(), color=LogType.ERROR, server_only=True)
             return False, error_msg
 
-    def reset_conversation_history(self):
+    async def reset_conversation_history(self):
         """This function is called when the user triggers the ResetConversationHistory command.
         It's a global command that should be implemented by every Wingman that keeps a message history.
         """
 
     # ──────────────────────────── The main processing loop ──────────────────────────── #
 
-    async def process(self, audio_input_wav: str = None, transcript: str = None):
+    async def process(self, audio_input_wav: str = None, transcript: str = None, images: list[tuple[str, str]] = None):
         """The main method that gets called when the wingman is activated. This method controls what your wingman actually does and you can override it if you want to.
 
         The base implementation here triggers the transcription and processing of the given audio input.
@@ -522,6 +540,9 @@ class Wingman:
 
             interrupt = None
             if transcript:
+                additional_data = None
+                if images:
+                    additional_data = {"images": [b64 for b64, _mime in images]}
                 await printr.print_async(
                     f"{transcript}",
                     color=LogType.USER,
@@ -530,6 +551,7 @@ class Wingman:
                     benchmark_result=(
                         benchmark_transcribe.finish() if benchmark_transcribe else None
                     ),
+                    additional_data=additional_data,
                 )
 
                 # Further process the transcript.
@@ -538,13 +560,21 @@ class Wingman:
                 benchmark_llm = Benchmark(label="Command/AI Processing")
                 process_result, instant_response, skill, interrupt = (
                     await self._get_response_for_transcript(
-                        transcript=transcript, benchmark=benchmark_llm
+                        transcript=transcript, benchmark=benchmark_llm, images=images
                     )
                 )
 
                 actual_response = instant_response or process_result
 
                 if actual_response:
+                    token_usage = None
+                    if self.last_turn_prompt_tokens or self.last_turn_completion_tokens:
+                        token_usage = (
+                            self.last_turn_prompt_tokens,
+                            self.last_turn_completion_tokens,
+                        )
+                        self.last_turn_prompt_tokens = 0
+                        self.last_turn_completion_tokens = 0
                     await printr.print_async(
                         f"{actual_response}",
                         color=LogType.POSITIVE,
@@ -552,6 +582,7 @@ class Wingman:
                         source_name=self.name,
                         skill_name=skill.name if skill else "",
                         benchmark_result=benchmark_llm.finish(),
+                        token_usage=token_usage,
                     )
 
             if process_result:
@@ -581,7 +612,7 @@ class Wingman:
         return None
 
     async def _get_response_for_transcript(
-        self, transcript: str, benchmark: Benchmark
+        self, transcript: str, benchmark: Benchmark, images: list[tuple[str, str]] = None
     ) -> tuple[str | None, str | None, Skill | None, bool | None]:
         """Processes the transcript and return a response as text. This where you'll do most of your work.
         Pass the transcript to AI providers and build a conversation. Call commands or APIs. Play temporary results to the user etc.
@@ -697,7 +728,9 @@ class Wingman:
             printr.print(traceback.format_exc(), color=LogType.ERROR, server_only=True)
             return None
 
-    async def _execute_command(self, command: CommandConfig, is_instant=False) -> tuple[str | None, str]:
+    async def _execute_command(
+        self, command: CommandConfig, is_instant=False
+    ) -> tuple[str | None, str]:
         """Triggers the execution of a command. This base implementation executes the keypresses defined in the command.
 
         Args:
@@ -728,12 +761,15 @@ class Wingman:
 
             # handle the global special commands:
             if command.name == "ResetConversationHistory":
-                self.reset_conversation_history()
+                await self.reset_conversation_history()
                 await printr.print_async(
                     f"Executed command: {command.name}", color=LogType.COMMAND
                 )
 
-            return self._select_instant_command_response(command), command.additional_context or "OK"
+            return (
+                self._select_instant_command_response(command),
+                command.additional_context or "OK",
+            )
         except Exception as e:
             await printr.print_async(
                 f"Error executing command '{command.name}' for Wingman '{self.name}': {str(e)}",
@@ -762,13 +798,15 @@ class Wingman:
             """
             if not hotkey:
                 return False
-            tokens = hotkey.lower().split('+')
-            return any(token.startswith('num ') for token in tokens)
+            tokens = hotkey.lower().split("+")
+            return any(token.startswith("num ") for token in tokens)
 
         try:
             for action in command.actions:
                 if action.keyboard:
-                    if action.keyboard.hotkey_codes and not contains_numpad_key(action.keyboard.hotkey):
+                    if action.keyboard.hotkey_codes and not contains_numpad_key(
+                        action.keyboard.hotkey
+                    ):
                         code = action.keyboard.hotkey_codes
                     else:
                         code = action.keyboard.hotkey
@@ -999,8 +1037,7 @@ class Wingman:
         self.tower.save_wingman_commands(self.name)
 
     async def update_settings(self, settings: SettingsConfig):
-        """Update the settings of the Wingman. This method should always be called when the user Settings have changed.
-        """
+        """Update the settings of the Wingman. This method should always be called when the user Settings have changed."""
         self.settings = settings
 
         # Propagate settings changes to already-loaded skills

@@ -16,6 +16,8 @@ class LogType(Enum):
     SKILL = "skill"  # Dedicated color for Skills-related messages (system-level)
     COMMAND = "command"  # Dedicated color for Command execution messages
     WINGMAN = "wingman"  # Dedicated color for Wingman-specific status messages
+    LOCALMODEL = "localmodel"  # Messages from the local support/embedding model — not part of conversation history
+    MEMORY = "memory"  # Persistent memory operations (recall, store, forget)
 
     # Conversation messages
     USER = "user"  # Pink/Purple - user speech/input
@@ -144,6 +146,7 @@ class SttProvider(Enum):
     AZURE_SPEECH = "azure_speech"
     WHISPERCPP = "whispercpp"
     FASTER_WHISPER = "fasterwhisper"
+    PARAKEET = "parakeet"
     WINGMAN_PRO = "wingman_pro"
     GROQ = "groq"
 
@@ -153,6 +156,7 @@ class VoiceActivationSttProvider(Enum):
     AZURE = "azure"
     WHISPERCPP = "whispercpp"
     FASTER_WHISPER = "fasterwhisper"
+    PARAKEET = "parakeet"
     WINGMAN_PRO = "wingman_pro"
     GROQ = "groq"
 

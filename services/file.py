@@ -1,9 +1,27 @@
 from os import makedirs, path
+from functools import lru_cache
 from platformdirs import PlatformDirs
 from services.system_manager import LOCAL_VERSION
 
 APP_NAME = "WingmanAI"
 APP_AUTHOR = "ShipBit"
+
+_PROMPTS_DIR = path.join(path.abspath(path.dirname(__file__)), "..", "prompts")
+
+
+@lru_cache(maxsize=None)
+def get_prompt(name: str) -> str:
+    """Load a prompt template from the prompts/ directory.
+
+    Args:
+        name: Filename without extension, e.g. 'condense-conversation'.
+
+    Returns:
+        The prompt text with leading/trailing whitespace stripped.
+    """
+    filepath = path.join(_PROMPTS_DIR, f"{name}.md")
+    with open(filepath, "r", encoding="utf-8") as f:
+        return f.read().strip()
 
 
 def get_writable_dir(subdir: str = None) -> str:
@@ -69,6 +87,24 @@ def get_audio_library_dir() -> str:
     return audio_library_path
 
 
+def get_local_models_dir() -> str:
+    """Get the path to the local AI models directory.
+
+    NOT versioned - models persist across Wingman AI updates.
+    Location: APPDATA/WingmanAI/local_models/
+    """
+    dirs = PlatformDirs(
+        appname=APP_NAME,
+        appauthor=APP_AUTHOR,
+        ensure_exists=True,
+        roaming=True,
+    )
+    local_models_path = path.join(dirs.user_data_dir, "local_models")
+    if not path.exists(local_models_path):
+        makedirs(local_models_path)
+    return local_models_path
+
+
 def get_generated_files_dir(skill_name: str) -> str:
     """Get the path to a skill's generated files directory.
 
@@ -110,6 +146,24 @@ def get_custom_voices_dir() -> str:
         makedirs(custom_voices_path)
     _create_custom_voices_readme(custom_voices_path)
     return custom_voices_path
+
+
+def get_persistent_memory_dir() -> str:
+    """Get the path to the persistent memory directory.
+
+    NOT versioned - persistent memory survives across Wingman AI updates.
+    Location: APPDATA/WingmanAI/persistent_memory/
+    """
+    dirs = PlatformDirs(
+        appname=APP_NAME,
+        appauthor=APP_AUTHOR,
+        ensure_exists=True,
+        roaming=True,
+    )
+    persistent_memory_path = path.join(dirs.user_data_dir, "persistent_memory")
+    if not path.exists(persistent_memory_path):
+        makedirs(persistent_memory_path)
+    return persistent_memory_path
 
 
 def _create_custom_voices_readme(custom_voices_path: str) -> None:
