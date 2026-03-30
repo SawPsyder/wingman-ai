@@ -120,9 +120,9 @@ class SettingsService:
             settings=settings.voice_activation.fasterwhisper
         )
 
-        # Parakeet
+        # Parakeet (async to avoid blocking event loop during model downloads)
         if self.parakeet:
-            self.parakeet.update_settings(
+            await self.parakeet.update_settings_async(
                 settings=settings.voice_activation.parakeet
             )
 

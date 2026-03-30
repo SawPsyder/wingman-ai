@@ -2495,6 +2495,12 @@ class WingmanCore(WebSocketUser):
         config = ParakeetSttConfig(temperature=0.0)
 
         if settings.run_locally:
+            if self.parakeet._loading:
+                return TestConnectionResult(
+                    success=False,
+                    provider="parakeet",
+                    error="Parakeet model is still loading. Please wait and try again.",
+                )
             if not self.parakeet.model:
                 return TestConnectionResult(
                     success=False,

@@ -1,4 +1,6 @@
+import asyncio
 import platform
+import threading
 from typing import Optional
 
 import requests
@@ -32,6 +34,8 @@ class Parakeet:
         self.settings = settings
         self.model = None
         self.is_windows = platform.system() == "Windows"
+        self._loading = False
+        self._load_lock = threading.Lock()
 
         if settings.enable and settings.run_locally:
             self.__load_model()
@@ -51,6 +55,22 @@ class Parakeet:
 
             self.model = onnx_asr.load_model(model_name, providers=providers)
 
+            # Check if requested CUDA provider was actually available
+            if self.settings.execution_provider == "cuda":
+                try:
+                    import onnxruntime as ort
+
+                    available = ort.get_available_providers()
+                    if "CUDAExecutionProvider" not in available:
+                        self.printr.print(
+                            "Parakeet: CUDA requested but not available in this ONNX Runtime build. "
+                            "Using CPU fallback. For CUDA support, install onnxruntime-gpu.",
+                            server_only=True,
+                            color=LogType.WARNING,
+                        )
+                except Exception:
+                    pass
+
             self.printr.print(
                 f"Parakeet initialized with model '{model_name}' (providers: {providers}).",
                 server_only=True,
@@ -64,6 +84,8 @@ class Parakeet:
             self.printr.toast_error(
                 f"Failed to initialize Parakeet: {e}"
             )
+        finally:
+            self._loading = False
 
     def __unload_model(self):
         if self.model is not None:
@@ -124,6 +146,12 @@ class Parakeet:
         if not self.settings.run_locally:
             return self.__transcribe_remote(filename)
 
+        if self._loading:
+            self.printr.toast_error(
+                "Parakeet model is still loading. Please wait and try again."
+            )
+            return None
+
         if not self.model:
             self.printr.toast_error(
                 "Parakeet model is not loaded. Enable Parakeet in settings first."
@@ -146,6 +174,38 @@ class Parakeet:
             self.printr.toast_error(f"Parakeet failed to transcribe. Error: {e}")
 
         return None
+
+    async def update_settings_async(self, settings: ParakeetSettings):
+        """Async version that runs model loading in a thread to avoid blocking the event loop."""
+        old = self.settings
+        self.settings = settings
+
+        if not settings.enable:
+            if old.enable and old.run_locally:
+                self.__unload_model()
+            return
+
+        if settings.run_locally:
+            needs_reload = (
+                not old.enable
+                or not old.run_locally
+                or old.model_variant != settings.model_variant
+                or old.execution_provider != settings.execution_provider
+            )
+            if needs_reload:
+                self.printr.print(
+                    "Parakeet settings changed, reloading model...",
+                    server_only=True,
+                )
+                self._loading = True
+                await asyncio.to_thread(self.__load_model)
+        else:
+            if old.run_locally:
+                self.__unload_model()
+            self.printr.print(
+                f"Parakeet remote mode: {settings.host}:{settings.port}",
+                server_only=True,
+            )
 
     def update_settings(self, settings: ParakeetSettings):
         old = self.settings

@@ -226,6 +226,13 @@ datas += tiktoken_datas
 binaries += tiktoken_binaries
 hiddenimports += tiktoken_hidden
 
+# Collect tiktoken_ext (namespace package that registers encodings like cl100k_base)
+tiktoken_ext_datas, tiktoken_ext_binaries, tiktoken_ext_hidden = collect_all('tiktoken_ext')
+datas += tiktoken_ext_datas
+binaries += tiktoken_ext_binaries
+hiddenimports += tiktoken_ext_hidden
+hiddenimports += ['tiktoken_ext.openai_public']
+
 # Collect all onnx-asr (Parakeet STT)
 onnx_asr_datas, onnx_asr_binaries, onnx_asr_hidden = collect_all('onnx_asr')
 datas += onnx_asr_datas
