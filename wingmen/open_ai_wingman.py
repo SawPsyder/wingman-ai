@@ -377,6 +377,11 @@ class OpenAiWingman(Wingman):
 
         Returns True if the service is available after this call.
         """
+        # Tear down service if the toggle was turned off
+        if self.persistent_memory_service and not self.config.persistent_memory:
+            self.persistent_memory_service.close()
+            self.persistent_memory_service = None
+            return False
         if self.persistent_memory_service:
             return True
         if self.config.persistent_memory and self.local_ai_service:
