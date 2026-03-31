@@ -1204,7 +1204,7 @@ class SettingsConfig(BaseModel):
     wingman_pro: WingmanProSettings
     xvasynth: XVASynthSettings
     pocket_tts: PocketTTSSettings
-    llama_cpp: LlamaCppSettings = LlamaCppSettings()
+    llama_cpp: LlamaCppSettings
     hud_server: HudServerSettings
     debug_mode: bool
     streamer_mode: bool
