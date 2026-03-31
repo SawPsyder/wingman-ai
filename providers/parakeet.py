@@ -41,13 +41,18 @@ class Parakeet:
             self.__load_model()
 
     def __load_model(self):
+        with self._load_lock:
+            self._loading = True
+            self.__load_model_inner()
+
+    def __load_model_inner(self):
         self.__unload_model()
 
         try:
             import onnx_asr
 
             model_name = MODEL_VARIANT_MAP.get(
-                self.settings.model_variant, "nemo-parakeet-tdt-0.6b-v2"
+                self.settings.model_variant, "nemo-parakeet-tdt-0.6b-v3"
             )
             providers = EXECUTION_PROVIDER_MAP.get(
                 self.settings.execution_provider, ["CPUExecutionProvider"]
@@ -197,7 +202,6 @@ class Parakeet:
                     "Parakeet settings changed, reloading model...",
                     server_only=True,
                 )
-                self._loading = True
                 await asyncio.to_thread(self.__load_model)
         else:
             if old.run_locally:
