@@ -142,7 +142,12 @@ def exit_handler():
     printr.print(
         "atexit handler shutting down...", color=LogType.SYSTEM, server_only=True
     )
-    asyncio.run(shutdown())
+    try:
+        asyncio.run(shutdown())
+    except Exception:
+        # If async shutdown fails (e.g. loop issues), the LlamaCppProvider's
+        # own atexit handler will still kill orphan llama-server processes.
+        pass
 
 
 @asynccontextmanager
@@ -544,9 +549,13 @@ if __name__ == "__main__":
             color=LogType.SYSTEM,
             server_only=True,
         )
-        # Schedule the shutdown asynchronously
-        asyncio.create_task(shutdown())
-        loop.stop()
+
+        async def _shutdown_then_stop():
+            await shutdown()
+            loop.stop()
+
+        # Let shutdown complete before stopping the loop
+        asyncio.ensure_future(_shutdown_then_stop())
 
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)

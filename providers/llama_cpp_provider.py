@@ -1,3 +1,5 @@
+import atexit
+import ctypes
 import gc
 import os
 import platform
@@ -15,6 +17,75 @@ from services.printr import Printr
 from services.token_utils import count_tokens
 
 printr = Printr()
+
+
+def _create_windows_job_object():
+    """Create a Windows Job Object that kills child processes when the parent dies.
+
+    This ensures llama-server subprocesses are cleaned up even if the parent
+    process is force-killed via Task Manager.
+    """
+    kernel32 = ctypes.windll.kernel32
+
+    # CreateJobObjectW(lpJobAttributes, lpName)
+    job = kernel32.CreateJobObjectW(None, None)
+    if not job:
+        return None
+
+    # JOBOBJECT_EXTENDED_LIMIT_INFORMATION
+    class JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
+        _fields_ = [
+            ("PerProcessUserTimeLimit", ctypes.c_int64),
+            ("PerJobUserTimeLimit", ctypes.c_int64),
+            ("LimitFlags", ctypes.c_uint32),
+            ("MinimumWorkingSetSize", ctypes.c_size_t),
+            ("MaximumWorkingSetSize", ctypes.c_size_t),
+            ("ActiveProcessLimit", ctypes.c_uint32),
+            ("Affinity", ctypes.c_size_t),
+            ("PriorityClass", ctypes.c_uint32),
+            ("SchedulingClass", ctypes.c_uint32),
+        ]
+
+    class IO_COUNTERS(ctypes.Structure):
+        _fields_ = [
+            ("ReadOperationCount", ctypes.c_uint64),
+            ("WriteOperationCount", ctypes.c_uint64),
+            ("OtherOperationCount", ctypes.c_uint64),
+            ("ReadTransferCount", ctypes.c_uint64),
+            ("WriteTransferCount", ctypes.c_uint64),
+            ("OtherTransferCount", ctypes.c_uint64),
+        ]
+
+    class JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
+        _fields_ = [
+            ("BasicLimitInformation", JOBOBJECT_BASIC_LIMIT_INFORMATION),
+            ("IoInfo", IO_COUNTERS),
+            ("ProcessMemoryLimit", ctypes.c_size_t),
+            ("JobMemoryLimit", ctypes.c_size_t),
+            ("PeakProcessMemoryUsed", ctypes.c_size_t),
+            ("PeakJobMemoryUsed", ctypes.c_size_t),
+        ]
+
+    # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
+    info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
+    info.BasicLimitInformation.LimitFlags = 0x2000
+
+    # SetInformationJobObject(hJob, JobObjectExtendedLimitInformation, &info, sizeof(info))
+    # JobObjectExtendedLimitInformation = 9
+    kernel32.SetInformationJobObject(
+        job, 9, ctypes.byref(info), ctypes.sizeof(info)
+    )
+
+    return job
+
+
+def _assign_process_to_job(job, process: subprocess.Popen):
+    """Assign a subprocess to a Windows Job Object."""
+    kernel32 = ctypes.windll.kernel32
+    handle = kernel32.OpenProcess(0x1FFFFF, False, process.pid)  # PROCESS_ALL_ACCESS
+    if handle:
+        kernel32.AssignProcessToJobObject(job, handle)
+        kernel32.CloseHandle(handle)
 
 # Fixed ports for managed llama-server instances (offset from remote defaults)
 MANAGED_SUPPORT_PORT = 49172
@@ -49,6 +120,18 @@ class LlamaCppProvider:
         self._embed_process: Optional[subprocess.Popen] = None
         self._support_client: Optional[OpenAI] = None
         self._embed_client: Optional[OpenAI] = None
+
+        # On Windows, create a Job Object so the OS kills child processes
+        # automatically if the parent is force-killed (e.g. Task Manager).
+        self._job_object = None
+        if platform.system() == "Windows":
+            try:
+                self._job_object = _create_windows_job_object()
+            except Exception:
+                pass
+
+        # Last-resort cleanup: kill any orphan llama-server processes on exit
+        atexit.register(self._atexit_kill_servers)
 
     def _resolve_n_threads(self) -> int:
         """Resolve thread count: 0 means auto (half of logical cores, min 2, max 8)."""
@@ -108,6 +191,12 @@ class LlamaCppProvider:
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
+            # Assign to Job Object so it dies with the parent on force-kill
+            if self._job_object:
+                try:
+                    _assign_process_to_job(self._job_object, process)
+                except Exception:
+                    pass
             return process
         except Exception as e:
             printr.print(
@@ -148,6 +237,22 @@ class LlamaCppProvider:
             process.wait(timeout=5)
         except Exception:
             pass
+
+    def _atexit_kill_servers(self):
+        """Last-resort synchronous cleanup called by atexit.
+
+        Forcefully kills any still-running llama-server processes to prevent
+        orphan processes from holding VRAM after Wingman AI exits.
+        """
+        for proc in (self._support_process, self._embed_process):
+            if proc is None:
+                continue
+            try:
+                if proc.poll() is None:  # still running
+                    proc.kill()
+                    proc.wait(timeout=5)
+            except Exception:
+                pass
 
     def _ensure_binary(self) -> bool:
         """Ensure llama-server binary is available, downloading if needed."""
