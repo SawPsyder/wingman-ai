@@ -129,6 +129,7 @@ class WhispercppSettings(BaseModel):
 
 class FasterWhisperSettings(BaseModel):
     model_config = ConfigDict(protected_namespaces=())
+    enable: bool = True
     """tiny, tiny.en, base, base.en, small, small.en, distil-small.en, medium, medium.en, distil-medium.en, large-v1, large-v2, large-v3, large, distil-large-v2, distil-large-v3, large-v3-turbo, or turbo"""
     model_size: str
     """default (model original), auto (fastest available on device), int8, int8_float16 etc. - see https://opennmt.net/CTranslate2/quantization.html#quantize-on-model-conversion"""

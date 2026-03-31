@@ -32,7 +32,8 @@ class FasterWhisper:
             app_dir = path.dirname(app_root_path) if app_is_bundled else app_root_path
             self.models_dir = path.join(app_dir, MODELS_DIR)
 
-        self.__update_model()
+        if self.settings.enable:
+            self.__update_model()
 
     def __unload_model(self):
         """Unload the current model to free VRAM."""
@@ -135,10 +136,25 @@ class FasterWhisper:
 
     def update_settings(self, settings: FasterWhisperSettings):
         if self.settings == settings:
-            self.printr.print("FasterWhisper settings updated.", server_only=True)
+            self.printr.print("FasterWhisper settings unchanged.", server_only=True)
             return
-        self.printr.print(f"FasterWhisper settings updated, reloading model..", server_only=True)
+
+        was_enabled = self.settings.enable
         self.settings = settings
+
+        if not settings.enable:
+            if was_enabled:
+                self.printr.print(
+                    "FasterWhisper disabled, unloading model...",
+                    server_only=True,
+                )
+                self.__unload_model()
+            return
+
+        self.printr.print(
+            "FasterWhisper settings updated, reloading model...",
+            server_only=True,
+        )
         self.__update_model()
 
     def validate(self, errors: list[WingmanInitializationError]):

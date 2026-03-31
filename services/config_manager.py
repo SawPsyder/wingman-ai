@@ -11,7 +11,7 @@ from dataclasses import asdict, is_dataclass
 from pathlib import Path
 
 import yaml
-from api.enums import LogSource, LogType
+from api.enums import LogSource, LogType, SttProvider
 from api.interface import (
     Config,
     ConfigDirInfo,
@@ -1387,6 +1387,39 @@ class ConfigManager:
     def save_defaults_config(self):
         """Write Defaults config to file"""
         return self.write_config(self.default_config_path, self.default_config)
+
+    def cascade_local_stt_provider(self, provider: SttProvider):
+        """Update stt_provider in defaults and all wingman configs that override it."""
+        old_provider = self.default_config.features.stt_provider
+        if old_provider == provider:
+            return
+
+        # Update defaults
+        self.default_config.features.stt_provider = provider
+        self.save_defaults_config()
+
+        # Update wingman configs that explicitly override stt_provider to the old value
+        for config_dir in self.get_config_dirs():
+            config_path = path.join(self.config_dir, config_dir.directory)
+            for wingman_file in self.get_wingmen_configs(config_dir):
+                if wingman_file.is_deleted:
+                    continue
+                file_path = path.join(config_path, wingman_file.file)
+                raw = self.read_config(file_path)
+                if not raw:
+                    continue
+                features = raw.get("features")
+                if (
+                    features
+                    and features.get("stt_provider") == old_provider.value
+                ):
+                    features["stt_provider"] = provider.value
+                    self.write_config(file_path, raw)
+
+        self.printr.print(
+            f"Cascaded local STT provider change: {old_provider.value} -> {provider.value}",
+            server_only=True,
+        )
 
     def perform_hardware_scan(self, system_manager):
         """Scans for hardware changes and updates settings accordingly."""

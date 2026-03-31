@@ -2,7 +2,7 @@ from copy import deepcopy
 from typing import Optional
 from fastapi import APIRouter
 import sounddevice as sd
-from api.enums import LogType, ToastType
+from api.enums import LogType, SttProvider, ToastType, VoiceActivationSttProvider
 from api.interface import (
     AudioSettings,
     AudioDeviceSettings,
@@ -86,6 +86,27 @@ class SettingsService:
     # POST /settings
     async def save_settings(self, settings: SettingsConfig):
         old = deepcopy(self.config_manager.settings_config)
+
+        # Mutual exclusion: FasterWhisper and Parakeet
+        fw = settings.voice_activation.fasterwhisper
+        pk = settings.voice_activation.parakeet
+        old_fw = old.voice_activation.fasterwhisper
+        old_pk = old.voice_activation.parakeet
+
+        if fw.enable and not old_fw.enable:
+            # FasterWhisper was just enabled -> disable Parakeet
+            pk.enable = False
+            settings.voice_activation.stt_provider = (
+                VoiceActivationSttProvider.FASTER_WHISPER
+            )
+            self.config_manager.cascade_local_stt_provider(SttProvider.FASTER_WHISPER)
+        elif pk.enable and not old_pk.enable:
+            # Parakeet was just enabled -> disable FasterWhisper
+            fw.enable = False
+            settings.voice_activation.stt_provider = (
+                VoiceActivationSttProvider.PARAKEET
+            )
+            self.config_manager.cascade_local_stt_provider(SttProvider.PARAKEET)
 
         # audio devices
         if (
