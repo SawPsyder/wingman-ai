@@ -2292,14 +2292,17 @@ class WingmanCore(WebSocketUser):
                 "error": "Local AI service is not ready. Make sure models are loaded.",
             }
 
-        benchmark = Benchmark("playground_chat")
-        benchmark.start_snapshot("inference")
-        result = self.local_ai_service.support(
-            text=request.user_message,
-            system_prompt=request.system_message,
-        )
-        benchmark.finish_snapshot()
-        bench_result = benchmark.finish()
+        def _run():
+            benchmark = Benchmark("playground_chat")
+            benchmark.start_snapshot("inference")
+            result = self.local_ai_service.support(
+                text=request.user_message,
+                system_prompt=request.system_message,
+            )
+            benchmark.finish_snapshot()
+            return result, benchmark.finish()
+
+        result, bench_result = await asyncio.to_thread(_run)
 
         if result.text is None:
             return {"success": False, "error": "Support model returned no result."}
@@ -2319,11 +2322,14 @@ class WingmanCore(WebSocketUser):
                 "error": "Local AI service is not ready. Make sure models are loaded.",
             }
 
-        benchmark = Benchmark("playground_embed")
-        benchmark.start_snapshot("inference")
-        result = self.local_ai_service.embed(texts)
-        benchmark.finish_snapshot()
-        bench_result = benchmark.finish()
+        def _run():
+            benchmark = Benchmark("playground_embed")
+            benchmark.start_snapshot("inference")
+            result = self.local_ai_service.embed(texts)
+            benchmark.finish_snapshot()
+            return result, benchmark.finish()
+
+        result, bench_result = await asyncio.to_thread(_run)
 
         if result is None:
             return {"success": False, "error": "Embedding returned no result."}
@@ -2351,6 +2357,10 @@ class WingmanCore(WebSocketUser):
 
         iterations = max(1, min(iterations, 20))
 
+        return await asyncio.to_thread(self._run_benchmark_sync, iterations)
+
+    def _run_benchmark_sync(self, iterations: int) -> dict:
+        """Blocking benchmark loop — runs in a thread to keep the event loop free."""
         benchmark = Benchmark("full_benchmark")
         results = {"support_runs": [], "embed_runs": []}
 
