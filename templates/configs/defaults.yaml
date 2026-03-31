@@ -125,7 +125,7 @@ openrouter:
   conversation_model: google/gemini-2.5-flash
   endpoint: https://openrouter.ai/api/v1
 local_llm:
-  endpoint: http://localhost:1234/v1 # LMStudio
+  endpoint: http://localhost:11434/v1 # Ollama
 edge_tts:
   voice: en-US-GuyNeural
 elevenlabs:
