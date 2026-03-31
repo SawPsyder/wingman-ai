@@ -1182,8 +1182,8 @@ class PlaygroundChatRequest(BaseModel):
 
 class LlamaCppSettings(BaseModel):
     run_locally: bool = False
-    gpu_backend: str = "vulkan"
-    """GPU backend for llama-server: 'vulkan' (default, works on all GPUs), 'cuda' (NVIDIA only, fastest), 'cpu' (no GPU)."""
+    gpu_backend: str = "cpu"
+    """GPU backend for llama-server: 'cpu' (default), 'vulkan' (works on all GPUs), 'cuda' (NVIDIA only, fastest)."""
     support_model: str = "Qwen3.5-2B-Q4_K_M.gguf"
     embed_model: str = "nomic-embed-text-v1.5.f16.gguf"
     n_ctx: int

@@ -1438,7 +1438,6 @@ class ConfigManager:
         if system_manager.is_cuda_available():
             self.settings_config.voice_activation.fasterwhisper.device = "cuda"
             self.settings_config.voice_activation.fasterwhisper.compute_type = "auto"
-            self.settings_config.llama_cpp.gpu_backend = "cuda"
             self.printr.print(
                 f"- GPU detected: {system_manager.get_gpu_name()}",
                 color=LogType.STARTUP,
@@ -1448,13 +1447,6 @@ class ConfigManager:
             )
             self.printr.print(
                 "- Auto-configured FasterWhisper to use CUDA",
-                color=LogType.STARTUP,
-                server_only=True,
-                source=LogSource.SYSTEM,
-                source_name=self.log_source_name,
-            )
-            self.printr.print(
-                "- Auto-configured Local AI to use CUDA",
                 color=LogType.STARTUP,
                 server_only=True,
                 source=LogSource.SYSTEM,

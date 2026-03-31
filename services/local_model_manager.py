@@ -343,7 +343,7 @@ class LocalModelManager:
         system = platform.system()
         if system != "Windows":
             return "default"
-        return self.settings.gpu_backend or "vulkan"
+        return self.settings.gpu_backend or "cpu"
 
     def get_llama_server_dir(self, backend: Optional[str] = None) -> str:
         """Return the directory containing the extracted llama-server binary for a backend."""
