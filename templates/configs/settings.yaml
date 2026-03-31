@@ -35,7 +35,7 @@ voice_activation:
   parakeet:
     enable: false
     run_locally: true
-    model_variant: v2
+    model_variant: v3
     execution_provider: cpu
     host: http://127.0.0.1
     port: 9876
