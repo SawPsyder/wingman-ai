@@ -231,10 +231,14 @@ class PocketTTS:
     async def get_available_voices(self) -> list[VoiceInfo]:
         """List available voices for API: Built-ins (provider: pocket_tts) + Custom (provider: custom_voices)."""
         # Remote mode — fetch from server
-        if not self.settings.run_locally and self.remote_client:
-            return await self.remote_client.get_available_voices(
-                voices_endpoint="/voices"
-            )
+        if not self.settings.run_locally:
+            if not self.remote_client:
+                self._init_remote_client()
+            if self.remote_client:
+                return await self.remote_client.get_available_voices(
+                    voices_endpoint="/voices"
+                )
+            return []
 
         builtin_map = {
             "alba": "alba",
@@ -370,16 +374,23 @@ class PocketTTS:
             return
 
         # Remote mode — delegate to OpenAI-compatible client
-        if not self.settings.run_locally and self.remote_client:
-            await self.remote_client.play_audio(
-                text=text,
-                voice=config.voice or "alba",
-                model="pocket-tts",
-                sound_config=sound_config,
-                audio_player=audio_player,
-                wingman_name=wingman_name,
-                stream=config.output_streaming,
-                speed=config.speed,
+        if not self.settings.run_locally:
+            if not self.remote_client:
+                self._init_remote_client()
+            if self.remote_client:
+                await self.remote_client.play_audio(
+                    text=text,
+                    voice=config.voice or "alba",
+                    model="pocket-tts",
+                    sound_config=sound_config,
+                    audio_player=audio_player,
+                    wingman_name=wingman_name,
+                    stream=config.output_streaming,
+                    speed=config.speed,
+                )
+                return
+            self.printr.toast_error(
+                "PocketTTS remote client could not be initialized."
             )
             return
 
@@ -413,12 +424,11 @@ class PocketTTS:
         # Run generation in a thread to avoid blocking asyncio loop
         loop = asyncio.get_event_loop()
         audio_tensor = await loop.run_in_executor(
-            None, self.model.generate_audio, voice_state, text
+            None,
+            lambda: self.model.generate_audio(
+                voice_state, text, frames_after_eos=3
+            ),
         )
-
-        # Convert to bytes (wav)
-        # Note: AudioPlayer play_with_effects might handle raw numpy, let's try to match its expectation
-        # It calls get_audio_from_stream(input_data) if bytes.
 
         audio_buffer = self._convert_audio(audio_tensor, self.model.sample_rate, "wav")
 
@@ -436,7 +446,7 @@ class PocketTTS:
     ):
         """Stream generation."""
         # Initialize the stream generator
-        stream = self.model.generate_audio_stream(voice_state, text)
+        stream = self.model.generate_audio_stream(voice_state, text, frames_after_eos=3)
         iterator = iter(stream)
 
         # Internal buffer to store excess data from generator

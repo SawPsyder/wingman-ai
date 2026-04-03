@@ -104,12 +104,11 @@ class AudioPlayer:
             # Update playhead
             playhead += frames
 
-            # Check if playback should stop (end of audio)
+            # Check if playback should stop (end of audio).
+            # outdata already contains valid audio (+ zero-padding if
+            # the chunk was shorter than the buffer), so just signal
+            # sounddevice to finish after playing this buffer.
             if playhead >= len(audio):
-                if np.issubdtype(outdata.dtype, np.floating):
-                    outdata.fill(0.0)  # Fill with zero for floats
-                else:
-                    outdata[:] = bytes(len(outdata))
                 raise sd.CallbackStop
 
         # Initial playhead position
