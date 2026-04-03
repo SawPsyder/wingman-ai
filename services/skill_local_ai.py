@@ -45,6 +45,39 @@ class MemorySearchResult:
     created_at: float
 
 
+class SamplingPreset(Enum):
+    """Named sampling presets for common local AI tasks.
+
+    Use these when calling ``support()`` or ``support_sync()`` to get
+    sensible temperature / top_p values without tuning them yourself.
+    Manual ``temperature`` and ``top_p`` arguments take precedence over
+    any preset.
+
+    Attributes (temperature, top_p):
+        PRECISE:   (0.1, 1.0) — Factual extraction, classification, yes/no.
+        BALANCED:  (0.3, 1.0) — Summaries, memory extraction, paraphrasing.
+        CREATIVE:  (0.8, 0.9) — Greetings, flavor text, roleplay, dialogue.
+        ADVENTUROUS: (1.2, 0.85) — Brainstorming, wild ideas, maximum variety.
+    """
+
+    PRECISE = (0.1, 1.0)
+    BALANCED = (0.3, 1.0)
+    CREATIVE = (0.8, 0.9)
+    ADVENTUROUS = (1.2, 0.85)
+
+    def __init__(self, temperature: float, top_p: float):
+        self._temperature = temperature
+        self._top_p = top_p
+
+    @property
+    def temperature(self) -> float:
+        return self._temperature
+
+    @property
+    def top_p(self) -> float:
+        return self._top_p
+
+
 class MemoryType(str, Enum):
     """Type-safe enum for memory entry types."""
 
@@ -110,20 +143,66 @@ class SkillLocalAI:
             source=LogSource.WINGMAN,
         )
 
+    # ── Sampling helpers ──────────────────────────────────────────
+
+    @staticmethod
+    def _resolve_sampling(
+        preset: SamplingPreset | None,
+        temperature: float | None,
+        top_p: float | None,
+    ) -> tuple[float | None, float | None]:
+        """Merge preset and manual overrides. Manual values win."""
+        t = temperature
+        p = top_p
+        if preset is not None:
+            if t is None:
+                t = preset.temperature
+            if p is None:
+                p = preset.top_p
+        return t, p
+
     # ── Support model ─────────────────────────────────────────────
 
     async def support(
-        self, text: str, system_prompt: str = ""
+        self,
+        text: str,
+        system_prompt: str = "",
+        preset: SamplingPreset | None = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
     ) -> SupportResponse | None:
         """Run text through the local support model.
 
         Returns SupportResponse with text and token usage, or None on failure.
+
+        Use ``preset`` for a named configuration (e.g. ``SamplingPreset.CREATIVE``)
+        or pass ``temperature`` / ``top_p`` directly for manual control.
+        Manual values take precedence over preset values.
+        Both are optional — omitting everything uses the global settings.
+
+        Example::
+
+            # Use a preset
+            result = await self.local_ai.support(text, preset=SamplingPreset.CREATIVE)
+
+            # Manual override
+            result = await self.local_ai.support(text, temperature=1.0, top_p=0.85)
+
+            # Preset + partial override (uses preset top_p but custom temperature)
+            result = await self.local_ai.support(
+                text, preset=SamplingPreset.CREATIVE, temperature=1.0
+            )
         """
+        t, p = self._resolve_sampling(preset, temperature, top_p)
         if not self.available:
             return None
         try:
             result = await asyncio.to_thread(
-                self._wingman.local_ai_service.support, text, system_prompt
+                self._wingman.local_ai_service.support,
+                text,
+                system_prompt,
+                t,
+                p,
             )
             if result is None:
                 return None
@@ -138,13 +217,21 @@ class SkillLocalAI:
             return None
 
     def support_sync(
-        self, text: str, system_prompt: str = ""
+        self,
+        text: str,
+        system_prompt: str = "",
+        preset: SamplingPreset | None = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
     ) -> SupportResponse | None:
-        """Sync version of support()."""
+        """Sync version of support(). See support() for parameter details."""
+        t, p = self._resolve_sampling(preset, temperature, top_p)
         if not self.available:
             return None
         try:
-            result = self._wingman.local_ai_service.support(text, system_prompt)
+            result = self._wingman.local_ai_service.support(
+                text, system_prompt, t, p
+            )
             if result is None:
                 return None
             return SupportResponse(
@@ -160,12 +247,20 @@ class SkillLocalAI:
     # ── Summarize ─────────────────────────────────────────────────
 
     async def summarize(
-        self, text: str, instruction: str = ""
+        self,
+        text: str,
+        instruction: str = "",
+        preset: SamplingPreset | None = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
     ) -> SupportResponse | None:
         """Summarize text, automatically chunking if it exceeds the context window.
 
         For small text: single support() call with instruction as system prompt.
         For large text: chunks, summarizes each via ToolResponseCompressor, merges.
+
+        Accepts the same ``preset`` / ``temperature`` / ``top_p`` overrides as
+        ``support()``.
         """
         if not self.available:
             return None
@@ -178,7 +273,10 @@ class SkillLocalAI:
 
             if text_tokens <= budget.max_input_tokens:
                 # Fits in one call
-                return await self.support(text, system_prompt=instruction)
+                return await self.support(
+                    text, system_prompt=instruction,
+                    preset=preset, temperature=temperature, top_p=top_p,
+                )
 
             # Too large — compress first, then apply instruction in a final pass
             from services.tool_response_cache import ToolResponseCompressor
@@ -192,7 +290,10 @@ class SkillLocalAI:
             )
             # The compressed text should now fit; run a final pass with the
             # caller's instruction so it's not silently dropped.
-            return await self.support(compressed, system_prompt=instruction)
+            return await self.support(
+                compressed, system_prompt=instruction,
+                preset=preset, temperature=temperature, top_p=top_p,
+            )
         except Exception as e:
             await self._log_error("summarize", e)
             return None

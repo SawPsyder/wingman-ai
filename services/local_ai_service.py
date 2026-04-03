@@ -125,7 +125,13 @@ class LocalAiService:
 
     # ── Support model call ─────────────────────────────────────────
 
-    def support(self, text: str, system_prompt: str = "") -> "SupportResult":
+    def support(
+        self,
+        text: str,
+        system_prompt: str = "",
+        temperature: float | None = None,
+        top_p: float | None = None,
+    ) -> "SupportResult":
         """Process text using the support model (local or remote).
 
         The output token budget is always computed automatically from the
@@ -135,6 +141,8 @@ class LocalAiService:
 
         Callers never need to (and cannot) specify ``max_tokens``.
         Use ``get_token_budget()`` beforehand if you need to plan chunking.
+
+        ``temperature`` and ``top_p`` override the global settings when given.
 
         Returns a ``SupportResult`` with text, token usage, and truncation flag.
         """
@@ -153,8 +161,8 @@ class LocalAiService:
         max_tokens = max(MIN_OUTPUT_TOKENS, safe_ctx - input_tokens)
 
         if self.settings.run_locally:
-            return self.provider.support(text, system_prompt, max_tokens)
-        return self.remote.support(text, system_prompt, max_tokens)
+            return self.provider.support(text, system_prompt, max_tokens, temperature, top_p)
+        return self.remote.support(text, system_prompt, max_tokens, temperature, top_p)
 
     # ── Embeddings ─────────────────────────────────────────────────
 

@@ -68,6 +68,12 @@ The local support model is a small 2B-parameter LLM (llama.cpp). It does not fol
 
 See also: [skills/README.md — Prompt Writing Guidelines](skills/README.md#prompt-writing-guidelines-for-small-models) for the full reference.
 
+## Sampling Parameters — Temperature and Top P
+
+The support model is a small 2B model — sampling parameters matter more than on large models. Global defaults are tuned for summarization (0.3 / 1.0). **Override for creative tasks or output will be flat.**
+
+All `support()` calls accept optional `temperature` and `top_p` overrides. In skills, use `SamplingPreset` from `services/skill_local_ai.py` (`PRECISE`, `BALANCED`, `CREATIVE`, `ADVENTUROUS`) or pass raw values. Manual values override presets. See `SamplingPreset` docstring for values.
+
 ## Config Properties — interface.py
 
 New fields in Pydantic models should almost never be `Optional`. The correct pattern:

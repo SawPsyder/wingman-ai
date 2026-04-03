@@ -436,11 +436,15 @@ class LlamaCppProvider:
         text: str,
         system_prompt: str = "",
         max_tokens: int = 512,
+        temperature: float | None = None,
+        top_p: float | None = None,
     ) -> SupportResult:
         """Process text using the managed llama-server support model.
 
         Returns a SupportResult with text, token usage from the model's own
         tokenizer, and whether the output was truncated (finish_reason=length).
+
+        ``temperature`` and ``top_p`` override the global settings when given.
         """
         if not system_prompt:
             from services.file import get_prompt
@@ -457,7 +461,8 @@ class LlamaCppProvider:
                     {"role": "user", "content": text},
                 ],
                 max_tokens=max_tokens,
-                temperature=0.3,
+                temperature=temperature if temperature is not None else self.settings.temperature,
+                top_p=top_p if top_p is not None else self.settings.top_p,
                 frequency_penalty=0.5,
                 presence_penalty=0.3,
             )

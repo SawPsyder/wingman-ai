@@ -1763,18 +1763,6 @@ class WingmanCore(WebSocketUser):
 
         config = wingman.config
 
-        # Build context about how the user communicates with this wingman
-        settings = self.config_manager.settings_config
-        va_enabled = settings.voice_activation.enabled if settings.voice_activation else False
-
-        if va_enabled and config.is_voice_activation_default:
-            comm_context = "You are always listening — the user just speaks naturally to talk to you."
-        elif va_enabled:
-            comm_context = f"The user must say your name '{config.name}' somewhere in their sentence to talk to you."
-        else:
-            key = config.record_key or config.record_mouse_button or "a key"
-            comm_context = f"The user talks to you by holding the `{key}` key."
-
         backstory = ""
         if config.prompts and config.prompts.backstory:
             backstory = config.prompts.backstory
@@ -1809,19 +1797,19 @@ class WingmanCore(WebSocketUser):
                 name=config.name,
                 backstory=backstory,
                 session_summary=session_summary,
-                comm_context=comm_context,
             )
         else:
             system_prompt = get_prompt("greeting-default").format(
                 name=config.name,
                 backstory=backstory,
-                comm_context=comm_context,
             )
 
         try:
             response = self.local_ai_service.support(
                 text="Generate your greeting.",
                 system_prompt=system_prompt,
+                temperature=0.8,
+                top_p=0.9,
             )
 
             if response and self._connection_manager:

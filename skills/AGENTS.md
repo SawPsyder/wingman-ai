@@ -190,6 +190,10 @@ self.printr.print() / await self.printr.print_async()      # Logging
 self.get_generated_files_dir()                             # Persistent storage directory
 ```
 
+## Local Support Model — Sampling Parameters
+
+Global defaults are tuned for summarization (low temperature). **Override for creative tasks.** Use `SamplingPreset` from `services/skill_local_ai.py` or pass `temperature` / `top_p` directly to `support()`, `support_sync()`, and `summarize()`. Manual values override presets. See `SamplingPreset` docstring for available presets and values.
+
 ## Example Skills
 
 | Skill | Type | Key Pattern |

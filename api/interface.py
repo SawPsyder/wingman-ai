@@ -1192,6 +1192,10 @@ class LlamaCppSettings(BaseModel):
     """Number of CPU threads for local inference. 0 = auto (half of logical cores, max 8)."""
     reasoning_effort: int
     """Reasoning effort for the support model. 0 = disabled (fastest), 1 = enabled (slow)."""
+    temperature: float = 0.3
+    """Sampling temperature for the support model. 0.0 = deterministic, 2.0 = very random."""
+    top_p: float = 1.0
+    """Nucleus sampling threshold. 1.0 = disabled (use full distribution)."""
     support_remote_host: str
     support_remote_port: int
     embed_remote_host: str
