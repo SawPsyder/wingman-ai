@@ -1330,6 +1330,28 @@ class OpenAiWingman(Wingman):
 
     async def _broadcast_token_usage(self, prompt_tokens: int, completion_tokens: int):
         """Broadcast actual API-reported token usage to the client."""
+        is_local = (
+            self.config.features.conversation_provider == ConversationProvider.LOCAL_LLM
+        )
+
+        # Local providers (e.g. Ollama) often report 0 tokens — estimate from messages
+        if is_local and prompt_tokens == 0:
+            prompt_tokens = sum(
+                count_tokens(
+                    msg["content"]
+                    if isinstance(msg.get("content"), str)
+                    else str(msg.get("content", ""))
+                )
+                for msg in self.messages
+            )
+        if is_local and completion_tokens == 0 and self.messages:
+            last = self.messages[-1]
+            if last.get("role") == "assistant":
+                content = last.get("content", "")
+                completion_tokens = count_tokens(
+                    content if isinstance(content, str) else str(content)
+                )
+
         self.last_turn_prompt_tokens = prompt_tokens
         self.last_turn_completion_tokens = completion_tokens
         if prompt_tokens == 0 and completion_tokens == 0:
@@ -1339,9 +1361,6 @@ class OpenAiWingman(Wingman):
 
         from api.commands import ConversationTokenUsageCommand
 
-        is_local = (
-            self.config.features.conversation_provider == ConversationProvider.LOCAL_LLM
-        )
         await printr._connection_manager.broadcast(
             ConversationTokenUsageCommand(
                 wingman_name=self.name,
