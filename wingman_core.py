@@ -1825,15 +1825,28 @@ class WingmanCore(WebSocketUser):
             )
 
             if response and self._connection_manager:
+                text = response.text or ""
+                additional_data = None
+
+                # Extract <mem>...</mem> tagged memory segments
+                mem_segments = re.findall(r"<mem>(.*?)</mem>", text, re.DOTALL)
+                if mem_segments:
+                    additional_data = {
+                        "memory_segments": [s.strip() for s in mem_segments]
+                    }
+                # Strip the tags from the displayed text
+                text = re.sub(r"</?mem>", "", text)
+
                 # Broadcast directly to set wingman_name explicitly
                 # (printr uses stack inspection which won't find a Wingman instance here)
                 await self._connection_manager.broadcast(
                     LogCommand(
-                        text=response.text,
+                        text=text,
                         log_type=LogType.LOCALMODEL,
                         source=LogSource.WINGMAN,
                         source_name=wingman_name,
                         wingman_name=wingman_name,
+                        additional_data=additional_data,
                     )
                 )
         except Exception as e:
