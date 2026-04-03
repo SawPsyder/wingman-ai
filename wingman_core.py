@@ -1,6 +1,7 @@
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import os
+import random
 import platform
 import re
 import threading
@@ -44,6 +45,8 @@ from api.interface import (
     OpenRouterEndpointResult,
     PlaygroundChatRequest,
     ParakeetSttConfig,
+    PocketTTSConfig,
+    SoundConfig,
     TestConnectionResult,
     VoiceActivationSettings,
     WingmanInitializationError,
@@ -471,6 +474,12 @@ class WingmanCore(WebSocketUser):
             path="/settings/test/pocket-tts",
             endpoint=self.test_pocket_tts,
             response_model=TestConnectionResult,
+            tags=tags,
+        )
+        self.router.add_api_route(
+            methods=["POST"],
+            path="/settings/test/output-device",
+            endpoint=self.test_output_device,
             tags=tags,
         )
 
@@ -2691,6 +2700,31 @@ class WingmanCore(WebSocketUser):
             return TestConnectionResult(
                 success=False, provider="pocket_tts", error=str(e)
             )
+
+    # POST /settings/test/output-device
+    async def test_output_device(self):
+        """Generate a funny Wingman AI praise via the support model, pick a random
+        Pocket TTS voice, and return both so the client can trigger playback separately."""
+        from services.file import get_prompt
+
+        # Generate text using local AI support model
+        text = None
+        if self.local_ai_service.is_ready():
+            system_prompt = get_prompt("tts-test-praise")
+            result = self.local_ai_service.support(
+                text="Generate a sentence.", system_prompt=system_prompt
+            )
+            if result.text:
+                text = result.text.strip().strip('"')
+
+        if not text:
+            text = "Wingman AI is so good, even my toaster is jealous."
+
+        # Pick a random available Pocket TTS voice
+        voices = await self.pocket_tts.get_available_voices()
+        voice = random.choice(voices).id if voices else None
+
+        return {"text": text, "voice": voice}
 
     # POST /local-ai/support
     async def api_support(
