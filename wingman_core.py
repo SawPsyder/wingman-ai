@@ -1826,24 +1826,27 @@ class WingmanCore(WebSocketUser):
             server_only=True,
         )
 
+        from services.skill_local_ai import SamplingPreset
+
         if session_summary:
             system_prompt = get_prompt("greeting-returning").format(
                 name=config.name,
                 backstory=backstory,
                 session_summary=session_summary,
             )
+            greeting_preset = SamplingPreset.CREATIVE
         else:
             system_prompt = get_prompt("greeting-default").format(
                 name=config.name,
                 backstory=backstory,
             )
+            greeting_preset = SamplingPreset.BALANCED
 
         try:
             response = self.local_ai_service.support(
                 text="Generate your greeting.",
                 system_prompt=system_prompt,
-                temperature=0.8,
-                top_p=0.9,
+                preset=greeting_preset,
             )
 
             if response and self._connection_manager:
@@ -2477,14 +2480,31 @@ class WingmanCore(WebSocketUser):
             if filename.endswith(".md"):
                 name = filename[:-3]
                 content = get_prompt(name)
-                # Use first line as label
                 first_line = content.split("\n")[0].strip()
+                lab_config = self.PROMPT_LAB_CONFIG.get(name, {})
                 results.append({
                     "name": name,
                     "label": first_line[:60] + ("…" if len(first_line) > 60 else ""),
                     "content": content,
+                    "production_preset": lab_config.get("production_preset"),
+                    "example_message": lab_config.get("example_message"),
                 })
         return results
+
+    async def playground_list_presets(self) -> list[dict]:
+        """List sampling presets from the SamplingPreset enum."""
+        from services.skill_local_ai import SamplingPreset
+
+        return [
+            {
+                "name": preset.name.capitalize(),
+                "temperature": preset.temperature,
+                "top_p": preset.top_p,
+                "top_k": preset.top_k,
+                "presence_penalty": preset.presence_penalty,
+            }
+            for preset in SamplingPreset
+        ]
 
     # POST /settings/local-ai/playground/embed
     async def playground_embed(self, texts: list[str] = Body(...)) -> dict:
@@ -2580,11 +2600,11 @@ class WingmanCore(WebSocketUser):
                         "completion_tokens": completion_tokens,
                         "tokens_per_sec": round(tokens_per_sec, 1),
                         "label": label,
-                        "preset": preset["name"],
-                        "temperature": preset["temperature"],
-                        "top_p": preset["top_p"],
-                        "top_k": preset["top_k"],
-                        "presence_penalty": preset["presence_penalty"],
+                        "preset": preset.name,
+                        "temperature": preset.temperature,
+                        "top_p": preset.top_p,
+                        "top_k": preset.top_k,
+                        "presence_penalty": preset.presence_penalty,
                     }
                 )
 
@@ -2882,16 +2902,15 @@ class WingmanCore(WebSocketUser):
         Falls back to a static sentence if the model is not ready."""
         from services.file import get_prompt
 
+        from services.skill_local_ai import SamplingPreset
+
         text = None
         if self.local_ai_service.is_ready():
             system_prompt = get_prompt("tts-test-praise")
             result = self.local_ai_service.support(
                 text="Generate a sentence.",
                 system_prompt=system_prompt,
-                temperature=1.0,
-                top_p=1.0,
-                top_k=20,
-                presence_penalty=2.0,
+                preset=SamplingPreset.PRECISE,
             )
             if result.text:
                 text = result.text.strip().strip('"')
@@ -2947,21 +2966,26 @@ class WingmanCore(WebSocketUser):
     # POST /local-ai/enhance-backstory
     async def api_enhance_backstory(
         self,
-        backstory: str = Body(..., embed=True),
+        wingman_name: str = Body(...),
+        backstory: str = Body(...),
     ) -> dict:
-        """Enhance a wingman backstory using the local AI service."""
-        if not self.local_ai_service.is_ready():
-            raise HTTPException(
-                status_code=503,
-                detail="Local AI service is not ready. Make sure models are loaded.",
-            )
-        system_prompt = get_prompt("enhance-backstory")
-        budget = self.local_ai_service.get_token_budget(system_prompt)
+        """Enhance a wingman backstory using that wingman's conversation LLM.
 
-        # Hard cap on backstory size (cost control + conversation model budget)
+        Uses the specific wingman's conversation provider (OpenAI, Azure, etc.)
+        — not the local support model — because backstory enhancement requires
+        a capable model that can follow complex prompt-engineering rules.
+        """
+        from wingmen.open_ai_wingman import OpenAiWingman
+
+        wingman = self.tower.get_wingman_by_name(wingman_name) if self.tower else None
+        if not wingman or not isinstance(wingman, OpenAiWingman):
+            raise HTTPException(
+                status_code=404,
+                detail=f"Wingman '{wingman_name}' not found or has no conversation provider.",
+            )
+
         MAX_BACKSTORY_TOKENS = 2048
         backstory_tokens = count_tokens(backstory)
-
         if backstory_tokens > MAX_BACKSTORY_TOKENS:
             raise HTTPException(
                 status_code=400,
@@ -2972,42 +2996,74 @@ class WingmanCore(WebSocketUser):
                 ),
             )
 
-        if backstory_tokens > budget.max_input_tokens:
+        system_prompt = get_prompt("enhance-backstory")
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": backstory},
+        ]
+
+        try:
+            completion = await wingman.actual_llm_call(messages)
+        except Exception as e:
             raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"Backstory too long: ~{backstory_tokens} tokens "
-                    f"(max ~{budget.max_input_tokens} for current context size "
-                    f"of {budget.n_ctx}). "
-                    f"Shorten the backstory or increase the Local AI context size."
-                ),
+                status_code=500,
+                detail=f"LLM call failed: {e}",
             )
 
-        result = self.local_ai_service.support(
-            text=backstory,
-            system_prompt=system_prompt,
-        )
-        if result.text is None:
-            raise HTTPException(status_code=500, detail="Backstory enhancement failed.")
-        return {"result": result.text}
+        if not completion or not completion.choices:
+            raise HTTPException(
+                status_code=500,
+                detail="Backstory enhancement failed — no response from LLM.",
+            )
+
+        result_text = completion.choices[0].message.content
+        if not result_text:
+            raise HTTPException(
+                status_code=500,
+                detail="Backstory enhancement failed — empty response.",
+            )
+
+        # Parse JSON response: {"backstory": "...", "summary": "..."}
+        # Strip markdown code fences if the model wrapped the JSON
+        import re as _re
+        import json as _json
+        stripped = result_text.strip()
+        fence_match = _re.match(r"^```(?:json)?\s*\n?([\s\S]*?)\n?```\s*$", stripped)
+        if fence_match:
+            stripped = fence_match.group(1).strip()
+        try:
+            parsed = _json.loads(stripped)
+            enhanced = parsed.get("backstory", result_text)
+            summary = parsed.get("summary", "")
+        except (_json.JSONDecodeError, AttributeError):
+            # Model didn't return valid JSON — use raw text as backstory
+            enhanced = result_text
+            summary = ""
+
+        raw_model = getattr(completion, "model", None) or ""
+        # Strip date suffixes like "-2025-04-14" for a friendlier display name
+        model_name = _re.sub(r"-\d{4}-\d{2}-\d{2}$", "", raw_model)
+        usage = getattr(completion, "usage", None)
+        prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0
+        completion_tokens = getattr(usage, "completion_tokens", 0) or 0
+        return {
+            "result": enhanced,
+            "summary": summary,
+            "model": model_name,
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+        }
 
     # GET /local-ai/enhance-backstory-budget
     async def api_enhance_backstory_budget(self) -> dict:
-        """Return the max backstory tokens for enhancement based on current settings.
+        """Return the max backstory tokens for enhancement.
 
-        The output scales dynamically (model gets as many output tokens as input tokens),
-        so the max input is roughly half the available space after the prompt.
-        We reserve a minimum of 256 output tokens.
+        Since this now uses the conversation LLM (not the local support model),
+        the budget is simply the hard cap.
         """
-        system_prompt = get_prompt("enhance-backstory")
-        budget = self.local_ai_service.get_token_budget(system_prompt)
-        # Hard cap for cost control, also limited by local AI context
         MAX_BACKSTORY_TOKENS = 2048
-        max_backstory_tokens = min(MAX_BACKSTORY_TOKENS, budget.max_input_tokens)
         return {
-            "max_backstory_tokens": max_backstory_tokens,
-            "n_ctx": budget.n_ctx,
-            "system_tokens": budget.system_tokens,
+            "max_backstory_tokens": MAX_BACKSTORY_TOKENS,
         }
 
     # POST /local-ai/embed
@@ -3204,6 +3260,8 @@ class WingmanCore(WebSocketUser):
         if not text_parts:
             raise HTTPException(400, "No valid user/assistant messages provided")
 
+        from services.skill_local_ai import SamplingPreset
+
         conversation_text = "\n".join(text_parts)
         system_prompt = get_prompt("extract-memories")
 
@@ -3212,6 +3270,7 @@ class WingmanCore(WebSocketUser):
             svc.local_ai_service.support,
             text=conversation_text,
             system_prompt=system_prompt,
+            preset=SamplingPreset.PRECISE,
         )
 
         if not result or not result.text:
