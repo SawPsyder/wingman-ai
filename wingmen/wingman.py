@@ -163,7 +163,7 @@ class Wingman:
         """
         return []
 
-    async def retrieve_secret(self, secret_name, errors):
+    async def retrieve_secret(self, secret_name, errors, is_required=True):
         """Use this method to retrieve secrets like API keys from the SecretKeeper.
         If the key is missing, the user will be prompted to enter it.
         """
@@ -171,9 +171,9 @@ class Wingman:
             api_key = await self.secret_keeper.retrieve(
                 requester=self.name,
                 key=secret_name,
-                prompt_if_missing=True,
+                prompt_if_missing=is_required,
             )
-            if not api_key:
+            if not api_key and is_required:
                 errors.append(
                     WingmanInitializationError(
                         wingman_name=self.name,
