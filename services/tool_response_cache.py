@@ -182,6 +182,7 @@ class ToolResponseCompressor:
         Token budget is obtained from ``local_ai_service.get_token_budget()``.
         """
         from services.file import get_prompt
+        from services.skill_local_ai import SamplingPreset
 
         system_prompt = get_prompt(TOOL_RESPONSE_PROMPT_NAME)
         budget = local_ai_service.get_token_budget(system_prompt)
@@ -236,6 +237,7 @@ class ToolResponseCompressor:
                     lambda p=user_prompt: local_ai_service.support(
                         text=p,
                         system_prompt=system_prompt,
+                        preset=SamplingPreset.PRECISE,
                     ),
                 )
                 if result and result.text:
@@ -274,6 +276,7 @@ class ToolResponseCompressor:
                 lambda: local_ai_service.support(
                     text=merge_prompt,
                     system_prompt=system_prompt,
+                    preset=SamplingPreset.PRECISE,
                 ),
             )
             if result and result.text:

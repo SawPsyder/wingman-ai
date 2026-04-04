@@ -438,6 +438,12 @@ class WingmanCore(WebSocketUser):
             endpoint=self.playground_list_prompts,
             tags=tags,
         )
+        self.router.add_api_route(
+            methods=["GET"],
+            path="/settings/local-ai/playground/presets",
+            endpoint=self.playground_list_presets,
+            tags=tags,
+        )
 
         # Connection test endpoints
         self.router.add_api_route(
@@ -2364,6 +2370,100 @@ class WingmanCore(WebSocketUser):
             "benchmark": bench_result.model_dump(),
         }
 
+    # ── Playground lab configuration (single source of truth) ───
+    # Maps each prompt to the preset used in production and a realistic
+    # example user message that matches the exact format the real code sends.
+    PROMPT_LAB_CONFIG: dict[str, dict] = {
+        "condense-conversation": {
+            "production_preset": "Balanced",
+            "example_message": (
+                "CONVERSATION TO SUMMARIZE:\n"
+                "User: What's the best ship for solo bounty hunting?\n"
+                "Assistant: For solo bounty hunting, the Aegis Vanguard Warden is hard to beat. "
+                "It has heavy forward firepower, strong shields, and good range. The Drake Cutlass Black "
+                "is a more affordable option with decent combat capability plus cargo space.\n"
+                "User: I've been flying my Cutlass Black but I keep dying to Hammerheads. Any tips?\n"
+                "Assistant: Hammerheads are tough targets for a solo pilot. Focus on hit-and-run attacks "
+                "— approach fast, unload on one shield face, then boost away before turrets track you. "
+                "Aim for the engines to reduce their mobility. Consider upgrading to Size 3 gimballed "
+                "weapons for better sustained DPS.\n"
+                "User: Good advice. My org is planning a group bounty night on Saturday, maybe I'll "
+                "save the Hammerheads for that.\n"
+                "Assistant: That's a smart plan! With a wing of 3-4 fighters, you can coordinate "
+                "shield-face attacks and take down Hammerheads much more efficiently. Have someone fly "
+                "an ERT-capable ship to pull the contracts.\n"
+                "\n---\n"
+                "Now list every fact from the conversation above as bullet points.\n"
+                "Start from the FIRST message, end at the LAST. Include all secrets, names, "
+                "preferences, and creative content:"
+            ),
+        },
+        "extract-memories": {
+            "production_preset": "Precise",
+            "example_message": (
+                "user: Hey, can you check the trade prices for laranite at Lorville?\n"
+                "assistant: Laranite is currently buying at 31.26 aUEC per unit at the TDD in Lorville. "
+                "The sell price at Port Tressler is around 33.10 aUEC, so you'd make about 1.84 per "
+                "unit profit on that route.\n"
+                "user: Nice, I'll load up my C2 Hercules. It can carry 696 SCU so that should be a "
+                "decent run. My buddy Marcus and I have been grinding trade runs all week to save up "
+                "for an Idris.\n"
+                "assistant: That's ambitious! An Idris is a serious investment. With 696 SCU of "
+                "laranite per run, you're looking at about 1,280 aUEC profit per run. How much have "
+                "you saved so far?\n"
+                "user: We're at about 12 million, still a long way to go. Oh, I also joined the org "
+                '"Stellar Logistics Corp" last week, they do coordinated trade convoys which should help.'
+            ),
+        },
+        "greeting-default": {
+            "production_preset": "Balanced",
+            "example_message": "Generate your greeting.",
+        },
+        "greeting-returning": {
+            "production_preset": "Creative",
+            "example_message": "Generate your greeting.",
+        },
+        # enhance-backstory: uses the conversation LLM, not the support model — not listed here
+        "radio-chatter": {
+            "production_preset": None,  # uses main LLM, not support model
+            "example_message": (
+                "Generate radio chatter between 3 pilots approaching a space station. "
+                "5 messages total. They should be requesting landing clearance, commenting "
+                "on traffic, and coordinating their approach vectors."
+            ),
+        },
+        "support-default": {
+            "production_preset": "Balanced",
+            "example_message": (
+                "The Aegis Gladius is a light fighter originally developed for the UEE Navy as a "
+                "patrol and intercept craft. It features a sleek, angular design optimized for speed "
+                "and agility in dogfighting scenarios. The ship has three weapon hardpoints — two "
+                "Size 3 on the wings and one Size 3 on the nose — making it a potent threat despite "
+                "its small size. It lacks any cargo capacity, reinforcing its pure combat role. The "
+                "Gladius has been a mainstay of military and civilian combat pilots since its "
+                "introduction, valued for its excellent maneuverability and reliable power plant."
+            ),
+        },
+        "support-tool-response": {
+            "production_preset": "Precise",
+            "example_message": (
+                "DATA TO SUMMARIZE:\n"
+                '{"status": "success", "data": {"ship": "Constellation Andromeda", '
+                '"manufacturer": "RSI", "role": "Multi-crew explorer", "crew": {"min": 1, "max": 4}, '
+                '"cargo_scu": 96, "price_auec": 3250000, "weapons": [{"mount": "Turret", "size": 4, '
+                '"count": 2}, {"mount": "Fixed", "size": 5, "count": 2}, {"mount": "Missile", '
+                '"size": 2, "count": 28}], "shields": [{"type": "FR-76", "size": "L", "count": 2}], '
+                '"quantum_drive": "Odyssey", "status": "Flight Ready", "last_updated": "2954-03-15"}}'
+                "\n\n---\n"
+                "Summarize the above data. Preserve all key facts, numbers, names, IDs, and status values:"
+            ),
+        },
+        "tts-test-praise": {
+            "production_preset": "Precise",
+            "example_message": "Generate a sentence.",
+        },
+    }
+
     async def playground_list_prompts(self) -> list[dict]:
         """List available prompt templates for the playground."""
         from services.file import get_prompt
@@ -2444,24 +2544,18 @@ class WingmanCore(WebSocketUser):
             "In a galaxy far, far away, there existed a civilization that had mastered the art of faster-than-light travel. Their ships could traverse the vast emptiness between star systems in mere hours. The key to their technology was a crystal found only in the deepest mines of their home world. This crystal, when properly refined and charged, could bend the fabric of spacetime itself, creating tunnels through which spacecraft could pass almost instantaneously. However, the supply of this precious mineral was dwindling, and the civilization faced an existential crisis as they searched for alternatives.",
         ]
 
-        # Vary sampling params across iterations (Qwen3.5 recommended values)
-        sampling_presets = [
-            {"name": "Precise", "temperature": 0.6, "top_p": 0.95, "top_k": 20, "presence_penalty": 0.0},
-            {"name": "Balanced", "temperature": 1.0, "top_p": 0.95, "top_k": 20, "presence_penalty": 1.5},
-            {"name": "Creative", "temperature": 1.0, "top_p": 1.0, "top_k": 20, "presence_penalty": 2.0},
-        ]
+        # Cycle through SamplingPreset enum (single source of truth)
+        from services.skill_local_ai import SamplingPreset
+        all_presets = list(SamplingPreset)
 
         for i in range(iterations):
-            preset = sampling_presets[i % len(sampling_presets)]
+            preset = all_presets[i % len(all_presets)]
             for j, text in enumerate(test_texts):
                 label = f"support_iter{i+1}_text{j+1}_{len(text)}chars"
                 benchmark.start_snapshot(label)
                 res = self.local_ai_service.support(
-                    text,
-                    temperature=preset["temperature"],
-                    top_p=preset["top_p"],
-                    top_k=preset["top_k"],
-                    presence_penalty=preset["presence_penalty"],
+                    text=text,
+                    preset=preset,
                 )
                 benchmark.finish_snapshot()
 

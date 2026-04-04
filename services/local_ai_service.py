@@ -1,5 +1,7 @@
+from __future__ import annotations
+
 from dataclasses import dataclass
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from api.enums import LogType
 from api.interface import LlamaCppSettings
@@ -8,6 +10,9 @@ from providers.llama_cpp_remote import LlamaCppRemote
 from services.local_model_manager import LocalModelManager
 from services.printr import Printr
 from services.token_utils import count_tokens, truncate_to_tokens
+
+if TYPE_CHECKING:
+    from services.skill_local_ai import SamplingPreset
 
 printr = Printr()
 
@@ -129,6 +134,7 @@ class LocalAiService:
         self,
         text: str,
         system_prompt: str = "",
+        preset: SamplingPreset | None = None,
         temperature: float | None = None,
         top_p: float | None = None,
         top_k: int | None = None,
@@ -139,9 +145,10 @@ class LocalAiService:
         The output token budget is always computed automatically from the
         context window (``n_ctx``).
 
-        Sampling params default to the user's ``LlamaCppSettings`` values
-        (which themselves default to Qwen3.5 recommendations).
-        Per-call overrides take precedence.
+        Sampling resolution order (highest priority first):
+        1. Per-call keyword arguments (temperature, top_p, etc.)
+        2. ``preset`` (a ``SamplingPreset`` enum member)
+        3. User's ``LlamaCppSettings`` values (the global defaults)
 
         Returns a ``SupportResult`` with text, token usage, and truncation flag.
         """
@@ -159,10 +166,24 @@ class LocalAiService:
         input_tokens = system_tokens + count_tokens(text)
         max_tokens = max(MIN_OUTPUT_TOKENS, safe_ctx - input_tokens)
 
-        t = temperature if temperature is not None else self.settings.temperature
-        p = top_p if top_p is not None else self.settings.top_p
-        k = top_k if top_k is not None else self.settings.top_k
-        pp = presence_penalty if presence_penalty is not None else self.settings.presence_penalty
+        # Resolve sampling: explicit args > preset > settings defaults
+        t = temperature
+        p = top_p
+        k = top_k
+        pp = presence_penalty
+        if preset is not None:
+            if t is None:
+                t = preset.temperature
+            if p is None:
+                p = preset.top_p
+            if k is None:
+                k = preset.top_k
+            if pp is None:
+                pp = preset.presence_penalty
+        t = t if t is not None else self.settings.temperature
+        p = p if p is not None else self.settings.top_p
+        k = k if k is not None else self.settings.top_k
+        pp = pp if pp is not None else self.settings.presence_penalty
 
         if self.settings.run_locally:
             return self.provider.support(text, system_prompt, max_tokens, t, p, k, pp)

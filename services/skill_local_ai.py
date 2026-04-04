@@ -54,12 +54,12 @@ class SamplingPreset(Enum):
     Manual arguments take precedence over any preset.
 
     Attributes (temperature, top_p, top_k, presence_penalty):
-        PRECISE:   (0.6, 0.95, 20, 0.0) — Extraction, structured data, JSON.
+        PRECISE:   (0.6, 0.95, 20, 0.5) — Extraction, structured data, JSON.
         BALANCED:  (1.0, 0.95, 20, 1.5) — Summaries, memory extraction, paraphrasing.
         CREATIVE:  (1.0, 1.0, 20, 2.0) — Greetings, flavor text, roleplay, dialogue.
     """
 
-    PRECISE = (0.6, 0.95, 20, 0.0)
+    PRECISE = (0.6, 0.95, 20, 0.5)
     BALANCED = (1.0, 0.95, 20, 1.5)
     CREATIVE = (1.0, 1.0, 20, 2.0)
 
@@ -217,12 +217,12 @@ class SkillLocalAI:
         try:
             result = await asyncio.to_thread(
                 self._wingman.local_ai_service.support,
-                text,
-                system_prompt,
-                t,
-                p,
-                k,
-                pp,
+                text=text,
+                system_prompt=system_prompt,
+                temperature=t,
+                top_p=p,
+                top_k=k,
+                presence_penalty=pp,
             )
             if result is None:
                 return None
@@ -252,7 +252,12 @@ class SkillLocalAI:
             return None
         try:
             result = self._wingman.local_ai_service.support(
-                text, system_prompt, t, p, k, pp
+                text=text,
+                system_prompt=system_prompt,
+                temperature=t,
+                top_p=p,
+                top_k=k,
+                presence_penalty=pp,
             )
             if result is None:
                 return None

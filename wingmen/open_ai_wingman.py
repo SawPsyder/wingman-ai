@@ -2008,12 +2008,15 @@ class OpenAiWingman(Wingman):
                 user_prompt = (
                     f"{user_prompt_prefix}{condensed_text}{user_prompt_suffix}"
                 )
+                from services.skill_local_ai import SamplingPreset
+
                 support_result = await asyncio.wait_for(
                     asyncio.get_event_loop().run_in_executor(
                         None,
                         lambda: self.local_ai_service.support(
                             text=user_prompt,
                             system_prompt=system_prompt,
+                            preset=SamplingPreset.BALANCED,
                         ),
                     ),
                     timeout=_CONDENSE_TIMEOUT,
@@ -2146,6 +2149,7 @@ class OpenAiWingman(Wingman):
         one final summary. Returns a SupportResult from the merge step.
         """
         from providers.llama_cpp_provider import SupportResult
+        from services.skill_local_ai import SamplingPreset
 
         budget = self.local_ai_service.get_token_budget(system_prompt)
 
@@ -2200,6 +2204,7 @@ class OpenAiWingman(Wingman):
                 lambda p=user_prompt: self.local_ai_service.support(
                     text=p,
                     system_prompt=system_prompt,
+                    preset=SamplingPreset.BALANCED,
                 ),
             )
             if result.text:
@@ -2260,6 +2265,7 @@ class OpenAiWingman(Wingman):
             lambda: self.local_ai_service.support(
                 text=merge_prompt,
                 system_prompt=system_prompt,
+                preset=SamplingPreset.BALANCED,
             ),
         )
 

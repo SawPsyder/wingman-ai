@@ -266,6 +266,7 @@ class PersistentMemoryService:
         conversation_text = "\n".join(text_parts)
 
         from services.file import get_prompt
+        from services.skill_local_ai import SamplingPreset
         from services.token_utils import count_tokens, truncate_to_tokens
 
         system_prompt = get_prompt("extract-memories")
@@ -277,6 +278,7 @@ class PersistentMemoryService:
             result = self.local_ai_service.support(
                 text=conversation_text,
                 system_prompt=system_prompt,
+                preset=SamplingPreset.PRECISE,
             )
             self._process_extraction_result(result, generate_summary)
         else:
@@ -310,6 +312,7 @@ class PersistentMemoryService:
                 result = self.local_ai_service.support(
                     text=chunk,
                     system_prompt=system_prompt,
+                    preset=SamplingPreset.PRECISE,
                 )
                 if result and result.text:
                     data = self._parse_json_response(result.text)

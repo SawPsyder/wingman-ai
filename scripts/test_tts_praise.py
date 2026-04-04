@@ -3,10 +3,11 @@
 
 Usage:
     python scripts/test_tts_praise.py [--prompt tts-test-praise] [--iterations 3] [--host http://localhost:49111]
+    python scripts/test_tts_praise.py --prompt condense-conversation --preset Balanced --iterations 5
 
-Runs the given prompt through all sampling presets and prints results + analysis.
-Presets based on Qwen3.5 recommended sampling parameters.
-Designed for quick prompt/param tuning from the command line.
+Fetches presets, prompts, and example messages from Core (single source of truth).
+By default tests only the production preset for known prompts, or all presets for unknown ones.
+Use --all to test all presets, or --preset to test a specific one.
 """
 
 from __future__ import annotations
@@ -14,18 +15,33 @@ from __future__ import annotations
 import argparse
 import json
 import statistics
+import sys
 import urllib.request
 
-# Presets based on Qwen3.5-2B HuggingFace recommendations:
-# Non-thinking text: temp=1.0, top_p=1.0, top_k=20, presence_penalty=2.0
-# Thinking text:     temp=1.0, top_p=0.95, top_k=20, presence_penalty=1.5
-# Precise coding:    temp=0.6, top_p=0.95, top_k=20, presence_penalty=0.0
-SAMPLING_PRESETS = [
-    #  name           temp  top_p  top_k  presence_penalty
-    ("Precise",       0.6,  0.95,  20,    0.0),
-    ("Balanced",      1.0,  0.95,  20,    1.5),
-    ("Creative",      1.0,  1.0,   20,    2.0),
-]
+
+def fetch_json(url: str, timeout: int = 30):
+    with urllib.request.urlopen(url, timeout=timeout) as resp:
+        return json.loads(resp.read())
+
+
+def load_presets(host: str) -> dict[str, dict]:
+    """Fetch sampling presets from Core and return as {name: {temp, top_p, ...}}."""
+    raw = fetch_json(f"{host}/settings/local-ai/playground/presets")
+    return {
+        p["name"]: {
+            "temperature": p["temperature"],
+            "top_p": p["top_p"],
+            "top_k": p["top_k"],
+            "presence_penalty": p["presence_penalty"],
+        }
+        for p in raw
+    }
+
+
+def load_prompts(host: str) -> dict[str, dict]:
+    """Fetch prompt configs from Core and return as {name: {content, production_preset, example_message}}."""
+    raw = fetch_json(f"{host}/settings/local-ai/playground/prompts")
+    return {p["name"]: p for p in raw}
 
 
 def call_playground(host: str, system_prompt: str, user_message: str,
@@ -51,12 +67,6 @@ def call_playground(host: str, system_prompt: str, user_message: str,
         return json.loads(resp.read())
 
 
-def load_prompt(host: str, name: str) -> str | None:
-    resp = urllib.request.urlopen(f"{host}/settings/local-ai/playground/prompts")
-    prompts = json.loads(resp.read())
-    return next((p["content"] for p in prompts if p["name"] == name), None)
-
-
 def analyze_preset(responses: list[dict]) -> dict:
     """Compute stats for a set of responses."""
     texts = [r["text"].strip() for r in responses]
@@ -75,10 +85,11 @@ def analyze_preset(responses: list[dict]) -> dict:
     }
 
 
-def print_results(name: str, temp: float, top_p: float, top_k: int,
-                  presence_penalty: float, stats: dict):
+def print_results(name: str, params: dict, stats: dict, is_production: bool = False):
+    prod_tag = "  ← PRODUCTION" if is_production else ""
     print(f"\n{'─' * 90}")
-    print(f"  {name}  (temp={temp}, top_p={top_p}, top_k={top_k}, presence_penalty={presence_penalty})")
+    print(f"  {name}  (temp={params['temperature']}, top_p={params['top_p']}, "
+          f"top_k={params['top_k']}, presence_penalty={params['presence_penalty']}){prod_tag}")
     print(f"{'─' * 90}")
 
     for i, text in enumerate(stats["texts"], 1):
@@ -111,47 +122,86 @@ def main():
     parser = argparse.ArgumentParser(description="Test prompts via Local AI Lab playground")
     parser.add_argument("--prompt", default="tts-test-praise",
                         help="Prompt name from prompts/ dir (default: tts-test-praise)")
-    parser.add_argument("--user-message", default="Generate a sentence.",
-                        help="User message to send (default: 'Generate a sentence.')")
+    parser.add_argument("--preset", default=None,
+                        help="Run only this preset (default: production preset if known, else all)")
+    parser.add_argument("--all", action="store_true", dest="all_presets",
+                        help="Test all presets even when a production mapping exists")
+    parser.add_argument("--user-message", default=None,
+                        help="Override user message (default: example from Core)")
     parser.add_argument("--iterations", type=int, default=3,
                         help="Iterations per preset (default: 3)")
     parser.add_argument("--host", default="http://localhost:49111",
                         help="Core API base URL")
     args = parser.parse_args()
 
-    system_prompt = load_prompt(args.host, args.prompt)
-    if not system_prompt:
+    # Fetch everything from Core (single source of truth)
+    try:
+        presets = load_presets(args.host)
+        prompts = load_prompts(args.host)
+    except Exception as e:
+        print(f"ERROR: Could not connect to Core at {args.host}: {e}")
+        sys.exit(1)
+
+    prompt_config = prompts.get(args.prompt)
+    if not prompt_config:
         print(f"ERROR: prompt '{args.prompt}' not found. Available prompts:")
-        resp = urllib.request.urlopen(f"{args.host}/settings/local-ai/playground/prompts")
-        for p in json.loads(resp.read()):
-            print(f"  - {p['name']}")
+        for name in sorted(prompts):
+            prod = prompts[name].get("production_preset") or "-"
+            print(f"  - {name}  (preset: {prod})")
         return
 
+    system_prompt = prompt_config["content"]
+    production_preset = prompt_config.get("production_preset")
+    user_message = args.user_message or prompt_config.get("example_message") or "Generate a response."
+    preset_names = list(presets.keys())
+
+    # Validate --preset against what Core knows
+    if args.preset and args.preset not in presets:
+        print(f"ERROR: preset '{args.preset}' not found. Available: {', '.join(preset_names)}")
+        return
+
+    # Determine which presets to test
+    if args.preset:
+        presets_to_test = [args.preset]
+    elif args.all_presets:
+        presets_to_test = preset_names
+    elif production_preset:
+        presets_to_test = [production_preset]
+    else:
+        presets_to_test = preset_names
+
     print(f"Prompt: {args.prompt}")
+    if production_preset:
+        print(f"Production preset: {production_preset}")
+    print(f"Testing: {', '.join(presets_to_test)}")
     print(f"System: {system_prompt.strip()[:120]}...")
-    print(f"User:   {args.user_message}")
+    print(f"User:   {user_message[:120]}{'...' if len(user_message) > 120 else ''}")
     print(f"Iterations per preset: {args.iterations}")
     print(f"{'=' * 90}")
 
     all_results = {}
 
-    for name, temp, top_p, top_k, pp in SAMPLING_PRESETS:
+    for preset_name in presets_to_test:
+        params = presets[preset_name]
         try:
-            result = call_playground(args.host, system_prompt, args.user_message,
-                                     args.iterations, temp, top_p, top_k, pp)
+            result = call_playground(
+                args.host, system_prompt, user_message, args.iterations,
+                params["temperature"], params["top_p"], params["top_k"], params["presence_penalty"],
+            )
         except Exception as e:
-            print(f"\n  {name}: ERROR -- {e}")
+            print(f"\n  {preset_name}: ERROR -- {e}")
             continue
 
         if not result.get("success"):
-            print(f"\n  {name}: FAILED -- {result.get('error', 'unknown')}")
+            print(f"\n  {preset_name}: FAILED -- {result.get('error', 'unknown')}")
             continue
 
         stats = analyze_preset(result["responses"])
-        all_results[name] = stats
-        print_results(name, temp, top_p, top_k, pp, stats)
+        all_results[preset_name] = stats
+        is_prod = (preset_name == production_preset)
+        print_results(preset_name, params, stats, is_production=is_prod)
 
-    if all_results:
+    if len(all_results) > 1:
         print_analysis(all_results)
 
     print(f"\n{'=' * 90}")
