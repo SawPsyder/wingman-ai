@@ -425,6 +425,12 @@ class WingmanCore(WebSocketUser):
             endpoint=self.playground_benchmark,
             tags=tags,
         )
+        self.router.add_api_route(
+            methods=["GET"],
+            path="/settings/local-ai/playground/prompts",
+            endpoint=self.playground_list_prompts,
+            tags=tags,
+        )
 
         # Connection test endpoints
         self.router.add_api_route(
@@ -480,6 +486,12 @@ class WingmanCore(WebSocketUser):
             methods=["POST"],
             path="/settings/test/output-device",
             endpoint=self.test_output_device,
+            tags=tags,
+        )
+        self.router.add_api_route(
+            methods=["POST"],
+            path="/settings/generate-tts-sample",
+            endpoint=self.generate_tts_sample,
             tags=tags,
         )
 
@@ -2295,33 +2307,73 @@ class WingmanCore(WebSocketUser):
 
     # POST /settings/local-ai/playground/chat
     async def playground_chat(self, request: PlaygroundChatRequest) -> dict:
-        """Test the support model with a system + user message."""
+        """Test the support model with a system + user message.
+
+        When iterations > 1, runs the same prompt multiple times and returns
+        all responses so users can evaluate output variety and quality.
+        """
         if not self.local_ai_service.is_ready():
             return {
                 "success": False,
                 "error": "Local AI service is not ready. Make sure models are loaded.",
             }
 
+        iterations = max(1, min(request.iterations, 20))
+
         def _run():
             benchmark = Benchmark("playground_chat")
-            benchmark.start_snapshot("inference")
-            result = self.local_ai_service.support(
-                text=request.user_message,
-                system_prompt=request.system_message,
-            )
-            benchmark.finish_snapshot()
-            return result, benchmark.finish()
+            responses = []
+            for i in range(iterations):
+                label = f"iteration_{i + 1}"
+                benchmark.start_snapshot(label)
+                result = self.local_ai_service.support(
+                    text=request.user_message,
+                    system_prompt=request.system_message,
+                    temperature=request.temperature,
+                    top_p=request.top_p,
+                    top_k=request.top_k,
+                    presence_penalty=request.presence_penalty,
+                )
+                snap = benchmark.finish_snapshot()
+                elapsed_ms = snap.execution_time_ms if snap else 0
+                responses.append({
+                    "text": result.text if result.text else "",
+                    "completion_tokens": result.completion_tokens or 0,
+                    "time_ms": round(elapsed_ms, 1),
+                })
+            return responses, benchmark.finish()
 
-        result, bench_result = await asyncio.to_thread(_run)
-
-        if result.text is None:
-            return {"success": False, "error": "Support model returned no result."}
+        responses, bench_result = await asyncio.to_thread(_run)
 
         return {
             "success": True,
-            "response": result.text,
+            "responses": responses,
+            # Keep single-response field for backward compat
+            "response": responses[0]["text"] if responses else "",
             "benchmark": bench_result.model_dump(),
         }
+
+    async def playground_list_prompts(self) -> list[dict]:
+        """List available prompt templates for the playground."""
+        from services.file import get_prompt
+        import os
+
+        prompts_dir = os.path.join(
+            os.path.abspath(os.path.dirname(__file__)), "prompts"
+        )
+        results = []
+        for filename in sorted(os.listdir(prompts_dir)):
+            if filename.endswith(".md"):
+                name = filename[:-3]
+                content = get_prompt(name)
+                # Use first line as label
+                first_line = content.split("\n")[0].strip()
+                results.append({
+                    "name": name,
+                    "label": first_line[:60] + ("…" if len(first_line) > 60 else ""),
+                    "content": content,
+                })
+        return results
 
     # POST /settings/local-ai/playground/embed
     async def playground_embed(self, texts: list[str] = Body(...)) -> dict:
@@ -2381,11 +2433,25 @@ class WingmanCore(WebSocketUser):
             "In a galaxy far, far away, there existed a civilization that had mastered the art of faster-than-light travel. Their ships could traverse the vast emptiness between star systems in mere hours. The key to their technology was a crystal found only in the deepest mines of their home world. This crystal, when properly refined and charged, could bend the fabric of spacetime itself, creating tunnels through which spacecraft could pass almost instantaneously. However, the supply of this precious mineral was dwindling, and the civilization faced an existential crisis as they searched for alternatives.",
         ]
 
+        # Vary sampling params across iterations (Qwen3.5 recommended values)
+        sampling_presets = [
+            {"name": "Precise", "temperature": 0.6, "top_p": 0.95, "top_k": 20, "presence_penalty": 0.0},
+            {"name": "Balanced", "temperature": 1.0, "top_p": 0.95, "top_k": 20, "presence_penalty": 1.5},
+            {"name": "Creative", "temperature": 1.0, "top_p": 1.0, "top_k": 20, "presence_penalty": 2.0},
+        ]
+
         for i in range(iterations):
+            preset = sampling_presets[i % len(sampling_presets)]
             for j, text in enumerate(test_texts):
                 label = f"support_iter{i+1}_text{j+1}_{len(text)}chars"
                 benchmark.start_snapshot(label)
-                res = self.local_ai_service.support(text)
+                res = self.local_ai_service.support(
+                    text,
+                    temperature=preset["temperature"],
+                    top_p=preset["top_p"],
+                    top_k=preset["top_k"],
+                    presence_penalty=preset["presence_penalty"],
+                )
                 benchmark.finish_snapshot()
 
                 # Compute tokens/sec from the snapshot we just finished
@@ -2409,6 +2475,11 @@ class WingmanCore(WebSocketUser):
                         "completion_tokens": completion_tokens,
                         "tokens_per_sec": round(tokens_per_sec, 1),
                         "label": label,
+                        "preset": preset["name"],
+                        "temperature": preset["temperature"],
+                        "top_p": preset["top_p"],
+                        "top_k": preset["top_k"],
+                        "presence_penalty": preset["presence_penalty"],
                     }
                 )
 
@@ -2701,18 +2772,21 @@ class WingmanCore(WebSocketUser):
                 success=False, provider="pocket_tts", error=str(e)
             )
 
-    # POST /settings/test/output-device
-    async def test_output_device(self):
-        """Generate a funny Wingman AI praise via the support model, pick a random
-        Pocket TTS voice, and return both so the client can trigger playback separately."""
+    def _generate_tts_praise_text(self) -> str:
+        """Generate a funny Wingman AI praise sentence via the local AI support model.
+        Falls back to a static sentence if the model is not ready."""
         from services.file import get_prompt
 
-        # Generate text using local AI support model
         text = None
         if self.local_ai_service.is_ready():
             system_prompt = get_prompt("tts-test-praise")
             result = self.local_ai_service.support(
-                text="Generate a sentence.", system_prompt=system_prompt
+                text="Generate a sentence.",
+                system_prompt=system_prompt,
+                temperature=1.0,
+                top_p=1.0,
+                top_k=20,
+                presence_penalty=2.0,
             )
             if result.text:
                 text = result.text.strip().strip('"')
@@ -2720,11 +2794,25 @@ class WingmanCore(WebSocketUser):
         if not text:
             text = "Wingman AI is so good, even my toaster is jealous."
 
+        return text
+
+    # POST /settings/test/output-device
+    async def test_output_device(self):
+        """Generate a funny Wingman AI praise via the support model, pick a random
+        Pocket TTS voice, and return both so the client can trigger playback separately."""
+        text = self._generate_tts_praise_text()
+
         # Pick a random available Pocket TTS voice
         voices = await self.pocket_tts.get_available_voices()
         voice = random.choice(voices).id if voices else None
 
         return {"text": text, "voice": voice}
+
+    # POST /settings/generate-tts-sample
+    async def generate_tts_sample(self):
+        """Generate a funny Wingman AI praise sentence for TTS voice previews."""
+        text = self._generate_tts_praise_text()
+        return {"text": text}
 
     # POST /local-ai/support
     async def api_support(

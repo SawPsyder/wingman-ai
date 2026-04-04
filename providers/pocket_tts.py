@@ -420,8 +420,12 @@ class PocketTTS:
     async def _generate_and_play(
         self, text, voice_state, sound_config, audio_player, wingman_name
     ):
-        """Generate full audio and play it."""
-        # Run generation in a thread to avoid blocking asyncio loop
+        """Generate full audio and play it via the streaming playback path.
+
+        Generates the complete audio first, then feeds it through
+        stream_with_effects to avoid end-of-stream artifacts that occur
+        with the OutputStream-based play_with_effects on some devices.
+        """
         loop = asyncio.get_event_loop()
         audio_tensor = await loop.run_in_executor(
             None,
@@ -430,15 +434,36 @@ class PocketTTS:
             ),
         )
 
-        audio_buffer = self._convert_audio(audio_tensor, self.model.sample_rate, "wav")
+        # Convert to int16 PCM bytes (same format as the streaming path)
+        if audio_tensor.is_cuda:
+            audio_tensor = audio_tensor.cpu()
+        if audio_tensor.dim() == 2:
+            audio_tensor = audio_tensor.squeeze(0)
+        pcm_bytes = (
+            (audio_tensor * 32767).clamp(-32768, 32767).to(torch.int16).numpy().tobytes()
+        )
 
-        # Convert buffer to bytes
-        audio_bytes = audio_buffer.getvalue()
+        # Feed the preloaded audio through a buffer callback
+        read_pos = 0
 
-        await audio_player.play_with_effects(
-            input_data=audio_bytes,
+        def buffer_callback(out_buffer: bytearray) -> int:
+            nonlocal read_pos
+            remaining = len(pcm_bytes) - read_pos
+            if remaining <= 0:
+                return 0
+            to_copy = min(len(out_buffer), remaining)
+            out_buffer[:to_copy] = pcm_bytes[read_pos : read_pos + to_copy]
+            read_pos += to_copy
+            return to_copy
+
+        await audio_player.stream_with_effects(
+            buffer_callback=buffer_callback,
             config=sound_config,
             wingman_name=wingman_name,
+            sample_rate=self.model.sample_rate,
+            dtype="int16",
+            channels=1,
+            use_gain_boost=True,
         )
 
     async def _stream_audio(

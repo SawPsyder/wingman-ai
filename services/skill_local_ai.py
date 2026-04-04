@@ -46,28 +46,28 @@ class MemorySearchResult:
 
 
 class SamplingPreset(Enum):
-    """Named sampling presets for common local AI tasks.
+    """Named sampling presets for the Qwen3.5 local AI model.
 
+    Based on Qwen3.5-2B HuggingFace recommended sampling parameters.
     Use these when calling ``support()`` or ``support_sync()`` to get
-    sensible temperature / top_p values without tuning them yourself.
-    Manual ``temperature`` and ``top_p`` arguments take precedence over
-    any preset.
+    sensible values without tuning them yourself.
+    Manual arguments take precedence over any preset.
 
-    Attributes (temperature, top_p):
-        PRECISE:   (0.1, 1.0) — Factual extraction, classification, yes/no.
-        BALANCED:  (0.3, 1.0) — Summaries, memory extraction, paraphrasing.
-        CREATIVE:  (0.8, 0.9) — Greetings, flavor text, roleplay, dialogue.
-        ADVENTUROUS: (1.2, 0.85) — Brainstorming, wild ideas, maximum variety.
+    Attributes (temperature, top_p, top_k, presence_penalty):
+        PRECISE:   (0.6, 0.95, 20, 0.0) — Extraction, structured data, JSON.
+        BALANCED:  (1.0, 0.95, 20, 1.5) — Summaries, memory extraction, paraphrasing.
+        CREATIVE:  (1.0, 1.0, 20, 2.0) — Greetings, flavor text, roleplay, dialogue.
     """
 
-    PRECISE = (0.1, 1.0)
-    BALANCED = (0.3, 1.0)
-    CREATIVE = (0.8, 0.9)
-    ADVENTUROUS = (1.2, 0.85)
+    PRECISE = (0.6, 0.95, 20, 0.0)
+    BALANCED = (1.0, 0.95, 20, 1.5)
+    CREATIVE = (1.0, 1.0, 20, 2.0)
 
-    def __init__(self, temperature: float, top_p: float):
+    def __init__(self, temperature: float, top_p: float, top_k: int = 20, presence_penalty: float = 2.0):
         self._temperature = temperature
         self._top_p = top_p
+        self._top_k = top_k
+        self._presence_penalty = presence_penalty
 
     @property
     def temperature(self) -> float:
@@ -76,6 +76,14 @@ class SamplingPreset(Enum):
     @property
     def top_p(self) -> float:
         return self._top_p
+
+    @property
+    def top_k(self) -> int:
+        return self._top_k
+
+    @property
+    def presence_penalty(self) -> float:
+        return self._presence_penalty
 
 
 class MemoryType(str, Enum):
@@ -150,16 +158,24 @@ class SkillLocalAI:
         preset: SamplingPreset | None,
         temperature: float | None,
         top_p: float | None,
-    ) -> tuple[float | None, float | None]:
+        top_k: int | None = None,
+        presence_penalty: float | None = None,
+    ) -> tuple[float | None, float | None, int | None, float | None]:
         """Merge preset and manual overrides. Manual values win."""
         t = temperature
         p = top_p
+        k = top_k
+        pp = presence_penalty
         if preset is not None:
             if t is None:
                 t = preset.temperature
             if p is None:
                 p = preset.top_p
-        return t, p
+            if k is None:
+                k = preset.top_k
+            if pp is None:
+                pp = preset.presence_penalty
+        return t, p, k, pp
 
     # ── Support model ─────────────────────────────────────────────
 
@@ -170,15 +186,17 @@ class SkillLocalAI:
         preset: SamplingPreset | None = None,
         temperature: float | None = None,
         top_p: float | None = None,
+        top_k: int | None = None,
+        presence_penalty: float | None = None,
     ) -> SupportResponse | None:
         """Run text through the local support model.
 
         Returns SupportResponse with text and token usage, or None on failure.
 
         Use ``preset`` for a named configuration (e.g. ``SamplingPreset.CREATIVE``)
-        or pass ``temperature`` / ``top_p`` directly for manual control.
+        or pass sampling params directly for manual control.
         Manual values take precedence over preset values.
-        Both are optional — omitting everything uses the global settings.
+        Both are optional — omitting everything uses the Qwen3.5 defaults.
 
         Example::
 
@@ -186,14 +204,14 @@ class SkillLocalAI:
             result = await self.local_ai.support(text, preset=SamplingPreset.CREATIVE)
 
             # Manual override
-            result = await self.local_ai.support(text, temperature=1.0, top_p=0.85)
+            result = await self.local_ai.support(text, temperature=1.0, presence_penalty=2.0)
 
-            # Preset + partial override (uses preset top_p but custom temperature)
+            # Preset + partial override
             result = await self.local_ai.support(
-                text, preset=SamplingPreset.CREATIVE, temperature=1.0
+                text, preset=SamplingPreset.CREATIVE, temperature=0.8
             )
         """
-        t, p = self._resolve_sampling(preset, temperature, top_p)
+        t, p, k, pp = self._resolve_sampling(preset, temperature, top_p, top_k, presence_penalty)
         if not self.available:
             return None
         try:
@@ -203,6 +221,8 @@ class SkillLocalAI:
                 system_prompt,
                 t,
                 p,
+                k,
+                pp,
             )
             if result is None:
                 return None
@@ -223,14 +243,16 @@ class SkillLocalAI:
         preset: SamplingPreset | None = None,
         temperature: float | None = None,
         top_p: float | None = None,
+        top_k: int | None = None,
+        presence_penalty: float | None = None,
     ) -> SupportResponse | None:
         """Sync version of support(). See support() for parameter details."""
-        t, p = self._resolve_sampling(preset, temperature, top_p)
+        t, p, k, pp = self._resolve_sampling(preset, temperature, top_p, top_k, presence_penalty)
         if not self.available:
             return None
         try:
             result = self._wingman.local_ai_service.support(
-                text, system_prompt, t, p
+                text, system_prompt, t, p, k, pp
             )
             if result is None:
                 return None

@@ -131,18 +131,17 @@ class LocalAiService:
         system_prompt: str = "",
         temperature: float | None = None,
         top_p: float | None = None,
+        top_k: int | None = None,
+        presence_penalty: float | None = None,
     ) -> "SupportResult":
         """Process text using the support model (local or remote).
 
         The output token budget is always computed automatically from the
-        context window (``n_ctx``):
+        context window (``n_ctx``).
 
-            max_output = safe_ctx − system_tokens − input_tokens
-
-        Callers never need to (and cannot) specify ``max_tokens``.
-        Use ``get_token_budget()`` beforehand if you need to plan chunking.
-
-        ``temperature`` and ``top_p`` override the global settings when given.
+        Sampling params default to the user's ``LlamaCppSettings`` values
+        (which themselves default to Qwen3.5 recommendations).
+        Per-call overrides take precedence.
 
         Returns a ``SupportResult`` with text, token usage, and truncation flag.
         """
@@ -160,9 +159,14 @@ class LocalAiService:
         input_tokens = system_tokens + count_tokens(text)
         max_tokens = max(MIN_OUTPUT_TOKENS, safe_ctx - input_tokens)
 
+        t = temperature if temperature is not None else self.settings.temperature
+        p = top_p if top_p is not None else self.settings.top_p
+        k = top_k if top_k is not None else self.settings.top_k
+        pp = presence_penalty if presence_penalty is not None else self.settings.presence_penalty
+
         if self.settings.run_locally:
-            return self.provider.support(text, system_prompt, max_tokens, temperature, top_p)
-        return self.remote.support(text, system_prompt, max_tokens, temperature, top_p)
+            return self.provider.support(text, system_prompt, max_tokens, t, p, k, pp)
+        return self.remote.support(text, system_prompt, max_tokens, t, p, k, pp)
 
     # ── Embeddings ─────────────────────────────────────────────────
 

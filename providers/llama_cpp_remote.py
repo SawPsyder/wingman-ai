@@ -52,8 +52,10 @@ class LlamaCppRemote:
         text: str,
         system_prompt: str = "",
         max_tokens: int = 512,
-        temperature: float | None = None,
-        top_p: float | None = None,
+        temperature: float = 1.0,
+        top_p: float = 1.0,
+        top_k: int = 20,
+        presence_penalty: float = 2.0,
     ) -> "SupportResult":
         """Process text via remote llama-server support model."""
         from providers.llama_cpp_provider import SupportResult
@@ -70,10 +72,10 @@ class LlamaCppRemote:
                     {"role": "user", "content": text},
                 ],
                 max_tokens=max_tokens,
-                temperature=temperature if temperature is not None else self.settings.temperature,
-                top_p=top_p if top_p is not None else self.settings.top_p,
-                frequency_penalty=0.5,
-                presence_penalty=0.3,
+                temperature=temperature,
+                top_p=top_p,
+                presence_penalty=presence_penalty,
+                extra_body={"top_k": top_k},
             )
             raw = response.choices[0].message.content
             cleaned = self._deduplicate_lines(raw) if raw else None

@@ -1178,6 +1178,11 @@ class HudServerSettings(BaseModel):
 class PlaygroundChatRequest(BaseModel):
     system_message: str
     user_message: str
+    temperature: float = 1.0
+    top_p: float = 1.0
+    top_k: int = 20
+    presence_penalty: float = 2.0
+    iterations: int = 1
 
 
 class LlamaCppSettings(BaseModel):
@@ -1192,10 +1197,14 @@ class LlamaCppSettings(BaseModel):
     """Number of CPU threads for local inference. 0 = auto (half of logical cores, max 8)."""
     reasoning_effort: int
     """Reasoning effort for the support model. 0 = disabled (fastest), 1 = enabled (slow)."""
-    temperature: float = 0.3
-    """Sampling temperature for the support model. 0.0 = deterministic, 2.0 = very random."""
+    temperature: float = 1.0
+    """Sampling temperature. Qwen3.5 recommends 1.0 for non-thinking text."""
     top_p: float = 1.0
-    """Nucleus sampling threshold. 1.0 = disabled (use full distribution)."""
+    """Nucleus sampling threshold. Qwen3.5 recommends 1.0 for non-thinking text."""
+    top_k: int = 20
+    """Top-K sampling. Qwen3.5 recommends 20 across all modes."""
+    presence_penalty: float = 2.0
+    """Presence penalty to reduce repetition. Qwen3.5 recommends 2.0 for non-thinking text."""
     support_remote_host: str
     support_remote_port: int
     embed_remote_host: str

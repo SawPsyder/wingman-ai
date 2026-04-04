@@ -37,7 +37,8 @@ class Benchmark:
         self.snapshot_label = label
         self.snapshot_start_time = time.perf_counter()
 
-    def finish_snapshot(self):
+    def finish_snapshot(self) -> BenchmarkResult | None:
+        result = None
         try:
             result = self._create_benchmark_result(
                 label=self.snapshot_label, start_time=self.snapshot_start_time
@@ -47,6 +48,7 @@ class Benchmark:
             pass
         self.snapshot_label = None
         self.snapshot_start_time = None
+        return result
 
     def _create_benchmark_result(self, label: str, start_time: float):
         end_time = time.perf_counter()
