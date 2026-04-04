@@ -68,6 +68,7 @@ from services.file import (
     get_writable_dir,
     get_audio_library_dir,
     get_custom_voices_dir,
+    get_custom_skills_dir,
     get_local_models_dir,
     get_prompt,
 )
@@ -285,6 +286,12 @@ class WingmanCore(WebSocketUser):
             methods=["POST"],
             path="/open-filemanager/local-models",
             endpoint=self.open_local_models_directory,
+            tags=tags,
+        )
+        self.router.add_api_route(
+            methods=["POST"],
+            path="/open-filemanager/custom-skills",
+            endpoint=self.open_custom_skills_directory,
             tags=tags,
         )
         self.router.add_api_route(
@@ -2069,6 +2076,10 @@ class WingmanCore(WebSocketUser):
     # POST /open-filemanager/local-models
     def open_local_models_directory(self):
         show_in_file_manager(get_local_models_dir())
+
+    # POST /open-filemanager/custom-skills
+    def open_custom_skills_directory(self):
+        show_in_file_manager(get_custom_skills_dir())
 
     # GET /models/openrouter
     async def get_openrouter_models(self):
