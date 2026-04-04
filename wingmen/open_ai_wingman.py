@@ -9,7 +9,7 @@ from typing import (
     Mapping,
     Optional,
 )
-from openai import NOT_GIVEN
+from openai import APIConnectionError, NOT_GIVEN
 from openai.types.chat import (
     ChatCompletion,
     ChatCompletionMessage,
@@ -2714,6 +2714,11 @@ class OpenAiWingman(Wingman):
                 self.config.features.conversation_provider
                 == ConversationProvider.LOCAL_LLM
             ):
+                if not self.local_llm:
+                    raise RuntimeError(
+                        f"Local LLM provider is not initialized. "
+                        f"Please check your Local LLM endpoint configuration ({self.config.local_llm.endpoint})."
+                    )
                 completion = self.local_llm.ask(
                     messages=messages,
                     tools=tools,
@@ -2743,9 +2748,28 @@ class OpenAiWingman(Wingman):
                     tools=tools,
                     model=self.config.xai.conversation_model,
                 )
+        except APIConnectionError as e:
+            provider = self.config.features.conversation_provider.value
+            # Dig out the underlying cause for a useful message
+            cause = e.__cause__
+            detail = str(cause) if cause else str(e)
+            message = (
+                f"Could not connect to {provider}: {detail}"
+            )
+            await printr.print_async(
+                message,
+                color=LogType.ERROR,
+                source=LogSource.WINGMAN,
+                source_name=self.name,
+            )
+            printr.print(traceback.format_exc(), color=LogType.ERROR, server_only=True)
+            return None
         except Exception as e:
             await printr.print_async(
-                f"Error during LLM call: {str(e)}", color=LogType.ERROR
+                f"Error during LLM call: {str(e)}",
+                color=LogType.ERROR,
+                source=LogSource.WINGMAN,
+                source_name=self.name,
             )
             printr.print(traceback.format_exc(), color=LogType.ERROR, server_only=True)
             return None
