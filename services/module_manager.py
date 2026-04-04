@@ -140,7 +140,7 @@ class ModuleManager:
         try:
             dependencies_dir = (
                 path.join(skill_path, "venv", "lib", "python3.11", "site-packages")
-                if sys.platform == "darwin"
+                if sys.platform != "win32"
                 else path.join(skill_path, "venv", "Lib", "site-packages")
             )
             dependencies_dir = path.abspath(dependencies_dir)
@@ -167,7 +167,7 @@ class ModuleManager:
                             "python3.11",
                             "site-packages",
                         )
-                        if sys.platform == "darwin"
+                        if sys.platform != "win32"
                         else path.join(
                             bundled_skill_path, "venv", "Lib", "site-packages"
                         )

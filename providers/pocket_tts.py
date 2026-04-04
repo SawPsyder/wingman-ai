@@ -1,7 +1,6 @@
 import os
 import io
 import sys
-import platform
 import glob
 import asyncio
 from typing import Optional
@@ -591,13 +590,12 @@ class PocketTTS:
         return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
     def _get_default_model_path(self) -> str:
-        is_windows = platform.system() == "Windows"
-        if is_windows:
-            app_dir = self._get_app_dir()
-            model_path = os.path.join(app_dir, MODELS_DIR, "b6369a24.yaml")
-        else:
-            model_path = "b6369a24"
-        return model_path
+        app_dir = self._get_app_dir()
+        local_model_path = os.path.join(app_dir, MODELS_DIR, "b6369a24.yaml")
+        if os.path.exists(local_model_path):
+            return local_model_path
+        # Fall back to model name for auto-download
+        return "b6369a24"
 
     def _get_pocket_tts_included_voices_dir(self) -> str:
         # Determine path to PocketTTS included/bundled embeddings directory

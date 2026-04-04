@@ -41,19 +41,19 @@ jaraco-functools>=4.0.0
 # NVIDIA CUDA libraries for GPU-accelerated FasterWhisper (ctranslate2)
 # These are bundled with PyInstaller to provide zero-config GPU support
 # IMPORTANT: Must stay on CUDA 12.x (12.4-12.8 tested). CUDA 13.x is NOT compatible with ctranslate2.
-# Comment these out if you want to run on MacOS.
-nvidia-cublas-cu12>=12.4.2,<13.0
-nvidia-cuda-runtime-cu12>=12.4.99,<13.0
-nvidia-cudnn-cu12>=9.1.0,<10.0
-nvidia-cuda-nvrtc-cu12>=12.4.99,<13.0
+# Not available on macOS — CUDA is Windows/Linux only.
+nvidia-cublas-cu12>=12.4.2,<13.0; sys_platform != 'darwin'
+nvidia-cuda-runtime-cu12>=12.4.99,<13.0; sys_platform != 'darwin'
+nvidia-cudnn-cu12>=9.1.0,<10.0; sys_platform != 'darwin'
+nvidia-cuda-nvrtc-cu12>=12.4.99,<13.0; sys_platform != 'darwin'
 
 # Local AI (llama-server binary is auto-downloaded)
 tiktoken>=0.9.0
 
 # Parakeet STT (NVIDIA Parakeet TDT via ONNX Runtime)
 onnx-asr>=0.3.3
-onnxruntime-gpu>=1.19.0; sys_platform == 'win32'
-onnxruntime>=1.19.0; sys_platform != 'win32'
+onnxruntime-gpu>=1.19.0; sys_platform == 'win32' or sys_platform == 'linux'
+onnxruntime>=1.19.0; sys_platform == 'darwin'
 
 # Pocket-TTS
 pocket-tts==1.1.0

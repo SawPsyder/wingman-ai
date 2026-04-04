@@ -1,5 +1,4 @@
 from os import path
-import platform
 import gc
 from typing import Optional
 from faster_whisper import WhisperModel
@@ -26,11 +25,9 @@ class FasterWhisper:
         self.settings = settings
         self.model: Optional[WhisperModel] = None
 
-        self.is_windows = platform.system() == "Windows"
-        if self.is_windows:
-            # move one dir up, out of _internal (if bundled)
-            app_dir = path.dirname(app_root_path) if app_is_bundled else app_root_path
-            self.models_dir = path.join(app_dir, MODELS_DIR)
+        # move one dir up, out of _internal (if bundled)
+        app_dir = path.dirname(app_root_path) if app_is_bundled else app_root_path
+        self.models_dir = path.join(app_dir, MODELS_DIR)
 
         if self.settings.enable:
             self.__update_model()
@@ -68,12 +65,8 @@ class FasterWhisper:
         # Unload the existing model first to free VRAM
         self.__unload_model()
 
-        if self.is_windows:
-            model_file = path.join(self.models_dir, (self.settings.model_size))
-            model = model_file if path.exists(model_file) else self.settings.model_size
-        else:
-            model_file = self.settings.model_size
-            model = self.settings.model_size
+        model_file = path.join(self.models_dir, self.settings.model_size)
+        model = model_file if path.exists(model_file) else self.settings.model_size
 
         try:
             self.model = WhisperModel(
