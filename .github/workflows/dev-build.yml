@@ -1,4 +1,5 @@
 name: Dev Build
+run-name: "Core Build – ${{ inputs.platform }}"
 
 on:
   workflow_dispatch:
