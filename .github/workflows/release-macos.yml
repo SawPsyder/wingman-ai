@@ -29,6 +29,9 @@ jobs:
         with:
           python-version: '3.11.7'
 
+      - name: Install system dependencies
+        run: brew install portaudio sdl2
+
       - name: Create venv and install dependencies
         run: |
           python -m venv venv
