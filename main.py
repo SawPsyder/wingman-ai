@@ -50,7 +50,7 @@ from services.connection_manager import ConnectionManager
 from services.esp32_handler import Esp32Handler
 from services.secret_keeper import SecretKeeper
 from services.printr import Printr
-from services.system_manager import SystemManager
+from services.system_manager import LOCAL_VERSION, SystemManager
 from wingman_core import WingmanCore
 port = None
 host = None
@@ -88,18 +88,10 @@ SecretKeeper.set_connection_manager(connection_manager)
 
 system_manager = SystemManager()
 printr.print(
-    f"Wingman AI Core v{system_manager.local_version}",
+    f"Wingman AI Core v{LOCAL_VERSION}",
     server_only=True,
     color=LogType.STARTUP,
 )
-
-is_latest_version = system_manager.check_version()
-if not is_latest_version:
-    printr.print(
-        "A new Wingman AI version is available! Download at https://www.wingman-ai.com",
-        server_only=True,
-        color=LogType.WARNING,
-    )
 
 # uses the Singletons above, so don't move this up!
 core = WingmanCore(
@@ -174,7 +166,7 @@ def custom_openapi():
         return app.openapi_schema
     openapi_schema = get_openapi(
         title="Wingman AI Core REST API",
-        version=str(system_manager.local_version),
+        version=LOCAL_VERSION,
         description="Communicate with Wingman AI Core",
         routes=app.routes,
     )
