@@ -1,3 +1,4 @@
+import multiprocessing
 import argparse
 import asyncio
 import atexit
@@ -8,6 +9,11 @@ import signal
 import sys
 import traceback
 from typing import Any, Literal, get_args, get_origin
+
+# Must be called before anything else in a PyInstaller frozen app.
+# On macOS, multiprocessing spawns child processes by re-invoking the binary
+# with -c flags. Without this, argparse sees those flags and crashes.
+multiprocessing.freeze_support()
 
 # =============================================================================
 # NVIDIA CUDA DLL PATH SETUP (must be done before any CUDA-dependent imports)
