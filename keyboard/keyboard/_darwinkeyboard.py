@@ -403,6 +403,14 @@ class KeyEventListener(object):
             Quartz.CGEventMaskBit(Quartz.kCGEventFlagsChanged),
             self.handler,
             None)
+        if self.tap is None:
+            print(
+                "Warning: CGEventTapCreate failed. "
+                "Keyboard hooking requires Accessibility permissions. "
+                "Grant access in System Settings > Privacy & Security > Accessibility."
+            )
+            self.listening = False
+            return
         loopsource = Quartz.CFMachPortCreateRunLoopSource(None, self.tap, 0)
         loop = Quartz.CFRunLoopGetCurrent()
         Quartz.CFRunLoopAddSource(loop, loopsource, Quartz.kCFRunLoopDefaultMode)
