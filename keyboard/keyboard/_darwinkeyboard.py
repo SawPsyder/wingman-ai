@@ -391,9 +391,65 @@ class KeyEventListener(object):
         self.modifier_scancodes = defaultdict(list)
         self.pressed_modifiers = set()
 
+    def _check_accessibility(self):
+        """Check Accessibility permissions, showing macOS native prompt if missing."""
+        try:
+            CF = ctypes.cdll.LoadLibrary(ctypes.util.find_library('CoreFoundation'))
+            HI = ctypes.cdll.LoadLibrary(
+                '/System/Library/Frameworks/ApplicationServices.framework/'
+                'Frameworks/HIServices.framework/HIServices'
+            )
+
+            kCFBooleanTrue = ctypes.c_void_p.in_dll(CF, 'kCFBooleanTrue')
+            kAXTrustedCheckOptionPrompt = ctypes.c_void_p.in_dll(
+                HI, 'kAXTrustedCheckOptionPrompt'
+            )
+            kCFTypeDictionaryKeyCallBacks = ctypes.c_void_p.in_dll(
+                CF, 'kCFTypeDictionaryKeyCallBacks'
+            )
+            kCFTypeDictionaryValueCallBacks = ctypes.c_void_p.in_dll(
+                CF, 'kCFTypeDictionaryValueCallBacks'
+            )
+
+            CF.CFDictionaryCreateMutable.argtypes = [
+                ctypes.c_void_p, ctypes.c_long, ctypes.c_void_p, ctypes.c_void_p
+            ]
+            CF.CFDictionaryCreateMutable.restype = ctypes.c_void_p
+            CF.CFDictionaryAddValue.argtypes = [
+                ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p
+            ]
+            CF.CFRelease.argtypes = [ctypes.c_void_p]
+            HI.AXIsProcessTrustedWithOptions.argtypes = [ctypes.c_void_p]
+            HI.AXIsProcessTrustedWithOptions.restype = ctypes.c_bool
+
+            options = CF.CFDictionaryCreateMutable(
+                None, ctypes.c_long(1),
+                ctypes.byref(kCFTypeDictionaryKeyCallBacks),
+                ctypes.byref(kCFTypeDictionaryValueCallBacks),
+            )
+            CF.CFDictionaryAddValue(
+                options, kAXTrustedCheckOptionPrompt, kCFBooleanTrue
+            )
+            trusted = HI.AXIsProcessTrustedWithOptions(options)
+            CF.CFRelease(options)
+            return trusted
+        except Exception:
+            return True  # Don't block startup if check fails
+
     def run(self):
         """ Creates a listener and loops while waiting for an event. Intended to run as
         a background thread. """
+        # Show native macOS Accessibility permission prompt if needed
+        if not self._check_accessibility():
+            print(
+                "Warning: Accessibility permissions not granted. "
+                "macOS should have shown a prompt — grant access in "
+                "System Settings > Privacy & Security > Accessibility, "
+                "then restart Wingman AI."
+            )
+            self.listening = False
+            return
+
         self.tap = Quartz.CGEventTapCreate(
             Quartz.kCGSessionEventTap,
             Quartz.kCGHeadInsertEventTap,
@@ -405,9 +461,9 @@ class KeyEventListener(object):
             None)
         if self.tap is None:
             print(
-                "Warning: CGEventTapCreate failed. "
-                "Keyboard hooking requires Accessibility permissions. "
-                "Grant access in System Settings > Privacy & Security > Accessibility."
+                "Warning: CGEventTapCreate failed despite having permissions. "
+                "Try removing and re-adding Wingman AI in "
+                "System Settings > Privacy & Security > Accessibility."
             )
             self.listening = False
             return
