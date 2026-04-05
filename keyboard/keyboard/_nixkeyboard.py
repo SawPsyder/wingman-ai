@@ -122,14 +122,27 @@ def build_device():
     device = aggregate_devices('kbd')
 
 def init():
-    build_device()
-    build_tables()
+    try:
+        build_device()
+        build_tables()
+    except (PermissionError, ValueError, FileNotFoundError, OSError) as e:
+        print(
+            "Warning: Keyboard hooking failed: {}. "
+            "Add your user to the 'input' group: "
+            "'sudo usermod -a -G input $USER' then log out/in.".format(e)
+        )
 
 pressed_modifiers = set()
 
 def listen(callback):
-    build_device()
-    build_tables()
+    try:
+        build_device()
+        build_tables()
+    except (PermissionError, ValueError, FileNotFoundError, OSError):
+        return
+
+    if device is None:
+        return
 
     while True:
         time, type, code, value, device_id = device.read_event()
