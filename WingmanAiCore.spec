@@ -68,22 +68,22 @@ if os.path.exists('lib/python3.dll'):
 # ============================================================================
 binaries = []
 
-# Collect NVIDIA CUDA DLLs for GPU support
-# These are installed via pip from nvidia-* packages
-nvidia_packages = [
-    'nvidia.cublas',
-    'nvidia.cuda_runtime',
-    'nvidia.cudnn',
-    'nvidia.nvrtc',
-    'nvidia.cuda_nvrtc',
-]
+# Collect NVIDIA CUDA DLLs for GPU support (Windows/Linux only — macOS uses Metal)
+if sys.platform != 'darwin':
+    nvidia_packages = [
+        'nvidia.cublas',
+        'nvidia.cuda_runtime',
+        'nvidia.cudnn',
+        'nvidia.nvrtc',
+        'nvidia.cuda_nvrtc',
+    ]
 
-for pkg in nvidia_packages:
-    try:
-        binaries += collect_dynamic_libs(pkg)
-        print(f"Collected DLLs from {pkg}")
-    except Exception as e:
-        print(f"Warning: Could not collect {pkg} DLLs: {e}")
+    for pkg in nvidia_packages:
+        try:
+            binaries += collect_dynamic_libs(pkg)
+            print(f"Collected DLLs from {pkg}")
+        except Exception as e:
+            print(f"Warning: Could not collect {pkg} DLLs: {e}")
 
 # Collect ctranslate2 binaries
 try:

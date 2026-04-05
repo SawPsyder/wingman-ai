@@ -3,6 +3,16 @@ name: Dev Build
 on:
   workflow_dispatch:
     inputs:
+      platform:
+        description: "Target platform"
+        required: true
+        type: choice
+        options:
+          - windows
+          - macos
+          - linux
+          - all
+        default: windows
       version_label:
         description: "Optional suffix (e.g. rc1, beta.2). Leave empty for default."
         required: false
@@ -10,87 +20,16 @@ on:
 
 jobs:
   build-windows:
-    name: Build Windows Executable
-    runs-on: windows-latest
-    outputs:
-      version: ${{ steps.version.outputs.version }}
-      artifact_name: ${{ steps.version.outputs.artifact_name }}
-    steps:
-      - uses: actions/checkout@v4
+    if: inputs.platform == 'windows' || inputs.platform == 'all'
+    uses: ./.github/workflows/release-windows.yml
+    secrets: inherit
 
-      - name: Determine version and artifact name
-        id: version
-        shell: bash
-        run: |
-          version=$(sed -n 's/.*LOCAL_VERSION *= *"\([^"]*\)".*/\1/p' services/system_manager.py)
-          echo "version=$version" >> "$GITHUB_OUTPUT"
+  build-macos:
+    if: inputs.platform == 'macos' || inputs.platform == 'all'
+    uses: ./.github/workflows/release-macos.yml
+    secrets: inherit
 
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ github.event.inputs.version_label }}" ]; then
-            artifact_name="WingmanAiCore-${version}-${{ github.event.inputs.version_label }}-x86_64-pc-windows"
-          else
-            short_sha=$(echo "${{ github.sha }}" | cut -c1-7)
-            artifact_name="WingmanAiCore-${version}-dev.${short_sha}-x86_64-pc-windows"
-          fi
-          echo "artifact_name=$artifact_name" >> "$GITHUB_OUTPUT"
-          echo "Artifact name: $artifact_name"
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11.7'
-
-      - name: Create and activate venv
-        run: |
-          python -m venv venv
-          .\venv\Scripts\Activate
-
-      - name: Install Dependencies
-        run: |
-          .\venv\Scripts\Activate
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
-      - name: Build with PyInstaller
-        run: |
-          .\venv\Scripts\Activate
-          pyinstaller WingmanAiCore.spec --noconfirm
-
-      - name: Upload Windows Exe Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: unsigned-build
-          path: dist/WingmanAiCore/
-          retention-days: 1
-
-  sign-windows-executable:
-    needs: build-windows
-    runs-on: windows-2022
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          name: unsigned-build
-          path: WingmanAiCore
-
-      - name: Sign
-        env:
-          CERTIFICATE_HOST: ${{ secrets.SM_HOST }}
-          CERTIFICATE_HOST_API_KEY: ${{ secrets.SM_API_KEY }}
-          CERTIFICATE_SHA1_HASH: ${{ secrets.SM_CODE_SIGNING_CERT_SHA1_HASH }}
-          CLIENT_CERTIFICATE: ${{ secrets.SM_CLIENT_CERT_FILE_B64 }}
-          CLIENT_CERTIFICATE_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
-        uses: ./.github/actions/code-sign
-        with:
-          path-to-binary: 'WingmanAiCore/WingmanAiCore.exe'
-
-      - name: Upload Signed Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ needs.build-windows.outputs.artifact_name }}
-          path: WingmanAiCore
-          retention-days: 30
-
-      - name: Delete unsigned intermediate artifact
-        uses: geekyeggo/delete-artifact@v5
-        with:
-          name: unsigned-build
+  build-linux:
+    if: inputs.platform == 'linux' || inputs.platform == 'all'
+    uses: ./.github/workflows/release-linux.yml
+    secrets: inherit

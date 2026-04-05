@@ -1,9 +1,17 @@
-name: Build, Sign and Release
+name: Build Core (Windows)
 
 on:
   push:
     tags:
       - '*'
+  workflow_call:
+    outputs:
+      version:
+        description: "Extracted version from system_manager.py"
+        value: ${{ jobs.sign-windows-executable.outputs.version }}
+      artifact_name:
+        description: "Name of the signed artifact"
+        value: ${{ jobs.sign-windows-executable.outputs.artifact_name }}
 
 jobs:
   build-windows:
@@ -46,18 +54,21 @@ jobs:
       - name: Upload Windows Exe Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: unsigned-build
+          name: core-windows-unsigned
           path: dist/WingmanAiCore/
           retention-days: 1
 
   sign-windows-executable:
     needs: build-windows
     runs-on: windows-2022
+    outputs:
+      version: ${{ needs.build-windows.outputs.version }}
+      artifact_name: ${{ steps.artifact.outputs.artifact_name }}
     steps:
-      - uses: actions/checkout@v4 # for the action
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          name: unsigned-build
+          name: core-windows-unsigned
           path: WingmanAiCore
 
       - name: Sign
@@ -71,31 +82,38 @@ jobs:
         with:
           path-to-binary: 'WingmanAiCore/WingmanAiCore.exe'
 
+      - name: Set artifact name
+        id: artifact
+        shell: bash
+        run: |
+          artifact_name="WingmanAiCore-${{ needs.build-windows.outputs.version }}-x86_64-pc-windows"
+          echo "artifact_name=$artifact_name" >> "$GITHUB_OUTPUT"
+
       - name: Upload Signed Artifact
         uses: actions/upload-artifact@v4
         with:
           name: WingmanAiCore-${{ needs.build-windows.outputs.version }}-x86_64-pc-windows
           path: WingmanAiCore
+          retention-days: 5
 
       - name: Delete unsigned intermediate artifact
         uses: geekyeggo/delete-artifact@v5
         with:
-          name: unsigned-build
+          name: core-windows-unsigned
 
-  release:
-    needs: [build-windows, sign-windows-executable]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: WingmanAiCore-${{ needs.build-windows.outputs.version }}-x86_64-pc-windows
-          path: .
-
-      - name: Create Release
-        id: create_release
-        uses: softprops/action-gh-release@v1
-        with:
-          files: |
-            WingmanAiCore-Windows.zip
+      - name: Upload to R2 staging
+        shell: bash
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+        run: |
+          pip install awscli
+          aws s3 cp WingmanAiCore/ \
+            "s3://wingman-staging/core/${{ github.sha }}/windows-x86_64/" \
+            --recursive \
+            --endpoint-url "https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com"
+          echo "${{ github.sha }}" > latest-windows.txt
+          aws s3 cp latest-windows.txt \
+            "s3://wingman-staging/core/latest-windows.txt" \
+            --endpoint-url "https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com"

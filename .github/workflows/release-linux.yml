@@ -1,0 +1,70 @@
+name: Build Core (Linux)
+
+on:
+  workflow_call:
+    outputs:
+      version:
+        description: "Extracted version from system_manager.py"
+        value: ${{ jobs.build-linux.outputs.version }}
+
+jobs:
+  build-linux:
+    name: Build Linux Executable
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y portaudio19-dev libsdl2-dev
+
+      - name: Extract version from system_manager.py
+        id: version
+        shell: bash
+        run: |
+          version=$(grep -oE 'LOCAL_VERSION\s*=\s*"[^"]+"' services/system_manager.py | sed 's/.*"\(.*\)"/\1/')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Detected version: $version"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11.7'
+
+      - name: Create venv and install dependencies
+        run: |
+          python -m venv venv
+          source venv/bin/activate
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Build with PyInstaller
+        run: |
+          source venv/bin/activate
+          pyinstaller WingmanAiCore.spec --noconfirm
+
+      - name: Upload Linux Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: core-linux-x86_64
+          path: dist/WingmanAiCore/
+          retention-days: 5
+
+      - name: Upload to R2 staging
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+        run: |
+          pip install awscli
+          aws s3 cp dist/WingmanAiCore/ \
+            "s3://wingman-staging/core/${{ github.sha }}/linux-x86_64/" \
+            --recursive \
+            --endpoint-url "https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com"
+          echo "${{ github.sha }}" > latest-linux.txt
+          aws s3 cp latest-linux.txt \
+            "s3://wingman-staging/core/latest-linux.txt" \
+            --endpoint-url "https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com"
