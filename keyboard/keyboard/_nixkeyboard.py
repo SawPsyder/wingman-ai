@@ -116,16 +116,20 @@ def build_tables():
             from_name[synonym].extend(from_name[original])
 
 device = None
+init_error = None
+
 def build_device():
     global device
     if device: return
     device = aggregate_devices('kbd')
 
 def init():
+    global init_error
     try:
         build_device()
         build_tables()
     except (PermissionError, ValueError, FileNotFoundError, OSError) as e:
+        init_error = str(e)
         print(
             "Warning: Keyboard hooking failed: {}. "
             "Add your user to the 'input' group: "

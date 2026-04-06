@@ -5,6 +5,7 @@ import atexit
 from enum import Enum
 from os import path
 import os
+import platform
 import signal
 import sys
 import traceback
@@ -494,6 +495,27 @@ async def async_main(host: str, port: int, sidecar: bool):
             asyncio.create_task(core.process_events())
             # Set READY state - this also sets is_started = True
             await core.set_core_state(CoreState.READY)
+
+            # Check for keyboard hook errors (delayed to give macOS thread time to start)
+            await asyncio.sleep(1)
+            kb_error = keyboard.get_init_error()
+            if kb_error:
+                if platform.system() == "Linux":
+                    msg = (
+                        "Push-to-talk unavailable: keyboard access denied.\n"
+                        "Run these commands, then log out and back in:\n"
+                        "sudo usermod -a -G input $USER\n"
+                        "sudo usermod -a -G tty $USER"
+                    )
+                elif platform.system() == "Darwin":
+                    msg = (
+                        "Push-to-talk unavailable: Accessibility permissions not granted.\n"
+                        "Grant access in System Settings > Privacy & Security > Accessibility, "
+                        "then restart Wingman AI."
+                    )
+                else:
+                    msg = f"Push-to-talk unavailable: {kb_error}"
+                printr.toast_warning(msg)
         except Exception as e:
             printr.print(f"Error starting Wingman AI Core: {str(e)}", color=LogType.ERROR)
             printr.print(traceback.format_exc(), color=LogType.ERROR, server_only=True)

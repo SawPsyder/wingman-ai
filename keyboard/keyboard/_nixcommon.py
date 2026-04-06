@@ -102,8 +102,11 @@ class AggregatedEventDevice(object):
         self.devices = devices
         self.output = output or self.devices[0]
         def start_reading(device):
-            while True:
-                self.event_queue.put(device.read_event())
+            try:
+                while True:
+                    self.event_queue.put(device.read_event())
+            except (PermissionError, IOError):
+                pass
         for device in self.devices:
             thread = Thread(target=start_reading, args=[device])
             thread.daemon = True

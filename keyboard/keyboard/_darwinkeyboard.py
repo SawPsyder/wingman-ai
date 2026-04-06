@@ -439,14 +439,16 @@ class KeyEventListener(object):
     def run(self):
         """ Creates a listener and loops while waiting for an event. Intended to run as
         a background thread. """
+        global init_error
+
         # Show native macOS Accessibility permission prompt if needed
         if not self._check_accessibility():
-            print(
-                "Warning: Accessibility permissions not granted. "
-                "macOS should have shown a prompt — grant access in "
-                "System Settings > Privacy & Security > Accessibility, "
+            init_error = (
+                "Accessibility permissions not granted. "
+                "Grant access in System Settings > Privacy & Security > Accessibility, "
                 "then restart Wingman AI."
             )
+            print("Warning: " + init_error)
             self.listening = False
             return
 
@@ -460,11 +462,12 @@ class KeyEventListener(object):
             self.handler,
             None)
         if self.tap is None:
-            print(
-                "Warning: CGEventTapCreate failed despite having permissions. "
+            init_error = (
+                "CGEventTapCreate failed. "
                 "Try removing and re-adding Wingman AI in "
                 "System Settings > Privacy & Security > Accessibility."
             )
+            print("Warning: " + init_error)
             self.listening = False
             return
         loopsource = Quartz.CFMachPortCreateRunLoopSource(None, self.tap, 0)
@@ -532,6 +535,8 @@ class KeyEventListener(object):
 key_controller = KeyController()
 
 """ Exported functions below """
+
+init_error = None
 
 def init():
     key_controller = KeyController()
