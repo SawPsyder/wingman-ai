@@ -1,10 +1,15 @@
 import os
+import platform
 import time
 from datetime import datetime
 from typing import TYPE_CHECKING
 from mss import mss
-import pygetwindow as gw
 from PIL import Image
+
+try:
+    import pygetwindow as gw
+except (ImportError, NotImplementedError):
+    gw = None
 from api.enums import LogType
 from api.interface import SettingsConfig, SkillConfig, WingmanInitializationError
 from skills.skill_base import Skill, tool
@@ -75,6 +80,8 @@ class AutoScreenshot(Skill):
             )
 
         try:
+            if gw is None:
+                raise RuntimeError("pygetwindow not available on this platform")
             focused_window = gw.getActiveWindow()
 
             if self.settings.debug_mode:
