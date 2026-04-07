@@ -5,6 +5,10 @@ on:
     tags:
       - '*'
   workflow_call:
+    inputs:
+      runner:
+        type: string
+        default: 'github'
     outputs:
       version:
         description: "Extracted version from system_manager.py"
@@ -16,7 +20,7 @@ on:
 jobs:
   build-windows:
     name: Build Windows Executable
-    runs-on: windows-latest
+    runs-on: ${{ inputs.runner == 'blacksmith' && 'blacksmith-4vcpu-windows-2025' || 'windows-latest' }}
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
@@ -60,7 +64,7 @@ jobs:
 
   sign-windows-executable:
     needs: build-windows
-    runs-on: windows-2022
+    runs-on: ${{ inputs.runner == 'blacksmith' && 'blacksmith-4vcpu-windows-2025' || 'windows-2022' }}
     outputs:
       version: ${{ needs.build-windows.outputs.version }}
       artifact_name: ${{ steps.artifact.outputs.artifact_name }}
