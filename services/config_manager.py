@@ -24,6 +24,7 @@ from api.interface import (
 )
 from services.file import get_writable_dir, get_custom_skills_dir
 from services.printr import Printr
+from services.system_manager import LOCAL_VERSION
 
 TEMPLATES_DIR = "templates"
 CONFIGS_DIR = "configs"
@@ -1054,6 +1055,14 @@ class ConfigManager:
 
         # Full replace.
         shutil.copyfile(template_yaml_path, target_yaml_path)
+
+        # Stamp with the current Core version so migrations treat it as fresh.
+        with open(target_yaml_path, "r", encoding="UTF-8") as f:
+            data = yaml.safe_load(f) or {}
+        data["created_with_version"] = LOCAL_VERSION
+        with open(target_yaml_path, "w", encoding="UTF-8") as f:
+            yaml.safe_dump(data, f, sort_keys=False, allow_unicode=True)
+
         self.printr.print(
             f"Restored Wingman '{wingman_file.name}' in '{config_dir.name}' from template.",
             color=LogType.INFO,
