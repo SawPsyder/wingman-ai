@@ -64,7 +64,7 @@ jobs:
 
   sign-windows-executable:
     needs: build-windows
-    runs-on: ${{ inputs.runner == 'blacksmith' && 'blacksmith-4vcpu-windows-2025' || 'windows-2022' }}
+    runs-on: windows-2022  # signing requires GitHub-hosted runner (certificate path)
     outputs:
       version: ${{ needs.build-windows.outputs.version }}
       artifact_name: ${{ steps.artifact.outputs.artifact_name }}
