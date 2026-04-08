@@ -41,7 +41,6 @@ datas = [
     ('wingmen', 'wingmen'),
     ('skills', 'skills'),
     ('templates/configs', 'templates/configs'),
-    ('templates/migration', 'templates/migration'),
     ('audio_samples', 'audio_samples'),
     ('prompts', 'prompts'),
     ('LICENSE', '.'),
