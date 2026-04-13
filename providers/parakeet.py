@@ -1,18 +1,22 @@
 import gc
 import platform
 import threading
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 import requests
 
-from api.enums import LogType
+from api.enums import LogType, SttProvider
 from api.interface import (
     ParakeetSettings,
     ParakeetSttConfig,
     ParakeetTranscript,
     WingmanInitializationError,
 )
+from providers.interfaces import SttInterface, Transcript, stt_provider
 from services.printr import Printr
+
+if TYPE_CHECKING:
+    from api.interface import WingmanConfig
 
 
 EXECUTION_PROVIDER_MAP = {
@@ -74,30 +78,40 @@ class Parakeet:
             if not providers:
                 providers = ["CPUExecutionProvider"]
 
-            load_kwargs = {"providers": providers}
+            # Filter requested providers against what ONNX Runtime actually has
+            # available, so we know up front whether CUDA will really be used.
+            try:
+                import onnxruntime as ort
+
+                available = set(ort.get_available_providers())
+            except Exception:
+                available = None
+
+            effective_providers = providers
+            if available is not None:
+                effective_providers = [p for p in providers if p in available]
+                if not effective_providers:
+                    effective_providers = ["CPUExecutionProvider"]
+
+                if (
+                    self.settings.execution_provider == "cuda"
+                    and "CUDAExecutionProvider" not in available
+                ):
+                    self.printr.print(
+                        "Parakeet: CUDA requested but not available in this ONNX Runtime build. "
+                        "Using CPU fallback. For CUDA support, install onnxruntime-gpu.",
+                        server_only=True,
+                        color=LogType.WARNING,
+                    )
+
+            load_kwargs = {"providers": effective_providers}
             if model_path:
                 load_kwargs["path"] = model_path
 
             self.model = onnx_asr.load_model(model_name, **load_kwargs)
 
-            # Check if requested CUDA provider was actually available
-            if self.settings.execution_provider == "cuda":
-                try:
-                    import onnxruntime as ort
-
-                    available = ort.get_available_providers()
-                    if "CUDAExecutionProvider" not in available:
-                        self.printr.print(
-                            "Parakeet: CUDA requested but not available in this ONNX Runtime build. "
-                            "Using CPU fallback. For CUDA support, install onnxruntime-gpu.",
-                            server_only=True,
-                            color=LogType.WARNING,
-                        )
-                except Exception:
-                    pass
-
             self.printr.print(
-                f"Parakeet initialized with model '{model_name}' (providers: {providers}).",
+                f"Parakeet initialized with model '{model_name}' (providers: {effective_providers}).",
                 server_only=True,
                 color=LogType.POSITIVE,
             )
@@ -202,3 +216,21 @@ class Parakeet:
 
     def validate(self, errors: list[WingmanInitializationError]):
         pass
+
+
+@stt_provider(SttProvider.PARAKEET)
+class ParakeetStt(SttInterface):
+    """Per-wingman adapter around the shared Parakeet singleton."""
+
+    def __init__(self, shared: "Parakeet", config: "WingmanConfig"):
+        self._shared = shared
+        self._config = config
+
+    async def transcribe(self, filename: str) -> Transcript | None:
+        result = self._shared.transcribe(
+            config=self._config.parakeet,
+            filename=filename,
+        )
+        if result is None:
+            return None
+        return Transcript(text=result.text)
