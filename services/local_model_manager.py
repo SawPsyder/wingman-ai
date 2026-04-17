@@ -21,19 +21,19 @@ SUPPORT_MODELS: dict[str, dict] = {
         "repo": "unsloth/Qwen3.5-4B-GGUF",
         "filename": "Qwen3.5-4B-Q4_K_M.gguf",
         "expected_size_mb": 2740,
-        "label": "Qwen 3.5 4B (powerful)",
+        "label": "Qwen 3.5 4B",
+    },
+    "gemma-4-E2B-it-Q3_K_M.gguf": {
+        "repo": "unsloth/gemma-4-E2B-it-GGUF",
+        "filename": "gemma-4-E2B-it-Q3_K_M.gguf",
+        "expected_size_mb": 2540,
+        "label": "Gemma 4 E2B",
     },
     "Qwen3.5-2B-Q4_K_M.gguf": {
         "repo": "unsloth/Qwen3.5-2B-GGUF",
         "filename": "Qwen3.5-2B-Q4_K_M.gguf",
         "expected_size_mb": 1280,
         "label": "Qwen 3.5 2B (recommended)",
-    },
-    "Qwen3.5-0.8B-Q4_K_M.gguf": {
-        "repo": "unsloth/Qwen3.5-0.8B-GGUF",
-        "filename": "Qwen3.5-0.8B-Q4_K_M.gguf",
-        "expected_size_mb": 500,
-        "label": "Qwen 3.5 0.8B (lightweight)",
     },
 }
 
