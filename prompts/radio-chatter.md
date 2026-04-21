@@ -7,9 +7,9 @@
 ## JSON format
 
 [
-  {"user": "Participant1 Name", "content": "Message Content"},
-  {"user": "Participant2 Name", "content": "Message Content"},
-  {"user": "Participant1 Name", "content": "Message Content"}
+  {{"user": "Participant1 Name", "content": "Message Content"}},
+  {{"user": "Participant2 Name", "content": "Message Content"}},
+  {{"user": "Participant1 Name", "content": "Message Content"}}
 ]
 
 ## Rules
