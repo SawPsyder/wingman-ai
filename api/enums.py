@@ -87,6 +87,7 @@ class CustomPropertyType(Enum):
     AUDIO_FILES = "audio_files"
     AUDIO_DEVICE = "audio_device"
     COLOR = "color"
+    RANGE_SLIDER = "range_slider"
 
 
 class AzureApiVersion(Enum):
@@ -199,7 +200,6 @@ class WingmanProSttProvider(Enum):
 
 class WingmanProTtsProvider(Enum):
     AZURE = "azure"
-    OPENAI = "openai"
     INWORLD = "inworld"
 
 

@@ -53,81 +53,41 @@ class RadioChatter(Skill):
         self.retrieve_custom_property_value("radio_sounds", errors)
         self.retrieve_custom_property_value("use_beeps", errors)
 
-        # Validate intervals
-        interval_min = self.retrieve_custom_property_value("interval_min", errors)
-        if interval_min is not None and interval_min < 1:
-            errors.append(
-                WingmanInitializationError(
-                    wingman_name=self.wingman.name,
-                    message="Invalid value for 'interval_min'. Expected a number of one or larger.",
-                    error_type=WingmanInitializationErrorType.INVALID_CONFIG,
+        # Validate range sliders
+        interval_range = self.retrieve_custom_property_value("interval_range", errors)
+        if interval_range and isinstance(interval_range, list) and len(interval_range) == 2:
+            if interval_range[0] < 1 or interval_range[1] < interval_range[0]:
+                errors.append(
+                    WingmanInitializationError(
+                        wingman_name=self.wingman.name,
+                        message="Invalid interval range. Min must be >= 1 and max must be >= min.",
+                        error_type=WingmanInitializationErrorType.INVALID_CONFIG,
+                    )
                 )
-            )
-        interval_max = self.retrieve_custom_property_value("interval_max", errors)
-        if (
-            interval_max is not None
-            and interval_max < 1
-            or (interval_min is not None and interval_max < interval_min)
-        ):
-            errors.append(
-                WingmanInitializationError(
-                    wingman_name=self.wingman.name,
-                    message="Invalid value for 'interval_max'. Expected a number greater than or equal to 'interval_min'.",
-                    error_type=WingmanInitializationErrorType.INVALID_CONFIG,
-                )
-            )
 
-        # Validate messages
-        messages_min = self.retrieve_custom_property_value("messages_min", errors)
-        if messages_min is not None and messages_min < 1:
-            errors.append(
-                WingmanInitializationError(
-                    wingman_name=self.wingman.name,
-                    message="Invalid value for 'messages_min'. Expected a number of one or larger.",
-                    error_type=WingmanInitializationErrorType.INVALID_CONFIG,
+        messages_range = self.retrieve_custom_property_value("messages_range", errors)
+        if messages_range and isinstance(messages_range, list) and len(messages_range) == 2:
+            if messages_range[0] < 1 or messages_range[1] < messages_range[0]:
+                errors.append(
+                    WingmanInitializationError(
+                        wingman_name=self.wingman.name,
+                        message="Invalid messages range. Min must be >= 1 and max must be >= min.",
+                        error_type=WingmanInitializationErrorType.INVALID_CONFIG,
+                    )
                 )
-            )
-        messages_max = self.retrieve_custom_property_value("messages_max", errors)
-        if (
-            messages_max is not None
-            and messages_max < 1
-            or (messages_min is not None and messages_max < messages_min)
-        ):
-            errors.append(
-                WingmanInitializationError(
-                    wingman_name=self.wingman.name,
-                    message="Invalid value for 'messages_max'. Expected a number greater than or equal to 'messages_min'.",
-                    error_type=WingmanInitializationErrorType.INVALID_CONFIG,
-                )
-            )
 
-        # Validate participants
-        participants_min = self.retrieve_custom_property_value(
-            "participants_min", errors
-        )
-        if participants_min is not None and participants_min < 1:
-            errors.append(
-                WingmanInitializationError(
-                    wingman_name=self.wingman.name,
-                    message="Invalid value for 'participants_min'. Expected a number of one or larger.",
-                    error_type=WingmanInitializationErrorType.INVALID_CONFIG,
+        participants_range = self.retrieve_custom_property_value("participants_range", errors)
+        participants_max = None
+        if participants_range and isinstance(participants_range, list) and len(participants_range) == 2:
+            participants_max = int(participants_range[1])
+            if participants_range[0] < 1 or participants_range[1] < participants_range[0]:
+                errors.append(
+                    WingmanInitializationError(
+                        wingman_name=self.wingman.name,
+                        message="Invalid participants range. Min must be >= 1 and max must be >= min.",
+                        error_type=WingmanInitializationErrorType.INVALID_CONFIG,
+                    )
                 )
-            )
-        participants_max = self.retrieve_custom_property_value(
-            "participants_max", errors
-        )
-        if (
-            participants_max is not None
-            and participants_max < 1
-            or (participants_min is not None and participants_max < participants_min)
-        ):
-            errors.append(
-                WingmanInitializationError(
-                    wingman_name=self.wingman.name,
-                    message="Invalid value for 'participants_max'. Expected a number greater than or equal to 'participants_min'.",
-                    error_type=WingmanInitializationErrorType.INVALID_CONFIG,
-                )
-            )
 
         # Validate volume
         volume = self.retrieve_custom_property_value("volume", errors) or 0.5
@@ -171,41 +131,30 @@ class RadioChatter(Skill):
         errors: list[WingmanInitializationError] = []
         return self.retrieve_custom_property_value("prompt", errors)
 
-    def _get_interval_min(self) -> int:
-        """Retrieve fresh interval_min at runtime."""
+    def _get_range(self, prop_id: str, defaults: tuple[int, int]) -> tuple[int, int]:
         errors: list[WingmanInitializationError] = []
-        interval = self.retrieve_custom_property_value("interval_min", errors)
-        return interval if interval else 10
+        val = self.retrieve_custom_property_value(prop_id, errors)
+        if val and isinstance(val, list) and len(val) == 2:
+            return (int(val[0]), int(val[1]))
+        return defaults
+
+    def _get_interval_min(self) -> int:
+        return self._get_range("interval_range", (60, 600))[0]
 
     def _get_interval_max(self) -> int:
-        """Retrieve fresh interval_max at runtime."""
-        errors: list[WingmanInitializationError] = []
-        interval = self.retrieve_custom_property_value("interval_max", errors)
-        return interval if interval else 30
+        return self._get_range("interval_range", (60, 600))[1]
 
     def _get_messages_min(self) -> int:
-        """Retrieve fresh messages_min at runtime."""
-        errors: list[WingmanInitializationError] = []
-        messages = self.retrieve_custom_property_value("messages_min", errors)
-        return messages if messages else 1
+        return self._get_range("messages_range", (1, 5))[0]
 
     def _get_messages_max(self) -> int:
-        """Retrieve fresh messages_max at runtime."""
-        errors: list[WingmanInitializationError] = []
-        messages = self.retrieve_custom_property_value("messages_max", errors)
-        return messages if messages else 3
+        return self._get_range("messages_range", (1, 5))[1]
 
     def _get_participants_min(self) -> int:
-        """Retrieve fresh participants_min at runtime."""
-        errors: list[WingmanInitializationError] = []
-        participants = self.retrieve_custom_property_value("participants_min", errors)
-        return participants if participants else 1
+        return self._get_range("participants_range", (2, 3))[0]
 
     def _get_participants_max(self) -> int:
-        """Retrieve fresh participants_max at runtime."""
-        errors: list[WingmanInitializationError] = []
-        participants = self.retrieve_custom_property_value("participants_max", errors)
-        return participants if participants else 2
+        return self._get_range("participants_range", (2, 3))[1]
 
     def _get_volume(self) -> float:
         """Retrieve fresh volume at runtime."""

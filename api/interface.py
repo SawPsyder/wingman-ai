@@ -760,6 +760,7 @@ class CustomProperty(BaseModel):
         | int
         | float
         | bool
+        | list[int | float]
         | VoiceSelection
         | list[VoiceSelection]
         | AudioFileConfig
