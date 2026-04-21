@@ -104,7 +104,6 @@ custom_properties:
 
   - id: commodity_route_default_count
     name: Default trade route count
-    hint: Set this option to the amount of trade routes you want to show at default.
     value: 1
     required: true
     property_type: number
