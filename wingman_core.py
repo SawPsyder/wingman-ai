@@ -513,6 +513,13 @@ class WingmanCore(WebSocketUser):
         )
         self.router.add_api_route(
             methods=["POST"],
+            path="/settings/test/openai-compatible-tts",
+            endpoint=self.test_openai_compatible_tts,
+            response_model=TestConnectionResult,
+            tags=tags,
+        )
+        self.router.add_api_route(
+            methods=["POST"],
             path="/settings/test/output-device",
             endpoint=self.test_output_device,
             tags=tags,
@@ -2187,142 +2194,180 @@ class WingmanCore(WebSocketUser):
 
     # GET /models/openrouter
     async def get_openrouter_models(self):
-        response = requests.get(url="https://openrouter.ai/api/v1/models", timeout=10)
-        response.raise_for_status()
-        content = response.json()
-        return content.get("data", [])
+        try:
+            response = requests.get(
+                url="https://openrouter.ai/api/v1/models", timeout=10
+            )
+            response.raise_for_status()
+            content = response.json()
+            return content.get("data", [])
+        except Exception as e:
+            self.printr.toast_error(f"OpenRouter: \n{str(e)}")
+            return []
 
     # GET /models/openrouter/endpoints
     async def get_openrouter_model_endpoints(self, model_id: str):
         if not model_id:
             return None
-        response = requests.get(
-            url=f"https://openrouter.ai/api/v1/models/{model_id}/endpoints",
-            timeout=10,
-        )
-        response.raise_for_status()
-        content = response.json()
-        result = OpenRouterEndpointResult(**content.get("data", {}))
-        return result
+        try:
+            response = requests.get(
+                url=f"https://openrouter.ai/api/v1/models/{model_id}/endpoints",
+                timeout=10,
+            )
+            response.raise_for_status()
+            content = response.json()
+            result = OpenRouterEndpointResult(**content.get("data", {}))
+            return result
+        except Exception as e:
+            self.printr.toast_error(f"OpenRouter: \n{str(e)}")
+            return None
 
     # GET /models/groq
     async def get_groq_models(self):
         groq_api_key = await self.secret_keeper.retrieve(key="groq", requester="Groq")
-        response = requests.get(
-            url="https://api.groq.com/openai/v1/models",
-            timeout=10,
-            headers={
-                "Authorization": f"Bearer {groq_api_key}",
-                "Content-Type": "application/json",
-            },
-        )
-        response.raise_for_status()
-        content = response.json()
-        return content.get("data", [])
+        try:
+            response = requests.get(
+                url="https://api.groq.com/openai/v1/models",
+                timeout=10,
+                headers={
+                    "Authorization": f"Bearer {groq_api_key}",
+                    "Content-Type": "application/json",
+                },
+            )
+            response.raise_for_status()
+            content = response.json()
+            return content.get("data", [])
+        except Exception as e:
+            self.printr.toast_error(f"Groq: \n{str(e)}")
+            return []
 
     async def get_cerebras_models(self):
         cerebras_api_key = await self.secret_keeper.retrieve(
             key="cerebras", requester="Cerebras"
         )
-        response = requests.get(
-            url="https://api.cerebras.ai/v1/models",
-            timeout=10,
-            headers={
-                "Authorization": f"Bearer {cerebras_api_key}",
-                "Content-Type": "application/json",
-            },
-        )
-        response.raise_for_status()
-        content = response.json()
-        return content.get("data", [])
+        try:
+            response = requests.get(
+                url="https://api.cerebras.ai/v1/models",
+                timeout=10,
+                headers={
+                    "Authorization": f"Bearer {cerebras_api_key}",
+                    "Content-Type": "application/json",
+                },
+            )
+            response.raise_for_status()
+            content = response.json()
+            return content.get("data", [])
+        except Exception as e:
+            self.printr.toast_error(f"Cerebras: \n{str(e)}")
+            return []
 
     async def get_xai_models(self):
         xia_api_key = await self.secret_keeper.retrieve(key="xai", requester="XAI")
-        response = requests.get(
-            url="https://api.x.ai/v1/models",
-            timeout=10,
-            headers={
-                "Authorization": f"Bearer {xia_api_key}",
-                "Content-Type": "application/json",
-            },
-        )
-        response.raise_for_status()
-        content = response.json()
-        return content.get("data", [])
+        try:
+            response = requests.get(
+                url="https://api.x.ai/v1/models",
+                timeout=10,
+                headers={
+                    "Authorization": f"Bearer {xia_api_key}",
+                    "Content-Type": "application/json",
+                },
+            )
+            response.raise_for_status()
+            content = response.json()
+            return content.get("data", [])
+        except Exception as e:
+            self.printr.toast_error(f"XAI: \n{str(e)}")
+            return []
 
     async def get_mistral_models(self):
         mistral_api_key = await self.secret_keeper.retrieve(
             key="mistral", requester="Mistral"
         )
-        response = requests.get(
-            url="https://api.mistral.ai/v1/models",
-            timeout=10,
-            headers={
-                "Authorization": f"Bearer {mistral_api_key}",
-                "Content-Type": "application/json",
-            },
-        )
-        response.raise_for_status()
-        content = response.json()
-        return content.get("data", [])
+        try:
+            response = requests.get(
+                url="https://api.mistral.ai/v1/models",
+                timeout=10,
+                headers={
+                    "Authorization": f"Bearer {mistral_api_key}",
+                    "Content-Type": "application/json",
+                },
+            )
+            response.raise_for_status()
+            content = response.json()
+            return content.get("data", [])
+        except Exception as e:
+            self.printr.toast_error(f"Mistral: \n{str(e)}")
+            return []
 
     async def get_openai_models(self):
         openai_api_key = await self.secret_keeper.retrieve(
             key="openai", requester="OpenAI"
         )
-        response = requests.get(
-            url="https://api.openai.com/v1/models",
-            timeout=10,
-            headers={
-                "Authorization": f"Bearer {openai_api_key}",
-                "Content-Type": "application/json",
-            },
-        )
-        response.raise_for_status()
-        content = response.json()
-        return content.get("data", [])
+        try:
+            response = requests.get(
+                url="https://api.openai.com/v1/models",
+                timeout=10,
+                headers={
+                    "Authorization": f"Bearer {openai_api_key}",
+                    "Content-Type": "application/json",
+                },
+            )
+            response.raise_for_status()
+            content = response.json()
+            return content.get("data", [])
+        except Exception as e:
+            self.printr.toast_error(f"OpenAI: \n{str(e)}")
+            return []
 
     async def get_wingman_pro_models(self):
         wingman_pro_token = await self.secret_keeper.retrieve(
             key="wingman_pro", requester="WingmanPro"
         )
-        response = requests.get(
-            url=f"{self.settings_service.settings.wingman_pro.base_url}/wingman-pro-models",
-            params={"region": self.settings_service.settings.wingman_pro.region},
-            timeout=10,
-            headers={
-                "Authorization": f"Bearer {wingman_pro_token}",
-                "Content-Type": "application/json",
-            },
-        )
-        response.raise_for_status()
-        model_list = response.json()
-        return model_list
+        try:
+            response = requests.get(
+                url=f"{self.settings_service.settings.wingman_pro.base_url}/wingman-pro-models",
+                params={"region": self.settings_service.settings.wingman_pro.region},
+                timeout=10,
+                headers={
+                    "Authorization": f"Bearer {wingman_pro_token}",
+                    "Content-Type": "application/json",
+                },
+            )
+            response.raise_for_status()
+            model_list = response.json()
+            return model_list
+        except Exception as e:
+            self.printr.toast_error(f"Wingman Pro: \n{str(e)}")
+            return []
 
     async def get_wingman_pro_regions(self):
         wingman_pro_token = await self.secret_keeper.retrieve(
             key="wingman_pro", requester="WingmanPro"
         )
-        response = requests.get(
-            url=f"{self.settings_service.settings.wingman_pro.base_url}/wingman-pro-regions",
-            params={"region": self.settings_service.settings.wingman_pro.region},
-            timeout=10,
-            headers={
-                "Authorization": f"Bearer {wingman_pro_token}",
-                "Content-Type": "application/json",
-            },
-        )
-        response.raise_for_status()
-        model_list = response.json()
-        return model_list
+        try:
+            response = requests.get(
+                url=f"{self.settings_service.settings.wingman_pro.base_url}/wingman-pro-regions",
+                params={"region": self.settings_service.settings.wingman_pro.region},
+                timeout=10,
+                headers={
+                    "Authorization": f"Bearer {wingman_pro_token}",
+                    "Content-Type": "application/json",
+                },
+            )
+            response.raise_for_status()
+            model_list = response.json()
+            return model_list
+        except Exception as e:
+            self.printr.toast_error(f"Wingman Pro: \n{str(e)}")
+            return []
 
     # GET /models/elevenlabs
     async def get_elevenlabs_models(self) -> list[ElevenlabsModel]:
         elevenlabs_api_key = await self.secret_keeper.retrieve(
             key="elevenlabs", requester="Elevenlabs"
         )
-        elevenlabs = ElevenLabs(api_key=elevenlabs_api_key, wingman_name="")
         try:
+            elevenlabs = ElevenLabs(api_key=elevenlabs_api_key, wingman_name="")
             models = elevenlabs.get_available_models()
 
             convert = lambda model: ElevenlabsModel(
@@ -2336,7 +2381,7 @@ class WingmanCore(WebSocketUser):
             )
             result = [convert(model) for model in models]
             return result
-        except ValueError as e:
+        except Exception as e:
             self.printr.toast_error(f"Elevenlabs: \n{str(e)}")
             return []
 
@@ -2349,7 +2394,7 @@ class WingmanCore(WebSocketUser):
         try:
             models = google.get_available_models()
             return models
-        except ValueError as e:
+        except Exception as e:
             self.printr.toast_error(f"Google: \n{str(e)}")
             return []
         finally:
@@ -2991,6 +3036,42 @@ class WingmanCore(WebSocketUser):
         except Exception as e:
             return TestConnectionResult(
                 success=False, provider="pocket_tts", error=str(e)
+            )
+
+    # POST /settings/test/openai-compatible-tts
+    async def test_openai_compatible_tts(
+        self,
+        base_url: str = Body(..., embed=True),
+    ) -> TestConnectionResult:
+        """Test an OpenAI-compatible TTS server by probing known endpoints."""
+        if not base_url:
+            return TestConnectionResult(
+                success=False,
+                provider="openai_compatible_tts",
+                error="No base URL configured.",
+            )
+        url = base_url.rstrip("/")
+        # Try endpoints in order: /health, /audio/speech (GET → 405 still proves liveness), root
+        probe_paths = ["/health", "/audio/speech", ""]
+        try:
+            for path in probe_paths:
+                try:
+                    response = requests.get(url=f"{url}{path}", timeout=10)
+                    # 2xx or 405 (method not allowed) both prove the server is alive
+                    if response.ok or response.status_code == 405:
+                        return TestConnectionResult(
+                            success=True, provider="openai_compatible_tts"
+                        )
+                except requests.ConnectionError:
+                    continue
+            return TestConnectionResult(
+                success=False,
+                provider="openai_compatible_tts",
+                error=f"Could not connect to {base_url}. Is the server running?",
+            )
+        except Exception as e:
+            return TestConnectionResult(
+                success=False, provider="openai_compatible_tts", error=str(e)
             )
 
     def _generate_tts_praise_text(self) -> str:

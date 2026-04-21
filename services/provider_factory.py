@@ -95,6 +95,7 @@ class ProviderFactory:
         # Shared singleton providers — wrap in adapter
         if stt_enum == SttProvider.FASTER_WHISPER:
             from providers.faster_whisper import FasterWhisperStt
+
             return FasterWhisperStt(
                 shared=self._shared["fasterwhisper"],
                 config=self._config,
@@ -102,22 +103,28 @@ class ProviderFactory:
             )
         elif stt_enum == SttProvider.PARAKEET:
             from providers.parakeet import ParakeetStt
+
             return ParakeetStt(shared=self._shared["parakeet"], config=self._config)
         elif stt_enum == SttProvider.WHISPERCPP:
             from providers.whispercpp import WhispercppStt
+
             return WhispercppStt(shared=self._shared["whispercpp"], config=self._config)
         elif stt_enum == SttProvider.OPENAI:
             api_key = await self._retrieve_secret("openai", errors)
             if not api_key:
                 return None
             from providers.open_ai import OpenAi, OpenAiStt
-            openai = OpenAi(api_key=api_key, organization=self._config.openai.organization)
+
+            openai = OpenAi(
+                api_key=api_key, organization=self._config.openai.organization
+            )
             return OpenAiStt(openai_instance=openai)
         elif stt_enum == SttProvider.GROQ:
             api_key = await self._retrieve_secret("groq", errors)
             if not api_key:
                 return None
             from providers.open_ai import OpenAi, GroqStt
+
             groq = OpenAi(api_key=api_key, base_url=self._config.groq.endpoint)
             return GroqStt(openai_instance=groq)
         elif stt_enum == SttProvider.AZURE:
@@ -125,6 +132,7 @@ class ProviderFactory:
             if not api_key:
                 return None
             from providers.open_ai import OpenAiAzure, AzureWhisperStt
+
             return AzureWhisperStt(
                 azure_instance=OpenAiAzure(), api_key=api_key, config=self._config
             )
@@ -133,11 +141,16 @@ class ProviderFactory:
             if not api_key:
                 return None
             from providers.open_ai import OpenAiAzure, AzureSpeechStt
+
             return AzureSpeechStt(
                 azure_instance=OpenAiAzure(), api_key=api_key, config=self._config
             )
         elif stt_enum == SttProvider.WINGMAN_PRO:
-            from providers.wingman_subscription import WingmanSubscription, WingmanSubscriptionStt
+            from providers.wingman_subscription import (
+                WingmanSubscription,
+                WingmanSubscriptionStt,
+            )
+
             ws = WingmanSubscription(
                 wingman_name=self._wingman_name,
                 settings=self._settings.wingman_pro,
@@ -152,12 +165,14 @@ class ProviderFactory:
         tts_enum = self._config.features.tts_provider
         if tts_enum == TtsProvider.EDGE_TTS:
             from providers.edge import EdgeTts
+
             return EdgeTts(config=self._config)
         elif tts_enum == TtsProvider.ELEVENLABS:
             api_key = await self._retrieve_secret("elevenlabs", errors)
             if not api_key:
                 return None
             from providers.elevenlabs import ElevenLabs, ElevenLabsTts
+
             elevenlabs = ElevenLabs(api_key=api_key, wingman_name=self._wingman_name)
             return ElevenLabsTts(elevenlabs_instance=elevenlabs, config=self._config)
         elif tts_enum == TtsProvider.HUME:
@@ -165,6 +180,7 @@ class ProviderFactory:
             if not api_key:
                 return None
             from providers.hume import Hume, HumeTts
+
             hume = Hume(api_key=api_key, wingman_name=self._wingman_name)
             return HumeTts(hume_instance=hume, config=self._config)
         elif tts_enum == TtsProvider.INWORLD:
@@ -172,6 +188,7 @@ class ProviderFactory:
             if not api_key:
                 return None
             from providers.inworld import Inworld, InworldTts
+
             inworld = Inworld(api_key=api_key, wingman_name=self._wingman_name)
             return InworldTts(inworld_instance=inworld, config=self._config)
         elif tts_enum == TtsProvider.OPENAI:
@@ -179,15 +196,22 @@ class ProviderFactory:
             if not api_key:
                 return None
             from providers.open_ai import OpenAi, OpenAiTts
-            openai = OpenAi(api_key=api_key, organization=self._config.openai.organization)
+
+            openai = OpenAi(
+                api_key=api_key, organization=self._config.openai.organization
+            )
             return OpenAiTts(openai_instance=openai, config=self._config)
         elif tts_enum == TtsProvider.OPENAI_COMPATIBLE:
-            api_key = await self._retrieve_secret("openai_compatible", errors)
+            api_key = self._config.openai_compatible_tts.api_key
             # api_key might be optional for local endpoints
-            from providers.open_ai import OpenAiCompatibleTts, OpenAiCompatibleTtsAdapter
+            from providers.open_ai import (
+                OpenAiCompatibleTts,
+                OpenAiCompatibleTtsAdapter,
+            )
+
             tts = OpenAiCompatibleTts(
                 api_key=api_key or "",
-                base_url=self._config.openai_compatible_tts.endpoint,
+                base_url=self._config.openai_compatible_tts.base_url,
             )
             return OpenAiCompatibleTtsAdapter(tts_instance=tts, config=self._config)
         elif tts_enum == TtsProvider.AZURE:
@@ -195,17 +219,24 @@ class ProviderFactory:
             if not api_key:
                 return None
             from providers.open_ai import OpenAiAzure, AzureTts
+
             return AzureTts(
                 azure_instance=OpenAiAzure(), api_key=api_key, config=self._config
             )
         elif tts_enum == TtsProvider.XVASYNTH:
             from providers.xvasynth import XVASynthTts
+
             return XVASynthTts(shared=self._shared["xvasynth"], config=self._config)
         elif tts_enum == TtsProvider.POCKET_TTS:
             from providers.pocket_tts import PocketTtsTts
+
             return PocketTtsTts(shared=self._shared["pocket_tts"], config=self._config)
         elif tts_enum == TtsProvider.WINGMAN_PRO:
-            from providers.wingman_subscription import WingmanSubscription, WingmanSubscriptionTts
+            from providers.wingman_subscription import (
+                WingmanSubscription,
+                WingmanSubscriptionTts,
+            )
+
             ws = WingmanSubscription(
                 wingman_name=self._wingman_name,
                 settings=self._settings.wingman_pro,
@@ -223,13 +254,17 @@ class ProviderFactory:
             if not api_key:
                 return None
             from providers.open_ai import OpenAi, OpenAiLlm
-            openai = OpenAi(api_key=api_key, organization=self._config.openai.organization)
+
+            openai = OpenAi(
+                api_key=api_key, organization=self._config.openai.organization
+            )
             return OpenAiLlm(openai_instance=openai, config=self._config)
         elif llm_enum == ConversationProvider.MISTRAL:
             api_key = await self._retrieve_secret("mistral", errors)
             if not api_key:
                 return None
             from providers.open_ai import OpenAi, MistralLlm
+
             mistral = OpenAi(api_key=api_key, base_url=self._config.mistral.endpoint)
             return MistralLlm(openai_instance=mistral, config=self._config)
         elif llm_enum == ConversationProvider.GROQ:
@@ -237,6 +272,7 @@ class ProviderFactory:
             if not api_key:
                 return None
             from providers.open_ai import OpenAi, GroqLlm
+
             groq = OpenAi(api_key=api_key, base_url=self._config.groq.endpoint)
             return GroqLlm(openai_instance=groq, config=self._config)
         elif llm_enum == ConversationProvider.CEREBRAS:
@@ -244,6 +280,7 @@ class ProviderFactory:
             if not api_key:
                 return None
             from providers.open_ai import OpenAi, CerebrasLlm
+
             cerebras = OpenAi(api_key=api_key, base_url=self._config.cerebras.endpoint)
             return CerebrasLlm(openai_instance=cerebras, config=self._config)
         elif llm_enum == ConversationProvider.GOOGLE:
@@ -251,6 +288,7 @@ class ProviderFactory:
             if not api_key:
                 return None
             from providers.google import GoogleGenAI, GoogleLlm
+
             google = GoogleGenAI(api_key=api_key)
             return GoogleLlm(google_instance=google, config=self._config)
         elif llm_enum == ConversationProvider.OPENROUTER:
@@ -258,14 +296,19 @@ class ProviderFactory:
             if not api_key:
                 return None
             from providers.open_ai import OpenAi, OpenRouterLlm
-            openrouter = OpenAi(api_key=api_key, base_url=self._config.openrouter.endpoint)
+
+            openrouter = OpenAi(
+                api_key=api_key, base_url=self._config.openrouter.endpoint
+            )
             supports_tools = await self._check_openrouter_tool_support(api_key)
             return OpenRouterLlm(
-                openai_instance=openrouter, config=self._config,
+                openai_instance=openrouter,
+                config=self._config,
                 supports_tools=supports_tools,
             )
         elif llm_enum == ConversationProvider.LOCAL_LLM:
             from providers.open_ai import OpenAi, LocalLlm
+
             local_llm = None
             if self._config.local_llm.endpoint:
                 local_llm = OpenAi(
@@ -278,11 +321,16 @@ class ProviderFactory:
             if not api_key:
                 return None
             from providers.open_ai import OpenAiAzure, AzureLlm
+
             return AzureLlm(
                 azure_instance=OpenAiAzure(), api_key=api_key, config=self._config
             )
         elif llm_enum == ConversationProvider.WINGMAN_PRO:
-            from providers.wingman_subscription import WingmanSubscription, WingmanSubscriptionLlm
+            from providers.wingman_subscription import (
+                WingmanSubscription,
+                WingmanSubscriptionLlm,
+            )
+
             ws = WingmanSubscription(
                 wingman_name=self._wingman_name,
                 settings=self._settings.wingman_pro,
@@ -293,13 +341,17 @@ class ProviderFactory:
             if not api_key:
                 return None
             from providers.open_ai import OpenAi, PerplexityLlm
-            perplexity = OpenAi(api_key=api_key, base_url=self._config.perplexity.endpoint)
+
+            perplexity = OpenAi(
+                api_key=api_key, base_url=self._config.perplexity.endpoint
+            )
             return PerplexityLlm(openai_instance=perplexity, config=self._config)
         elif llm_enum == ConversationProvider.XAI:
             api_key = await self._retrieve_secret("xai", errors)
             if not api_key:
                 return None
             from providers.x_ai import XAi, XAiLlm
+
             xai = XAi(api_key=api_key, base_url=self._config.xai.endpoint)
             return XAiLlm(xai_instance=xai, config=self._config)
         return None
