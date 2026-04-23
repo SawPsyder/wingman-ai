@@ -148,9 +148,16 @@ class XVASynthSettings(BaseModel):
 class PocketTTSSettings(BaseModel):
     enable: bool
     run_locally: bool = True
-    custom_model_path: Optional[str] = None
+    model: str = "english"
+    quantize: bool = True
     host: str
     port: int
+
+
+class PocketTTSPreloadResult(BaseModel):
+    ok: bool
+    voice: Optional[str] = None
+    reason: Optional[str] = None
 
 
 class WhispercppSttConfig(BaseModel):
@@ -185,6 +192,10 @@ class ParakeetSettings(BaseModel):
     """v2 (English) or v3 (Multilingual, 25 languages)"""
     execution_provider: str
     """cpu, directml, coreml, or cuda"""
+    language: Optional[str] = None
+    """Global default language for Parakeet transcription. Individual wingmen may
+    override this via their per-wingman parakeet_config.language; when that is
+    empty, the global value here is used."""
     host: str
     port: int
 
@@ -1223,6 +1234,7 @@ class SettingsConfig(BaseModel):
     cancel_tts_joystick_button: Optional[CommandJoystickConfig] = None
     user_name: Optional[str] = None
     hardware_scan_performed: bool = False
+    spoken_language: str = "multilingual"
 
 
 class BenchmarkResult(BaseModel):
