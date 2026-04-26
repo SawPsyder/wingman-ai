@@ -200,8 +200,7 @@ class AudioPlayer:
 
         channels = audio.shape[1] if audio.ndim > 1 else 1
 
-        # Streaming previews bypass this method (see stream_with_effects) and
-        # are intentionally not saved — we only have the fully-rendered buffer here.
+        # Streaming previews are saved separately inside stream_with_effects.
         if wingman_name == PREVIEW_WINGMAN_NAME:
             try:
                 self._save_preview_audio(audio, sample_rate)
@@ -513,6 +512,9 @@ class AudioPlayer:
             sound_effects = get_sound_effects(
                 config=config, use_gain_boost=use_gain_boost
             )
+            preview_chunks: list[np.ndarray] | None = (
+                [] if wingman_name == PREVIEW_WINGMAN_NAME else None
+            )
             audio_buffer = bytearray(buffer_size)
             filled_size = buffer_callback(audio_buffer)
             while filled_size > 0:
@@ -531,6 +533,11 @@ class AudioPlayer:
                     amplitude_factor = 10 ** (mix_layer_gain_boost_db / 20)
                     data_in_numpy = data_in_numpy + noise_chunk * amplitude_factor
 
+                # Snapshot post-effects, post-mix audio for the preview file
+                # before per-playback volume is baked in (matches play_with_effects).
+                if preview_chunks is not None:
+                    preview_chunks.append(data_in_numpy)
+
                 data_in_numpy = data_in_numpy * config.volume
                 processed_buffer = data_in_numpy.astype(dtype).tobytes()
                 buffer.extend(processed_buffer)
@@ -538,6 +545,20 @@ class AudioPlayer:
                 filled_size = buffer_callback(audio_buffer)
 
             data_received = True
+
+            if preview_chunks:
+                try:
+                    full = np.concatenate(preview_chunks)
+                    # data_in_numpy holds int-range floats (from int dtype frombuffer);
+                    # scale to [-1, 1] so the saved float WAV plays at correct level.
+                    np_dtype = np.dtype(dtype)
+                    if np.issubdtype(np_dtype, np.integer):
+                        full = full / float(np.iinfo(np_dtype).max)
+                    if channels > 1:
+                        full = full.reshape(-1, channels)
+                    self._save_preview_audio(full.astype(np.float32), sample_rate)
+                except Exception:
+                    pass
             while not stream_finished:
                 sd.sleep(100)
 
