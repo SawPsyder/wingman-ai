@@ -1,16 +1,5 @@
 # Wingman AI Core — Agent Development Guide
 
-### Merging and testing
-
-When the user wants to test, merge your feature branch into the base branch:
-
-```bash
-cd /Users/shackles/Source/wingman-ai  # main checkout, on base branch
-git merge feature/my-feature --no-edit
-```
-
-If there are conflicts, resolve them in the merge commit — don't modify your feature branch to accommodate other agents' code. After testing, continue development back in your worktree.
-
 ### Pull requests
 
 When work is approved, create a PR in both repos. If you didn't change anything in one repo, just remove that worktree.
@@ -79,14 +68,15 @@ All `support()` calls accept optional `temperature` and `top_p` overrides. In sk
 New fields in Pydantic models should almost never be `Optional`. The correct pattern:
 
 1. Make the field **required** or give it a **concrete default value**
-2. Add the default in the appropriate template YAML (`templates/configs/`)
-3. Add a migration step that inserts the value into existing configs
+2. DO NOT give it a default value in interface.py.
+3. Add the default in the appropriate template YAML (`templates/configs/`)
+4. Add a migration step that inserts the value into existing configs
 
 Only use `Optional` when `None` is a **semantically meaningful state** (e.g., "no override", "use system default"). Do not use `Optional` just to avoid writing a migration.
 
 ## Cross-Platform — Windows and macOS
 
-Core must run on both Windows and macOS. If a feature uses Windows-specific modules, **guard all imports** and skip gracefully on macOS — never crash:
+Core must run on both Windows and macOS and Linux. If a feature uses Windows-specific modules, **guard all imports** and skip gracefully on the other OSes — never crash:
 
 ```python
 if platform.system() == "Windows":
@@ -101,19 +91,14 @@ Version lives in `services/system_manager.py` as `LOCAL_VERSION`. Migration temp
 
 **When bumping a version** (e.g., 2.1.1 → 2.2.0):
 
-1. Snapshot current `templates/configs/*.yaml` → `templates/migration/2_1_1/configs/` (freeze old version)
-2. Create `templates/migration/2_2_0/configs/` (copy current configs as starting point)
-3. Create skeleton migration `services/migrations/migration_211_to_220.py` with no-op `migrate_defaults` and `migrate_wingman` methods
-4. Update `LOCAL_VERSION`
+1. Create skeleton migration `services/migrations/migration_211_to_220.py` with no-op `migrate_defaults` and `migrate_wingman` methods
+2. Update `LOCAL_VERSION`
 
 **When adding a feature that changes config:**
 
 1. Update the Pydantic model in `api/interface.py`
 2. Update `templates/configs/` with new defaults
-3. **Sync** changes to `templates/migration/{CURRENT_VERSION}/configs/` — must always reflect the latest state of the version being developed
-4. Add migration step(s) to the current migration file
-
-Migration methods: `migrate_settings(old, new)`, `migrate_defaults(old, new)`, `migrate_wingman(old, new)`, and optionally `migrate_secrets(old)`, `migrate_mcp(old, new)`. See `services/migrations/base_migration.py`. Migrations are auto-discovered and chained by version order.
+3. Add migration step(s) to the current migration file
 
 ## Client API Regeneration
 
