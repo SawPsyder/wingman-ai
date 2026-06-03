@@ -36,6 +36,7 @@ def _command_has_effective_actions(command: CommandConfig) -> bool:
             or action.audio is not None
             or action.write is not None
             or action.wait is not None
+            or action.skill_action is not None
         ):
             return True
     return False
