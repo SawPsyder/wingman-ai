@@ -101,6 +101,24 @@ class SupportResult(NamedTuple):
     truncated: bool = False
 
 
+def build_support_extra_body(top_k: int, reasoning_effort: int) -> dict:
+    """Build the ``extra_body`` for a support-model chat completion.
+
+    When reasoning is disabled (``reasoning_effort == 0``) we must request it
+    per call via ``chat_template_kwargs``. Newer llama.cpp builds (verified
+    b9488) ignore the ``--reasoning-budget 0`` launch flag for Qwen3.5, so
+    without this the model spends its entire token budget emitting a ``<think>``
+    block (returned in ``reasoning_content``) and leaves ``content`` empty —
+    which the caller reads as an empty response. Older builds (b8400) accept it
+    harmlessly, and it also covers remote servers whose launch flags we can't
+    control.
+    """
+    extra_body: dict = {"top_k": top_k}
+    if reasoning_effort == 0:
+        extra_body["chat_template_kwargs"] = {"enable_thinking": False}
+    return extra_body
+
+
 class LlamaCppProvider:
     """Local llama.cpp provider using managed llama-server subprocesses.
 
@@ -466,7 +484,9 @@ class LlamaCppProvider:
                 temperature=temperature,
                 top_p=top_p,
                 presence_penalty=presence_penalty,
-                extra_body={"top_k": top_k},
+                extra_body=build_support_extra_body(
+                    top_k, self.settings.reasoning_effort
+                ),
             )
             raw = result.choices[0].message.content
             cleaned = self._deduplicate_lines(raw) if raw else None
