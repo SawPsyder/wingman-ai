@@ -404,6 +404,60 @@ class ConfigService:
             self.printr.toast_error(str(e))
             raise e
 
+    async def disable_ineligible_skills(self, ineligible_skill_names: set[str]) -> None:
+        """Remove legacy/incompatible skills from every Wingman's discoverable_skills and persist.
+
+        Called once at startup (after the SkillCatalog scan). The catalog already refuses to LOAD
+        these skills; this keeps the saved config honest so the UI shows them disabled. Skills that
+        are merely platform-incompatible are NOT in this set (the catalog marks them eligible), so
+        they are left untouched.
+        """
+        if not ineligible_skill_names or not self.current_config_dir:
+            return
+        config_dir = self.current_config_dir
+        try:
+            wingman_files = self.config_manager.get_wingmen_configs(config_dir)
+        except Exception as e:
+            self.printr.print(
+                f"disable_ineligible_skills: could not enumerate wingmen: {e}",
+                color=LogType.ERROR,
+                server_only=True,
+            )
+            return
+        for wingman_file in wingman_files:
+            try:
+                wingman_config = self.config_manager.load_wingman_config(
+                    config_dir=config_dir, wingman_file=wingman_file
+                )
+                if not wingman_config or not wingman_config.discoverable_skills:
+                    continue
+                to_remove = [
+                    name
+                    for name in wingman_config.discoverable_skills
+                    if name in ineligible_skill_names
+                ]
+                if not to_remove:
+                    continue
+                for name in to_remove:
+                    wingman_config.discoverable_skills.remove(name)
+                await self.save_wingman_config(
+                    config_dir=config_dir,
+                    wingman_file=wingman_file,
+                    wingman_config=wingman_config,
+                    silent=True,
+                )
+                self.printr.print(
+                    f"Auto-disabled incompatible skill(s) {to_remove} in wingman '{wingman_file.name}'.",
+                    color=LogType.WARNING,
+                    server_only=True,
+                )
+            except Exception as e:
+                self.printr.print(
+                    f"disable_ineligible_skills: failed for '{getattr(wingman_file, 'name', '?')}': {e}",
+                    color=LogType.ERROR,
+                    server_only=True,
+                )
+
     # DELETE /custom-skills
     async def uninstall_skill(self, skill_name: str):
         """Uninstall a custom skill globally: disable it on all wingmen, remove all

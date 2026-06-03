@@ -1326,6 +1326,9 @@ class WingmanCore(WebSocketUser):
         for rec in skill_catalog.telemetry_records():
             await self._connection_manager.broadcast(SkillRegisteredCommand(**rec))
 
+        # Auto-disable legacy/incompatible skills that are still enabled in any wingman config.
+        await self.config_service.disable_ineligible_skills(skill_catalog.ineligible_skill_names())
+
         self.tower = Tower(
             config=config,
             config_dir=config_dir_info.config_dir,

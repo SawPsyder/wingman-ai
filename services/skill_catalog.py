@@ -132,6 +132,11 @@ class SkillCatalog:
     def eligible_folders(self) -> set[str]:
         return {e.folder for e in self._entries if e.verdict == SkillVerdict.OK}
 
+    def ineligible_skill_names(self) -> set[str]:
+        """Skill class names that are NOT eligible (legacy/invalid). Used to auto-disable
+        them from Wingman configs. Excludes entries with no name."""
+        return {e.name for e in self._entries if e.verdict != SkillVerdict.OK and e.name}
+
     def is_eligible(self, folder: str) -> bool:
         return folder in self.eligible_folders()
 
