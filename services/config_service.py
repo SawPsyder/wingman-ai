@@ -192,6 +192,12 @@ class ConfigService:
             tags=tags,
         )
         self.router.add_api_route(
+            methods=["GET"],
+            path="/wingman-command-actions",
+            endpoint=self.get_wingman_command_actions,
+            tags=tags,
+        )
+        self.router.add_api_route(
             methods=["DELETE"],
             path="/custom-skills",
             endpoint=self.uninstall_skill,
@@ -334,6 +340,29 @@ class ConfigService:
         except Exception as e:
             self.printr.toast_error(str(e))
             raise e
+
+    # GET /wingman-command-actions
+    async def get_wingman_command_actions(
+        self, config_name: str, wingman_name: str
+    ) -> list[dict]:
+        """List available @command_action functions for skills enabled on a wingman.
+
+        Sourced from the live wingman's prepared skills (so only enabled + eligible skills
+        appear). Returns [] if the wingman isn't currently active.
+        """
+        try:
+            actions: list[dict] = []
+            wingman = (
+                self.tower.get_wingman_by_name(wingman_name) if self.tower else None
+            )
+            if not wingman:
+                return []
+            for skill in wingman.skill_manager.skills:
+                actions.extend(skill.list_command_actions())
+            return actions
+        except Exception as e:
+            self.printr.toast_error(str(e))
+            return []
 
     # POST /wingman-skills/toggle
     async def toggle_wingman_skill(
