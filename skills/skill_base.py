@@ -272,6 +272,12 @@ class Skill:
     DO NOT cache wingman.config or other wingman properties in your skill!
     Access them when needed using self.wingman.config.property_name.
 
+    Skill API contract (v3):
+        Declare `api_version: 3` in your default_config.yaml manifest.
+        Do NOT perform any work at import / module-load time (no network, no file I/O,
+        no global side effects at module scope). All setup belongs in __init__, validate(),
+        or prepare(). Core import-probes your module during catalog scan without instantiating it.
+
     Tool Registration:
         Skills can define tools in two ways:
 

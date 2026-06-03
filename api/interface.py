@@ -831,6 +831,13 @@ class SkillConfig(CustomClassConfig):
     - ['screenshots', 'OCR', 'image analysis', 'text recognition']
     - ['flight simulator', 'altitude', 'speed', 'autopilot', 'navigation']
     """
+    api_version: Optional[int] = None
+    """Skill API contract version. Declares which version of the Skill base class +
+    WingmanContext facade this skill targets. Independent of the Wingman app version —
+    it only changes when the skill-facing contract makes a breaking change. Skills
+    without this field are treated as legacy (pre-v3) and are not loaded. Current: 3."""
+    version: Optional[str] = None
+    """Optional skill release version (free-form, e.g. '2.0.1'). Used for telemetry only."""
 
 
 class SkillToolInfo(BaseModel):
