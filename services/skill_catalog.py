@@ -12,6 +12,7 @@ from typing import Optional
 
 from api.interface import SkillConfig
 from services.module_manager import ModuleManager
+from services.platform_utils import normalize_platform
 from services.printr import Printr
 from api.enums import LogType
 
@@ -108,6 +109,11 @@ class SkillCatalog:
         except Exception as e:
             return SkillCatalogEntry(folder, name, version, origin, api_version,
                                      SkillVerdict.INVALID, f"invalid manifest: {e}", h)
+
+        if config.platforms and normalize_platform() not in config.platforms:
+            return SkillCatalogEntry(folder, name, version, origin, api_version,
+                                     SkillVerdict.OK,
+                                     f"eligible; import probe skipped (platform {config.platforms})", h)
 
         try:
             ModuleManager.probe_import(config)
