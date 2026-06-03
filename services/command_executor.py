@@ -52,12 +52,14 @@ class CommandExecutor:
         wingman_name: str,
         on_reset_history,  # async callable: reset_conversation_history
         on_add_forced_commands=None,  # async callable: add_forced_assistant_command_calls
+        on_execute_skill_action=None,  # async (skill_name, function_name, parameters) -> (func_resp, instant_resp)
     ):
         self.config = config
         self.audio_library = audio_library
         self.wingman_name = wingman_name
         self.on_reset_history = on_reset_history
         self.on_add_forced_commands = on_add_forced_commands
+        self.on_execute_skill_action = on_execute_skill_action
 
     # ───────────────── Command lookup ─────────────────────────── #
 
@@ -149,13 +151,14 @@ class CommandExecutor:
             return None, "Command not found"
 
         try:
+            skill_results: list[tuple[str, str]] = []
             if len(command.actions or []) == 0:
                 await printr.print_async(
                     f"No actions found for command: {command.name}",
                     color=LogType.WARNING,
                 )
             else:
-                await self.execute_action(command)
+                skill_results = await self.execute_action(command)
                 await printr.print_async(
                     f"Executed {'instant' if is_instant else 'AI'} command: {command.name}",
                     color=LogType.COMMAND,
@@ -167,10 +170,20 @@ class CommandExecutor:
                     f"Executed command: {command.name}", color=LogType.COMMAND
                 )
 
-            return (
-                self.select_instant_command_response(command),
-                command.additional_context or "OK",
+            skill_func_responses = [f for f, _ in skill_results if f]
+            skill_instant_responses = [i for _, i in skill_results if i]
+
+            instant_response = (
+                " ".join(skill_instant_responses)
+                if skill_instant_responses
+                else self.select_instant_command_response(command)
             )
+            function_response = (
+                "\n".join(skill_func_responses)
+                if skill_func_responses
+                else (command.additional_context or "OK")
+            )
+            return instant_response, function_response
         except Exception as e:
             await printr.print_async(
                 f"Error executing command '{command.name}' for Wingman '{self.wingman_name}': {str(e)}",
@@ -215,9 +228,11 @@ class CommandExecutor:
 
     # ───────────────── Action dispatch ────────────────────────── #
 
-    async def execute_action(self, command: CommandConfig):
+    async def execute_action(self, command: CommandConfig) -> list[tuple[str, str]]:
         if not command or not command.actions:
-            return
+            return []
+
+        collected: list[tuple[str, str]] = []
 
         def contains_numpad_key(hotkey: str) -> bool:
             if not hotkey:
@@ -303,9 +318,20 @@ class CommandExecutor:
                     await self.audio_library.handle_action(
                         action.audio, self.config.sound.volume
                     )
+
+                if action.skill_action and self.on_execute_skill_action:
+                    func_resp, instant_resp = await self.on_execute_skill_action(
+                        action.skill_action.skill_name,
+                        action.skill_action.function_name,
+                        action.skill_action.parameters or {},
+                    )
+                    collected.append((func_resp, instant_resp))
+
+            return collected
         except Exception as e:
             await printr.print_async(
                 f"Error executing actions of command '{command.name}' for wingman '{self.wingman_name}': {str(e)}",
                 color=LogType.ERROR,
             )
             printr.print(traceback.format_exc(), color=LogType.ERROR, server_only=True)
+            return []

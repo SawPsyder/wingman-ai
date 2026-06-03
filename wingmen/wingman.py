@@ -135,6 +135,7 @@ class Wingman:
             wingman_name=name,
             on_reset_history=self.reset_conversation_history,
             on_add_forced_commands=self.conversation.add_forced_assistant_command_calls,
+            on_execute_skill_action=self.execute_skill_command_action,
         )
 
         # --- Metrics service ---
