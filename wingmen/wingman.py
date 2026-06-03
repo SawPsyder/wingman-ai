@@ -754,6 +754,16 @@ class Wingman:
             play_to_user_fn=self.play_to_user,
         )
 
+    async def execute_skill_command_action(
+        self, skill_name: str, function_name: str, parameters: dict
+    ) -> tuple[str, str]:
+        """Invoke a skill's @command_action. Returns (function_response, instant_response).
+        Returns ('', '') if the skill isn't active or the function is unknown."""
+        skill = self.skill_manager.command_action_skills.get((skill_name, function_name))
+        if not skill:
+            return "", ""
+        return await skill.execute_command_action(function_name, parameters)
+
     # ───────────────── Conversation delegation ───────────────── #
 
     async def add_user_message(self, content: str, images: list[tuple[str, str]] = None):

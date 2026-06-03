@@ -55,6 +55,8 @@ class WingmanSkillManager:
         self.skills: list[Skill] = []
         self.tool_skills: dict[str, Skill] = {}
         self.skill_tools: list[dict] = []
+        # (skill_name, function_name) -> Skill, for @command_action dispatch
+        self.command_action_skills: dict[tuple[str, str], Skill] = {}
 
     # ──────────────────────────── Private helpers ─────────────────────────────── #
 
@@ -217,6 +219,9 @@ class WingmanSkillManager:
 
             self.skill_registry.register_skill(skill)
 
+            for fn_name in getattr(skill, "_command_actions", {}):
+                self.command_action_skills[(skill.name, fn_name)] = skill
+
             if skill.config.auto_activate:
                 success, message = await skill.ensure_activated()
                 if not success:
@@ -233,6 +238,9 @@ class WingmanSkillManager:
                 self.skill_registry.unregister_skill(skill.name)
             except Exception:
                 pass
+            self.command_action_skills = {
+                k: v for k, v in self.command_action_skills.items() if k[0] != skill.name
+            }
             if skill in self.skills:
                 self.skills.remove(skill)
             await printr.print_async(
@@ -262,6 +270,9 @@ class WingmanSkillManager:
                 color=LogType.ERROR,
             )
             printr.print(traceback.format_exc(), color=LogType.ERROR, server_only=True)
+        self.command_action_skills = {
+            k: v for k, v in self.command_action_skills.items() if k[0] != skill.name
+        }
         self._sync_conversation_skill_context()
 
     async def enable_skill(self, skill_name: str) -> tuple[bool, str]:
@@ -363,5 +374,6 @@ class WingmanSkillManager:
                 )
         self.tool_skills = {}
         self.skill_tools = []
+        self.command_action_skills = {}
         self.skill_registry.clear()
         self._sync_conversation_skill_context()
