@@ -1,5 +1,6 @@
 module: skills.auto_screenshot.main
 name: AutoScreenshot
+api_version: 3
 display_name: Auto Screenshot
 author: teddybear082
 discoverable_by_default: false

@@ -1,5 +1,6 @@
 module: skills.api_request.main
 name: APIRequest
+api_version: 3
 display_name: API Requests
 author: teddybear082
 tags:
