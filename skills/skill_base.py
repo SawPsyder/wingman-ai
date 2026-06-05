@@ -311,9 +311,14 @@ class CommandActionDefinition:
             self.speaks = ret is str
 
     async def execute(self, parameters: dict, skill_instance: "Skill"):
+        # Only pass parameters this function actually declares. Stale/extra keys — e.g. left
+        # over in the command config after switching the selected function in the editor — are
+        # dropped so they can't crash the call with "unexpected keyword argument".
+        allowed = set(self.parameters_schema.get("properties", {}).keys())
+        filtered = {k: v for k, v in (parameters or {}).items() if k in allowed}
         if self.is_async:
-            return await self.func(skill_instance, **(parameters or {}))
-        return self.func(skill_instance, **(parameters or {}))
+            return await self.func(skill_instance, **filtered)
+        return self.func(skill_instance, **filtered)
 
 
 def command_action(

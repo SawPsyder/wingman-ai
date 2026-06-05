@@ -158,6 +158,13 @@ async def check_real_skill() -> None:
     res = await skill.execute_command_action("async_action", {"value": 7})
     assert res == ("async 7", ""), f"async result mismatch: {res!r}"
 
+    # Stale/extra params (e.g. left over after switching the selected function in the
+    # editor) are dropped, not forwarded — no "unexpected keyword argument" crash.
+    res = await skill.execute_command_action(
+        "set_timer", {"minutes": 9, "mode": "a", "reason": "leftover", "junk": 1}
+    )
+    assert res == ("timer 9 a", ""), f"stale-param filtering failed: {res!r}"
+
     # list_command_actions: list of dicts with the required keys.
     listed = skill.list_command_actions()
     assert isinstance(listed, list), f"list_command_actions should return a list: {type(listed)}"
