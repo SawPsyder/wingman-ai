@@ -11,7 +11,7 @@ except (ImportError, NotImplementedError):
 
 from api.enums import LogType
 from api.interface import SettingsConfig, SkillConfig, WingmanInitializationError
-from skills.skill_base import Skill, tool
+from skills.skill_base import Skill, tool, command_action
 
 if TYPE_CHECKING:
     from wingmen.wingman_context import WingmanContext
@@ -64,6 +64,10 @@ class AutoScreenshot(Skill):
         - Memorable gaming moments or achievements
 
         IMPORTANT: Do NOT use for 'look at screen' requests - those need VisionAI for analysis, not capture.""",
+    )
+    @command_action(
+        label="Take Screenshot",
+        description="Capture a screenshot of the focused window. Also usable as a bindable Command action.",
     )
     async def take_screenshot(self, reason: str) -> str:
         """
