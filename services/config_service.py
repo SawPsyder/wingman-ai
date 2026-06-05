@@ -469,11 +469,15 @@ class ConfigService:
                     continue
                 for name in to_remove:
                     wingman_config.discoverable_skills.remove(name)
-                await self.save_wingman_config(
+                # Pure disk write (config_manager, not config_service): this runs during
+                # initialize_tower BEFORE the tower exists, so the tower-gated
+                # config_service.save_wingman_config would reject it. We only need to persist
+                # the discoverable_skills change; no live-wingman reinit is needed (the
+                # per-Wingman eligibility gate already prevents loading these skills).
+                self.config_manager.save_wingman_config(
                     config_dir=config_dir,
                     wingman_file=wingman_file,
                     wingman_config=wingman_config,
-                    silent=True,
                 )
                 self.printr.print(
                     f"Auto-disabled incompatible skill(s) {to_remove} in wingman '{wingman_file.name}'.",
