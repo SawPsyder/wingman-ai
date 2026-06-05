@@ -282,6 +282,12 @@ def _validate_command_action_params(func: Callable, schema: dict) -> None:
             )
 
 
+# Where a @command_action's return value goes:
+#   "ai"    -> handed to the AI (it voices/uses it, may paraphrase or chain)
+#   "speak" -> spoken verbatim via TTS (and also given to the AI)
+CommandActionRespond = Literal["ai", "speak"]
+
+
 class CommandActionDefinition:
     """Metadata for a method registered via @command_action."""
 
@@ -290,25 +296,24 @@ class CommandActionDefinition:
         func: Callable,
         label: Optional[str] = None,
         description: Optional[str] = None,
-        speaks: Optional[bool] = None,
+        respond: CommandActionRespond = "ai",
     ):
+        if respond not in ("ai", "speak"):
+            raise ValueError(
+                f"@command_action '{func.__qualname__}': respond must be 'ai' or 'speak', "
+                f"got {respond!r}."
+            )
         self.func = func
         self.name = func.__name__
         self.label = label or func.__name__
         self.description = description
+        self.respond = respond
+        # UI hint for the command editor: does this action voice a result verbatim?
+        self.speaks = respond == "speak"
         self.is_async = asyncio.iscoroutinefunction(func)
         _name, schema = _generate_tool_schema(func, name=self.name, description=description)
         _validate_command_action_params(func, schema)
         self.parameters_schema = schema["function"]["parameters"]
-        if speaks is not None:
-            self.speaks = speaks
-        else:
-            try:
-                hints = get_type_hints(func)
-            except Exception:
-                hints = {}
-            ret = hints.get("return", None)
-            self.speaks = ret is str
 
     async def execute(self, parameters: dict, skill_instance: "Skill"):
         # Only pass parameters this function actually declares. Stale/extra keys — e.g. left
@@ -324,20 +329,27 @@ class CommandActionDefinition:
 def command_action(
     label: Optional[str] = None,
     description: Optional[str] = None,
-    speaks: Optional[bool] = None,
+    respond: CommandActionRespond = "ai",
 ):
     """Decorator: expose a skill method as a user-bindable Command action.
 
-    Distinct from @tool (LLM exposure). Parameters must be scalars (str/int/float/bool)
-    or Literal[...] enums — they are rendered as static inputs in the command editor.
-    Return contract matches @tool: return a str (spoken / fed to the LLM) or a
-    (function_response, instant_response) tuple. Returning nothing falls through to the
-    command system's usual "OK" response for fire-and-forget actions.
+    Distinct from @tool (a function may carry both). Parameters must be scalars
+    (str/int/float/bool) or Literal[...] enums — rendered as static inputs in the command editor.
+
+    Your function returns a plain string (or None); ``respond`` decides where that string goes:
+
+    - ``respond="ai"`` (default): the return is handed to the AI, which voices/uses it (it may
+      paraphrase or chain). Pair with a command's static ``responses`` for a fixed acknowledgment.
+    - ``respond="speak"``: the return is spoken VERBATIM via TTS (no AI roundtrip on instant
+      activation) and also given to the AI. Use for a dynamic, input-dependent spoken reply.
+
+    Returning ``None`` -> the command falls through to its usual "OK" acknowledgment
+    (fire-and-forget), exactly like a keyboard command.
     """
 
     def decorator(func: Callable) -> Callable:
         func._command_action_definition = CommandActionDefinition(
-            func=func, label=label, description=description, speaks=speaks
+            func=func, label=label, description=description, respond=respond
         )
         return func
 
@@ -702,19 +714,25 @@ class Skill:
     async def execute_command_action(
         self, function_name: str, parameters: dict
     ) -> tuple[str, str]:
-        """Execute a @command_action by name. Returns (function_response, instant_response),
-        normalized like execute_tool. Returns ('', '') if the function name is unknown."""
+        """Execute a @command_action by name. Returns (function_response, instant_response).
+
+        Routing depends on the action's ``respond`` mode:
+        - ``respond="ai"``    -> the return goes to the AI (function_response); nothing spoken verbatim.
+        - ``respond="speak"`` -> the return is spoken verbatim (instant_response) AND given to the AI.
+
+        Returning ``None`` -> ('', '') so the command falls through to its usual "OK"
+        acknowledgment. Returns ('', '') if the function name is unknown.
+        """
         cad = self._command_actions.get(function_name)
         if not cad:
             return "", ""
         result = await cad.execute(parameters or {}, self)
-        if isinstance(result, tuple) and len(result) == 2:
-            func_response, instant_response = result
-            return (str(func_response) if func_response else "",
-                    str(instant_response) if instant_response else "")
         if result is None:
             return "", ""
-        return str(result), ""
+        text = str(result)
+        if cad.respond == "speak":
+            return text, text  # spoken verbatim + the AI is told what was said
+        return text, ""        # respond="ai": hand it to the AI
 
     def list_command_actions(self) -> list[dict]:
         """Describe this skill's command-actions for the client editor."""

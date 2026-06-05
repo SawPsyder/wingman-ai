@@ -143,6 +143,39 @@ class YourSkillName(Skill):
         await super().unload()
 ```
 
+## Command Actions — `@command_action`
+
+Besides AI-callable `@tool`s, a skill can expose **command actions**: functions a user binds as an action inside a **Command** (alongside keyboard / mouse / write / wait), triggered by an **instant phrase** or by the AI. The Client renders an input for each parameter; the user fills **static** values that are stored in the command and passed to your function at trigger time.
+
+```python
+from skills.skill_base import Skill, command_action   # separate decorator from @tool
+from typing import Literal
+
+class YourSkill(Skill):
+    @command_action(label="Set Brightness", description="Set the display brightness.")
+    def set_brightness(self, level: int, mode: Literal["soft", "hard"] = "soft") -> str:
+        ...
+        return f"Brightness set to {level}"   # handed to the AI (respond="ai" default)
+```
+
+**Decorator:** `@command_action(label=None, description=None, respond="ai")`
+
+- `label` — name shown in the command editor (defaults to the function name).
+- `description` — one-line help text shown under the function picker in the editor.
+- `respond` — `Literal["ai", "speak"]`; **where your return value goes** (see below).
+
+**Separate from `@tool`.** A function can carry both, one, or neither. Carrying both makes it AI-callable *and* user-bindable. See `auto_screenshot/main.py` (`take_screenshot` carries both; `say_phrase` is command-only with `respond="speak"`).
+
+**Parameters must be UI-renderable** — only `str`, `int`, `float`, `bool`, and `Literal[...]` (rendered as a dropdown), plus optionals (params with defaults). Any other type (`dict`, `list`, custom) is **rejected at import time** with a clear error. The schema is auto-generated from your type hints (same machinery as `@tool`). The Client sends only declared params and Core drops stray keys, so your function never gets an unexpected keyword argument.
+
+**Output — return a plain `str` (or `None`); `respond` decides where it goes:**
+
+- `respond="ai"` *(default)* — the return is handed to the **AI**, which voices/uses it (it may paraphrase or chain). Pair with a command's static `responses` for a fixed acknowledgment.
+- `respond="speak"` — the return is **spoken verbatim** via TTS (no AI roundtrip on instant activation) and also given to the AI. Use for a *dynamic*, input-dependent spoken reply.
+- **Return `None`** ⇒ the command falls through to its usual `"OK"` acknowledgment (fire-and-forget), like a keyboard command.
+
+**Interplay with a Command's static `responses`:** the command's static `responses` (e.g. "I got you.") are the *fixed* acknowledgment — used when the action doesn't speak its own result (`respond="ai"` or fire-and-forget). A `respond="speak"` action provides a *dynamic* spoken result and **takes precedence** over the static response (the wingman never says both). Static for input-independent replies; `respond="speak"` for input-dependent ones.
+
 ## Minimal default_config.yaml
 
 ```yaml
@@ -202,6 +235,7 @@ Global defaults are tuned for summarization (low temperature). **Override for cr
 | [thinking_sound](thinking_sound/) | Hook (auto) | Sound during processing |
 | [hud](hud/) | Hook+Tool (auto) | HUD overlay, `color` properties |
 | [image_generation](image_generation/) | Tool | `@tool` with `wait_response` |
+| [auto_screenshot](auto_screenshot/) | Tool + Command action | `@command_action` (`say_phrase`, `take_screenshot`) |
 | [timer](timer/) | Hook+Tool | State management, `unload()` cleanup |
 | [vision_ai](vision_ai/) | Tool | Screen capture, discovery keywords |
 | [file_manager](file_manager/) | Tool | Multi-tool skill |
