@@ -164,7 +164,7 @@ class YourSkill(Skill):
 - `description` — one-line help text shown under the function picker in the editor.
 - `respond` — `Literal["ai", "speak"]`; **where your return value goes** (see below).
 
-**Separate from `@tool`.** A function can carry both, one, or neither. Carrying both makes it AI-callable *and* user-bindable. See `auto_screenshot/main.py` (`take_screenshot` carries both; `say_phrase` is command-only with `respond="speak"`).
+**Separate from `@tool`.** A function can carry both, one, or neither. Carrying both makes it AI-callable *and* user-bindable.
 
 **Parameters must be UI-renderable** — only `str`, `int`, `float`, `bool`, and `Literal[...]` (rendered as a dropdown), plus optionals (params with defaults). Any other type (`dict`, `list`, custom) is **rejected at import time** with a clear error. The schema is auto-generated from your type hints (same machinery as `@tool`). The Client sends only declared params and Core drops stray keys, so your function never gets an unexpected keyword argument.
 
@@ -235,7 +235,6 @@ Global defaults are tuned for summarization (low temperature). **Override for cr
 | [thinking_sound](thinking_sound/) | Hook (auto) | Sound during processing |
 | [hud](hud/) | Hook+Tool (auto) | HUD overlay, `color` properties |
 | [image_generation](image_generation/) | Tool | `@tool` with `wait_response` |
-| [auto_screenshot](auto_screenshot/) | Tool + Command action | `@command_action` (`say_phrase`, `take_screenshot`) |
 | [timer](timer/) | Hook+Tool | State management, `unload()` cleanup |
 | [vision_ai](vision_ai/) | Tool | Screen capture, discovery keywords |
 | [file_manager](file_manager/) | Tool | Multi-tool skill |

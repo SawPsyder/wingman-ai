@@ -11,7 +11,7 @@ except (ImportError, NotImplementedError):
 
 from api.enums import LogType
 from api.interface import SettingsConfig, SkillConfig, WingmanInitializationError
-from skills.skill_base import Skill, tool, command_action
+from skills.skill_base import Skill, tool
 
 if TYPE_CHECKING:
     from wingmen.wingman_context import WingmanContext
@@ -64,10 +64,6 @@ class AutoScreenshot(Skill):
         - Memorable gaming moments or achievements
 
         IMPORTANT: Do NOT use for 'look at screen' requests - those need VisionAI for analysis, not capture.""",
-    )
-    @command_action(
-        label="Take Screenshot",
-        description="Capture a screenshot of the focused window. Also usable as a bindable Command action.",
     )
     async def take_screenshot(self, reason: str) -> str:
         """
@@ -137,12 +133,3 @@ class AutoScreenshot(Skill):
                 )
 
         return f"Screenshot saved to: {screenshot_file}"
-
-    @command_action(
-        label="Say Phrase",
-        respond="speak",
-        description="Echo a phrase back, spoken verbatim. Demo: proves a static param flows from the command editor into the function.",
-    )
-    async def say_phrase(self, phrase: str) -> str:
-        # respond="speak" -> this return is spoken verbatim via TTS (your exact input).
-        return phrase
