@@ -137,3 +137,13 @@ class AutoScreenshot(Skill):
                 )
 
         return f"Screenshot saved to: {screenshot_file}"
+
+    @command_action(
+        label="Say Phrase",
+        speaks=True,
+        description="Echo a phrase back, spoken verbatim. Demo: proves a static param flows from the command editor into the function.",
+    )
+    async def say_phrase(self, phrase: str) -> tuple[str, str]:
+        # Return contract mirrors @tool: (function_response, instant_response).
+        # instant_response is spoken immediately via TTS (verbatim, no LLM), so you hear your exact input.
+        return f"Spoke the phrase: {phrase}", phrase
