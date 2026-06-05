@@ -81,20 +81,20 @@ class CommandExecutor:
     # ───────────────── Instant activation ─────────────────────── #
 
     async def try_instant_activation(self, transcript: str) -> tuple[str, bool]:
-        commands = await self._execute_instant_activation_command(transcript)
-        if commands:
+        result = await self._execute_instant_activation_command(transcript)
+        if result:
+            commands, instant_responses = result
             if self.on_add_forced_commands is not None:
                 await self.on_add_forced_commands(commands)
-            responses = []
-            for command in commands:
-                if command.responses:
-                    responses.append(self.select_instant_command_response(command))
-
-            if len(responses) == len(commands):
+            # execute_command already folds the skill_action instant_response (or the command's
+            # static response) into its returned instant_response, so use that here. This lets a
+            # @command_action's spoken result play on instant activation (no LLM roundtrip).
+            responses = [r for r in instant_responses if r]
+            if responses:
                 responses = list(dict.fromkeys(responses))
                 responses = [
-                    response + "." if not response.endswith(".") else response
-                    for response in responses
+                    r if r.endswith((".", "!", "?")) else r + "."
+                    for r in responses
                 ]
                 return " ".join(responses), True
 
@@ -104,7 +104,7 @@ class CommandExecutor:
 
     async def _execute_instant_activation_command(
         self, transcript: str
-    ) -> list[CommandConfig] | None:
+    ) -> tuple[list[CommandConfig], list[str]] | None:
         if not self.config.commands:
             return None
         try:
@@ -130,10 +130,12 @@ class CommandExecutor:
                 return None
 
             commands = commands_by_instant_activation[phrase[0]]
+            instant_responses = []
             for command in commands:
-                await self.execute_command(command, True)
+                instant_resp, _func_resp = await self.execute_command(command, True)
+                instant_responses.append(instant_resp)
 
-            return commands
+            return commands, instant_responses
         except Exception as e:
             await printr.print_async(
                 f"Error during instant activation in Wingman '{self.wingman_name}': {str(e)}",
