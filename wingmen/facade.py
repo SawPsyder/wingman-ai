@@ -191,6 +191,33 @@ def apply_voice_to_current_provider(config: Any, voice: Any) -> tuple[Any, str] 
     return None
 
 
+class SkillCommands:
+    """Sanctioned access to the wingman's commands.
+
+    Commands are user-owned config that skills like QuickCommands are designed to
+    edit (e.g. attaching learned instant-activation phrases). ``get``/``all`` return
+    the live command objects so a skill can adjust them, and ``save`` persists the
+    commands section to disk.
+    """
+
+    def __init__(self, wingman: "Wingman") -> None:
+        self._wingman = wingman
+
+    def get(self, name: str):
+        """Return the live CommandConfig with this name, or None."""
+        return self._wingman.command_executor.get_command(name)
+
+    def all(self) -> tuple:
+        """All configured commands (live objects, as a read-only tuple)."""
+        return tuple(self._wingman.config.commands or [])
+
+    async def save(self) -> bool:
+        """Persist the wingman's commands section to disk. Returns True on success."""
+        if not self._wingman.tower:
+            return False
+        return self._wingman.tower.save_wingman_commands(self._wingman.name)
+
+
 class SkillAudio:
     """Sanctioned audio capabilities for skills.
 

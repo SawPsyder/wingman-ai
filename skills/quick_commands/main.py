@@ -59,7 +59,7 @@ class QuickCommands(Skill):
             added = True
 
         if added:
-            await self.wingman.save_commands()
+            await self.wingman.commands.save()
 
     async def _add_instant_activation_phrase(
         self, phrase: str, commands: list[str], save_wingman: bool = True
@@ -69,7 +69,7 @@ class QuickCommands(Skill):
         phrase_lower = phrase.lower()
 
         for command in commands:
-            command = self.wingman.get_command(command)
+            command = self.wingman.commands.get(command)
             if not command.instant_activation:
                 command.instant_activation = []
 
@@ -79,7 +79,7 @@ class QuickCommands(Skill):
                 changed = True
 
         if changed and save_wingman:
-            await self.wingman.save_commands()
+            await self.wingman.commands.save()
 
     async def on_add_assistant_message(self, message: str, tool_calls: list) -> None:
         """Hook to start learning process."""
@@ -132,7 +132,7 @@ class QuickCommands(Skill):
         pops = []
         for phrase, commands in self.learning_learned.items():
             for command in commands:
-                if not self.wingman.get_command(command):
+                if not self.wingman.commands.get(command):
                     pops.append(phrase)
         if pops:
             for phrase in pops:
@@ -143,7 +143,7 @@ class QuickCommands(Skill):
         for phrase in self.learning_data.keys():
             commands = self.learning_data[phrase]["commands"]
             for command in commands:
-                if not self.wingman.get_command(command):
+                if not self.wingman.commands.get(command):
                     pops.append(phrase)
                 elif self.learning_data[phrase]["count"] >= self._get_rule_count():
                     finished.append(phrase)
@@ -168,7 +168,7 @@ class QuickCommands(Skill):
 
         # get and check the command
         for command_name in command_names:
-            command = self.wingman.get_command(command_name)
+            command = self.wingman.commands.get(command_name)
             if not command:
                 # AI probably hallucinated
                 return

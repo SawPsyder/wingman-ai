@@ -7,7 +7,7 @@ if TYPE_CHECKING:
     from api.enums import TtsProvider
     from api.interface import SoundConfig, WingmanConfig, SettingsConfig
     from services.audio_player import AudioPlayer
-    from wingmen.facade import SkillAudio, SkillTts
+    from wingmen.facade import SkillAudio, SkillCommands, SkillTts
     from wingmen.wingman import Wingman
 
 
@@ -18,6 +18,7 @@ class WingmanContext:
         self._wingman = wingman
         self._tts = None
         self._audio = None
+        self._commands = None
 
     # --- Properties ---
 
@@ -125,6 +126,17 @@ class WingmanContext:
 
             self._audio = SkillAudio(self._wingman)
         return self._audio
+
+    # --- Commands (sanctioned read + edit + persist) ---
+
+    @property
+    def commands(self) -> "SkillCommands":
+        """Sanctioned access to the wingman's commands (get/all/save)."""
+        if self._commands is None:
+            from wingmen.facade import SkillCommands
+
+            self._commands = SkillCommands(self._wingman)
+        return self._commands
 
     # --- Provider switching (DEPRECATED — removed once skills move to ctx.tts.set_voice) ---
 
