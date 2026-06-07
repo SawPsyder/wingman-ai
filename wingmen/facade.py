@@ -191,6 +191,39 @@ def apply_voice_to_current_provider(config: Any, voice: Any) -> tuple[Any, str] 
     return None
 
 
+class SkillRegistryView:
+    """Sanctioned read + invoke over the wingman's tools/commands.
+
+    Lets a skill discover which tool functions exist and invoke one (or a command)
+    by name — without reaching into build_tools()/the renamed internal dispatcher.
+    The invoke surface is deliberately scoped to enumerable tools/commands, not
+    arbitrary attribute calls.
+    """
+
+    def __init__(self, wingman: "Wingman") -> None:
+        self._wingman = wingman
+
+    def tool_names(self) -> set[str]:
+        """Names of all currently-available tool functions."""
+        names = set()
+        for tool in self._wingman.build_tools():
+            name = tool.get("function", {}).get("name")
+            if name:
+                names.add(name)
+        return names
+
+    def has_tool(self, name: str) -> bool:
+        """True if a tool function with this name is currently available."""
+        return name in self.tool_names()
+
+    async def invoke(self, function_name: str, arguments: dict | None = None):
+        """Invoke a tool/command by name. Returns
+        ``(function_response, instant_response, used_skill, tool_label)``."""
+        return await self._wingman.execute_command_by_function_call(
+            function_name, arguments or {}
+        )
+
+
 class SkillCommands:
     """Sanctioned access to the wingman's commands.
 

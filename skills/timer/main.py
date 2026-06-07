@@ -174,23 +174,16 @@ class Timer(Skill):
         if "." in function_name:
             function_name = function_name.split(".")[1]
 
-        # check if tool call exists
-        tool_call = next(
-            (
-                tool
-                for tool in self.wingman.build_tools()
-                if tool.get("function", {}).get("name", False) == function_name
-            ),
-            None,
-        )
+        # check if a tool with this name exists
+        is_known = self.wingman.registry.has_tool(function_name)
 
-        # if not valid it might be a command
-        if not tool_call and self.wingman.get_command(function_name):
+        # if not a tool, it might be a command
+        if not is_known and self.wingman.commands.get(function_name):
             function_arguments_json = json.dumps({"command_name": function_name})
             function_name = "execute_command"
-            tool_call = True  # Mark as found
+            is_known = True
 
-        if not tool_call:
+        if not is_known:
             return f"Error: Function '{function_name}' does not exist."
 
         try:
@@ -324,7 +317,7 @@ class Timer(Skill):
 
         timer = self.timers[timer_id]
         function_response, instant_response, used_skill, tool_label = (
-            await self.wingman.execute_command_by_function_call(
+            await self.wingman.registry.invoke(
                 timer.function_name, timer.function_arguments
             )
         )
