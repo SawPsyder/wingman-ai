@@ -176,6 +176,13 @@ class YourSkill(Skill):
 
 **Interplay with a Command's static `responses`:** the command's static `responses` (e.g. "I got you.") are the *fixed* acknowledgment — used when the action doesn't speak its own result (`respond="ai"` or fire-and-forget). A `respond="speak"` action provides a *dynamic* spoken result and **takes precedence** over the static response (the wingman never says both). Static for input-independent replies; `respond="speak"` for input-dependent ones.
 
+**Reference examples in bundled skills:**
+
+- `radio_chatter` — `turn_on_radio` / `turn_off_radio` / `get_radio_status`: stacks `@command_action` on existing `@tool` methods; no-arg `respond="speak"` toggles.
+- `spotify` — `control_spotify_playback`: a `Literal[...]` param renders as an enum dropdown (the user fixes one action per command) plus an optional `int` input.
+- `hud` — `hud_show` / `hud_hide`: no-arg async toggles.
+- `voice_changer` — `switch_voice_now`: a *new* method (no matching `@tool`), giving users a manual handle on an otherwise event-driven skill.
+
 ## Minimal default_config.yaml
 
 ```yaml
