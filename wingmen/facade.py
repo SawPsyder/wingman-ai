@@ -208,6 +208,18 @@ WINGMAN_PRO_MAX_INPUT_TOKENS = 8000
 IMAGE_TOKEN_ESTIMATE = 1000
 
 
+def skill_input_cap(config: Any) -> int:
+    """Max input tokens skill-originated content (a ctx.ai.generate side-call OR a
+    tool/MCP response) may feed the main model. Wingman Pro is hardcoded lower (we pay);
+    own providers use config.features.skill_max_input_tokens."""
+    from api.enums import ConversationProvider
+
+    features = config.features
+    if features.conversation_provider == ConversationProvider.WINGMAN_PRO:
+        return WINGMAN_PRO_MAX_INPUT_TOKENS
+    return getattr(features, "skill_max_input_tokens", 16000)
+
+
 class SkillAi:
     """Sanctioned access to the main (cloud) AI model for skills.
 
@@ -221,12 +233,7 @@ class SkillAi:
         self._wingman = wingman
 
     def _max_input_tokens(self) -> int:
-        from api.enums import ConversationProvider
-
-        features = self._wingman.config.features
-        if features.conversation_provider == ConversationProvider.WINGMAN_PRO:
-            return WINGMAN_PRO_MAX_INPUT_TOKENS
-        return getattr(features, "skill_max_input_tokens", 16000)
+        return skill_input_cap(self._wingman.config)
 
     async def generate(
         self,
