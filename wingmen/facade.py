@@ -396,6 +396,40 @@ class SkillAudio:
         """Unsubscribe a previously-registered playback-finished callback."""
         self._wingman.audio_player.playback_events.unsubscribe("finished", callback)
 
+    # --- output/input device control (in-process; replaces HTTP-to-backend hacks) ---
+
+    @property
+    def output_device(self):
+        """The currently selected audio OUTPUT device settings (read-only)."""
+        audio = self._wingman.settings.audio
+        return audio.output if audio else None
+
+    @property
+    def input_device(self):
+        """The currently selected audio INPUT device settings (read-only)."""
+        audio = self._wingman.settings.audio
+        return audio.input if audio else None
+
+    async def set_output_device(self, device_id: int) -> bool:
+        """Switch the system audio OUTPUT device. Returns False if unavailable."""
+        return await self._set_devices(output_device=device_id)
+
+    async def set_input_device(self, device_id: int) -> bool:
+        """Switch the system audio INPUT device. Returns False if unavailable."""
+        return await self._set_devices(input_device=device_id)
+
+    async def _set_devices(self, input_device: int | None = None,
+                           output_device: int | None = None) -> bool:
+        settings_service = getattr(self._wingman, "settings_service", None)
+        if settings_service is None:
+            return False
+        # Resolves the device, persists settings_config.audio, and publishes
+        # 'audio_devices_changed' which re-routes playback — same path as the HTTP API.
+        await settings_service.set_audio_devices(
+            input_device=input_device, output_device=output_device
+        )
+        return True
+
 
 class SkillTts:
     """Sanctioned TTS capabilities for skills.
