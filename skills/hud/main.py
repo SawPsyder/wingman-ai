@@ -662,8 +662,8 @@ class HUD(Skill):
                 # Check audio status
                 is_playing = False
                 try:
-                    if self.wingman and self.wingman.audio_player:
-                        is_playing = self.wingman.audio_player.is_playing
+                    if self.wingman:
+                        is_playing = self.wingman.audio.is_playing
                 except Exception:
                     pass
 
@@ -679,8 +679,8 @@ class HUD(Skill):
                     # Re-check if audio started during the delay
                     still_not_playing = True
                     try:
-                        if self.wingman and self.wingman.audio_player:
-                            still_not_playing = not self.wingman.audio_player.is_playing
+                        if self.wingman:
+                            still_not_playing = not self.wingman.audio.is_playing
                     except Exception:
                         pass
 
