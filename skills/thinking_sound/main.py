@@ -28,12 +28,8 @@ class ThinkingSound(Skill):
         self.is_playing = False
 
         # Subscribe to playback events
-        self.wingman.audio_player.playback_events.subscribe(
-            "started", self.on_playback_started
-        )
-        self.wingman.audio_player.playback_events.subscribe(
-            "finished", self.on_playback_finished
-        )
+        self.wingman.audio.on_playback_started(self.on_playback_started)
+        self.wingman.audio.on_playback_finished(self.on_playback_finished)
 
     async def validate(self) -> list[WingmanInitializationError]:
         errors = await super().validate()
@@ -46,12 +42,8 @@ class ThinkingSound(Skill):
         await self.stop_playback()
 
         # Unsubscribe from playback events
-        self.wingman.audio_player.playback_events.unsubscribe(
-            "started", self.on_playback_started
-        )
-        self.wingman.audio_player.playback_events.unsubscribe(
-            "finished", self.on_playback_finished
-        )
+        self.wingman.audio.off_playback_started(self.on_playback_started)
+        self.wingman.audio.off_playback_finished(self.on_playback_finished)
 
         self.printr.print(
             "Thinking Sound Skill unloaded.",
@@ -89,7 +81,7 @@ class ThinkingSound(Skill):
             return
 
         # Stop any existing playback first
-        await self.wingman.audio_library.stop_playback(audio_config, 0)
+        await self.wingman.audio.stop(audio_config, 0)
 
         self.printr.print(
             "Thinking Sound: Starting playback.",
@@ -106,9 +98,7 @@ class ThinkingSound(Skill):
             return
 
         self.is_playing = True
-        await self.wingman.audio_library.start_playback(
-            audio_config, self.wingman.config.sound.volume
-        )
+        await self.wingman.audio.play(audio_config, self.wingman.config.sound.volume)
 
     async def stop_playback(self):
         """Stop the thinking sound with fade out."""
@@ -116,5 +106,5 @@ class ThinkingSound(Skill):
         if not audio_config or not self.is_playing:
             return
 
-        await self.wingman.audio_library.stop_playback(audio_config, self.stop_duration)
+        await self.wingman.audio.stop(audio_config, self.stop_duration)
         self.is_playing = False

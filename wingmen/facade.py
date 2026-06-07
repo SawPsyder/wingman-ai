@@ -191,6 +191,47 @@ def apply_voice_to_current_provider(config: Any, voice: Any) -> tuple[Any, str] 
     return None
 
 
+class SkillAudio:
+    """Sanctioned audio capabilities for skills.
+
+    Lets skills play/stop their own audio files, observe playback start/stop, and
+    read whether the wingman is currently speaking — without reaching into the raw
+    ``audio_player`` / ``audio_library`` internals.
+    """
+
+    def __init__(self, wingman: "Wingman") -> None:
+        self._wingman = wingman
+
+    @property
+    def is_playing(self) -> bool:
+        """True while the wingman is currently playing TTS/audio."""
+        return bool(self._wingman.audio_player.is_playing)
+
+    async def play(self, audio_config: Any, volume_modifier: float = 1.0) -> None:
+        """Start playback of a skill-owned audio file (``AudioFile``/``AudioFileConfig``)."""
+        await self._wingman.audio_library.start_playback(audio_config, volume_modifier)
+
+    async def stop(self, audio_config: Any, fade_out_time: float = 0.5) -> None:
+        """Stop playback of a skill-owned audio file (optionally fading out)."""
+        await self._wingman.audio_library.stop_playback(audio_config, fade_out_time)
+
+    def on_playback_started(self, callback: Any) -> None:
+        """Subscribe to playback-started events. Callback receives the wingman name."""
+        self._wingman.audio_player.playback_events.subscribe("started", callback)
+
+    def on_playback_finished(self, callback: Any) -> None:
+        """Subscribe to playback-finished events. Callback receives the wingman name."""
+        self._wingman.audio_player.playback_events.subscribe("finished", callback)
+
+    def off_playback_started(self, callback: Any) -> None:
+        """Unsubscribe a previously-registered playback-started callback."""
+        self._wingman.audio_player.playback_events.unsubscribe("started", callback)
+
+    def off_playback_finished(self, callback: Any) -> None:
+        """Unsubscribe a previously-registered playback-finished callback."""
+        self._wingman.audio_player.playback_events.unsubscribe("finished", callback)
+
+
 class SkillTts:
     """Sanctioned TTS capabilities for skills.
 
