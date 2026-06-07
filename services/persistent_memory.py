@@ -6,6 +6,7 @@ import math
 import re
 import sqlite3
 import struct
+import threading
 import time
 import uuid
 from dataclasses import dataclass
@@ -81,14 +82,25 @@ class PersistentMemoryService:
         self.local_ai_service = local_ai_service
         self.session_id = str(uuid.uuid4())
         self._db: sqlite3.Connection | None = None
+        # A single sqlite3.Connection is opened with check_same_thread=False and
+        # is hit from the default thread pool (every async method dispatches via
+        # asyncio.to_thread). Concurrent execute()/commit() on one connection
+        # corrupts SQLite's heap and crashes the process with a native SIGSEGV,
+        # so ALL connection access must be serialized through this lock. It is
+        # reentrant so composite operations (e.g. dedup-check then insert) can
+        # hold it across several helper calls and stay atomic. Held only around
+        # DB statements -- never around embedding/LLM calls -- to avoid
+        # serializing turns on the slow paths.
+        self._lock = threading.RLock()
 
     def initialize(self) -> None:
         """Create the database and tables if they don't exist."""
         db_dir = get_persistent_memory_dir()
         db_path = path.join(db_dir, "memory.db")
-        self._db = sqlite3.connect(db_path, check_same_thread=False)
+        with self._lock:
+            self._db = sqlite3.connect(db_path, check_same_thread=False)
 
-        self._db.executescript("""
+            self._db.executescript("""
             CREATE TABLE IF NOT EXISTS memory_entries (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 collection TEXT NOT NULL,
@@ -106,8 +118,8 @@ class PersistentMemoryService:
                 ON memory_entries(entry_type);
             CREATE INDEX IF NOT EXISTS idx_memory_collection_type
                 ON memory_entries(collection, entry_type);
-        """)
-        self._db.commit()
+            """)
+            self._db.commit()
 
     # --- Core sync implementations ---
 
@@ -122,30 +134,33 @@ class PersistentMemoryService:
             return None
         embedding = embeddings[0]
 
-        if entry_type == "fact":
-            existing = self._find_duplicate(embedding)
-            if existing:
-                self._update_entry(existing.id, content, embedding)
-                return existing.id
+        # Hold the lock across dedup-check + insert so the pair is atomic and
+        # never races another thread on the shared connection.
+        with self._lock:
+            if entry_type == "fact":
+                existing = self._find_duplicate(embedding)
+                if existing:
+                    self._update_entry(existing.id, content, embedding)
+                    return existing.id
 
-        now = time.time()
-        cursor = self._db.execute(
-            """INSERT INTO memory_entries
-               (collection, entry_type, content, embedding,
-                source_wingman, session_id, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                self.collection, entry_type, content,
-                _serialize_embedding(embedding),
-                self.wingman_name, session_id or self.session_id, now, now,
-            ),
-        )
-        self._db.commit()
+            now = time.time()
+            cursor = self._db.execute(
+                """INSERT INTO memory_entries
+                   (collection, entry_type, content, embedding,
+                    source_wingman, session_id, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    self.collection, entry_type, content,
+                    _serialize_embedding(embedding),
+                    self.wingman_name, session_id or self.session_id, now, now,
+                ),
+            )
+            self._db.commit()
 
-        if entry_type == "session_summary":
-            self._enforce_summary_cap()
+            if entry_type == "session_summary":
+                self._enforce_summary_cap()
 
-        return cursor.lastrowid
+            return cursor.lastrowid
 
     def _update_memory_impl(self, entry_id: int, new_content: str) -> None:
         embeddings = self.local_ai_service.embed([new_content])
@@ -165,23 +180,24 @@ class PersistentMemoryService:
             return []
         query_embedding = embeddings[0]
 
-        if entry_type:
-            rows = self._db.execute(
-                """SELECT id, collection, entry_type, content, embedding,
-                          source_wingman, session_id, created_at, updated_at
-                   FROM memory_entries
-                   WHERE collection = ? AND entry_type = ?
-                   AND embedding IS NOT NULL""",
-                (self.collection, entry_type),
-            ).fetchall()
-        else:
-            rows = self._db.execute(
-                """SELECT id, collection, entry_type, content, embedding,
-                          source_wingman, session_id, created_at, updated_at
-                   FROM memory_entries
-                   WHERE collection = ? AND embedding IS NOT NULL""",
-                (self.collection,),
-            ).fetchall()
+        with self._lock:
+            if entry_type:
+                rows = self._db.execute(
+                    """SELECT id, collection, entry_type, content, embedding,
+                              source_wingman, session_id, created_at, updated_at
+                       FROM memory_entries
+                       WHERE collection = ? AND entry_type = ?
+                       AND embedding IS NOT NULL""",
+                    (self.collection, entry_type),
+                ).fetchall()
+            else:
+                rows = self._db.execute(
+                    """SELECT id, collection, entry_type, content, embedding,
+                              source_wingman, session_id, created_at, updated_at
+                       FROM memory_entries
+                       WHERE collection = ? AND embedding IS NOT NULL""",
+                    (self.collection,),
+                ).fetchall()
 
         scored = []
         for r in rows:
@@ -416,12 +432,13 @@ class PersistentMemoryService:
             return False
         query_embedding = embeddings[0]
 
-        rows = self._db.execute(
-            """SELECT id, content, embedding
-               FROM memory_entries
-               WHERE collection = ? AND embedding IS NOT NULL""",
-            (self.collection,),
-        ).fetchall()
+        with self._lock:
+            rows = self._db.execute(
+                """SELECT id, content, embedding
+                   FROM memory_entries
+                   WHERE collection = ? AND embedding IS NOT NULL""",
+                (self.collection,),
+            ).fetchall()
 
         if not rows:
             return False
@@ -540,36 +557,39 @@ class PersistentMemoryService:
 
     def delete_memory(self, entry_id: int) -> None:
         """Delete a single memory entry."""
-        self._db.execute("DELETE FROM memory_entries WHERE id = ?", (entry_id,))
-        self._db.commit()
+        with self._lock:
+            self._db.execute("DELETE FROM memory_entries WHERE id = ?", (entry_id,))
+            self._db.commit()
 
     def clear_collection(self) -> None:
         """Delete all memories for this Wingman's collection."""
-        self._db.execute(
-            "DELETE FROM memory_entries WHERE collection = ?", (self.collection,)
-        )
-        self._db.commit()
+        with self._lock:
+            self._db.execute(
+                "DELETE FROM memory_entries WHERE collection = ?", (self.collection,)
+            )
+            self._db.commit()
 
     def get_all(self, entry_type: str | None = None) -> list[MemoryEntry]:
         """Get all memories for this Wingman's collection."""
-        if entry_type:
-            rows = self._db.execute(
-                """SELECT id, collection, entry_type, content, source_wingman,
-                          session_id, created_at, updated_at
-                   FROM memory_entries
-                   WHERE collection = ? AND entry_type = ?
-                   ORDER BY created_at DESC""",
-                (self.collection, entry_type),
-            ).fetchall()
-        else:
-            rows = self._db.execute(
-                """SELECT id, collection, entry_type, content, source_wingman,
-                          session_id, created_at, updated_at
-                   FROM memory_entries
-                   WHERE collection = ?
-                   ORDER BY created_at DESC""",
-                (self.collection,),
-            ).fetchall()
+        with self._lock:
+            if entry_type:
+                rows = self._db.execute(
+                    """SELECT id, collection, entry_type, content, source_wingman,
+                              session_id, created_at, updated_at
+                       FROM memory_entries
+                       WHERE collection = ? AND entry_type = ?
+                       ORDER BY created_at DESC""",
+                    (self.collection, entry_type),
+                ).fetchall()
+            else:
+                rows = self._db.execute(
+                    """SELECT id, collection, entry_type, content, source_wingman,
+                              session_id, created_at, updated_at
+                       FROM memory_entries
+                       WHERE collection = ?
+                       ORDER BY created_at DESC""",
+                    (self.collection,),
+                ).fetchall()
 
         return [
             MemoryEntry(
@@ -582,9 +602,10 @@ class PersistentMemoryService:
 
     def close(self) -> None:
         """Close the database connection."""
-        if self._db:
-            self._db.close()
-            self._db = None
+        with self._lock:
+            if self._db:
+                self._db.close()
+                self._db = None
 
     def get_tool_definitions(self) -> list[dict]:
         """Return the OpenAI-style tool definitions for persistent memory operations.
@@ -647,14 +668,15 @@ class PersistentMemoryService:
 
     def _find_duplicate(self, embedding: list[float]) -> MemoryEntry | None:
         """Find the most similar existing fact if above DEDUP_THRESHOLD."""
-        rows = self._db.execute(
-            """SELECT id, collection, entry_type, content, embedding,
-                      source_wingman, session_id, created_at, updated_at
-               FROM memory_entries
-               WHERE collection = ? AND entry_type = 'fact'
-               AND embedding IS NOT NULL""",
-            (self.collection,),
-        ).fetchall()
+        with self._lock:
+            rows = self._db.execute(
+                """SELECT id, collection, entry_type, content, embedding,
+                          source_wingman, session_id, created_at, updated_at
+                   FROM memory_entries
+                   WHERE collection = ? AND entry_type = 'fact'
+                   AND embedding IS NOT NULL""",
+                (self.collection,),
+            ).fetchall()
 
         if not rows:
             return None
@@ -682,28 +704,30 @@ class PersistentMemoryService:
     ) -> None:
         """Update an existing entry's content and embedding."""
         now = time.time()
-        self._db.execute(
-            """UPDATE memory_entries
-               SET content = ?, embedding = ?, updated_at = ?
-               WHERE id = ?""",
-            (content, _serialize_embedding(embedding), now, entry_id),
-        )
-        self._db.commit()
+        with self._lock:
+            self._db.execute(
+                """UPDATE memory_entries
+                   SET content = ?, embedding = ?, updated_at = ?
+                   WHERE id = ?""",
+                (content, _serialize_embedding(embedding), now, entry_id),
+            )
+            self._db.commit()
 
     def _enforce_summary_cap(self) -> None:
         """Delete oldest session summaries beyond MAX_SESSION_SUMMARIES."""
-        rows = self._db.execute(
-            """SELECT id FROM memory_entries
-               WHERE collection = ? AND entry_type = 'session_summary'
-               ORDER BY created_at DESC""",
-            (self.collection,),
-        ).fetchall()
+        with self._lock:
+            rows = self._db.execute(
+                """SELECT id FROM memory_entries
+                   WHERE collection = ? AND entry_type = 'session_summary'
+                   ORDER BY created_at DESC""",
+                (self.collection,),
+            ).fetchall()
 
-        if len(rows) > MAX_SESSION_SUMMARIES:
-            to_delete = [r[0] for r in rows[MAX_SESSION_SUMMARIES:]]
-            placeholders = ",".join("?" * len(to_delete))
-            self._db.execute(
-                f"DELETE FROM memory_entries WHERE id IN ({placeholders})",
-                to_delete,
-            )
-            self._db.commit()
+            if len(rows) > MAX_SESSION_SUMMARIES:
+                to_delete = [r[0] for r in rows[MAX_SESSION_SUMMARIES:]]
+                placeholders = ",".join("?" * len(to_delete))
+                self._db.execute(
+                    f"DELETE FROM memory_entries WHERE id IN ({placeholders})",
+                    to_delete,
+                )
+                self._db.commit()

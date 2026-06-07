@@ -2,6 +2,7 @@ import multiprocessing
 import argparse
 import asyncio
 import atexit
+import faulthandler
 from enum import Enum
 from os import path
 import os
@@ -15,6 +16,13 @@ from typing import Any, Literal, get_args, get_origin
 # On macOS, multiprocessing spawns child processes by re-invoking the binary
 # with -c flags. Without this, argparse sees those flags and crashes.
 multiprocessing.freeze_support()
+
+# Diagnostics: dump a Python + all-thread traceback to stderr if the process
+# dies on a native fault (SIGSEGV/SIGABRT/SIGBUS/SIGFPE) from a C extension
+# (llama.cpp/Metal, onnxruntime, torch, PortAudio, SDL). Without this, such a
+# crash is silent and the only sign is a stray "leaked semaphore" warning from
+# the multiprocessing resource_tracker. Cheap and safe to leave enabled.
+faulthandler.enable()
 
 # =============================================================================
 # NVIDIA CUDA DLL PATH SETUP (must be done before any CUDA-dependent imports)
