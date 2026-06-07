@@ -9,7 +9,6 @@ from api.interface import (
     SkillConfig,
     VoiceSelection,
     WingmanInitializationError,
-    ElevenlabsVoiceConfig,
 )
 from api.enums import (
     LogType,
@@ -295,25 +294,11 @@ class RadioChatter(Skill):
         count_message = self.randrange(messages_min, messages_max)
         count_participants = self.randrange(participants_min, participants_max)
 
-        messages = [
-            {
-                "role": "system",
-                "content": get_prompt("radio-chatter").format(
-                    count_participants=count_participants,
-                    count_messages=count_message,
-                ),
-            },
-            {
-                "role": "user",
-                "content": str(prompt),
-            },
-        ]
-        completion = await self.llm_call(messages)
-        messages = (
-            completion.choices[0].message.content
-            if completion and completion.choices
-            else ""
+        system = get_prompt("radio-chatter").format(
+            count_participants=count_participants,
+            count_messages=count_message,
         )
+        messages = await self.wingman.ai.generate(str(prompt), system=system)
 
         if not messages:
             return
@@ -391,7 +376,7 @@ class RadioChatter(Skill):
                 return
 
             # wait for audio_player idling
-            while self.wingman.audio_player.is_playing:
+            while self.wingman.audio.is_playing:
                 time.sleep(2)
 
             if not self.is_active():
@@ -413,7 +398,7 @@ class RadioChatter(Skill):
                     f"Background radio chatter: {text}"
                 )
             max_wait = 10
-            while not self.wingman.audio_player.is_playing or max_wait < 0:
+            while not self.wingman.audio.is_playing or max_wait < 0:
                 time.sleep(0.1)
                 max_wait -= 0.1
             await self._switch_voice(
@@ -424,7 +409,7 @@ class RadioChatter(Skill):
                 openai_compatible_streaming,
             )
 
-        while self.wingman.audio_player.is_playing:
+        while self.wingman.audio.is_playing:
             time.sleep(1)  # stay in function call until last message got played
 
     async def _get_random_voice_index(
@@ -461,81 +446,13 @@ class RadioChatter(Skill):
         if not voice_setting:
             return
 
-        voice_provider = voice_setting.provider
-        voice = voice_setting.voice
-        voice_name = None
-        error = False
-
-        if voice_provider == TtsProvider.WINGMAN_PRO:
-            if voice_setting.subprovider == WingmanProTtsProvider.OPENAI:
-                voice_name = voice.value
-                self.wingman.config.openai.tts_voice = voice
-            elif voice_setting.subprovider == WingmanProTtsProvider.AZURE:
-                voice_name = voice
-                self.wingman.config.azure.tts.voice = voice
-            elif voice_setting.subprovider == WingmanProTtsProvider.INWORLD:
-                voice_name = voice
-                self.wingman.config.inworld.voice_id = voice
-                self.wingman.config.inworld.output_streaming = inworld_streaming
-        elif voice_provider == TtsProvider.OPENAI:
-            voice_name = voice.value
-            self.wingman.config.openai.tts_voice = voice
-        elif voice_provider == TtsProvider.ELEVENLABS:
-            if isinstance(voice, str):
-                # only needed for wingman config restore
-                voice_id = voice.split("id=")[1].strip().strip("'")
-                voice_name = (
-                    voice.split("id=")[0].strip().split("=")[1].strip("'") or voice_id
-                )
-                voice = ElevenlabsVoiceConfig(id=voice_id, name=voice_name)
-            if isinstance(voice, ElevenlabsVoiceConfig):
-                self.wingman.config.elevenlabs.voice = voice
-                voice_name = voice.name or voice.id
-            else:
-                error = True
-            self.wingman.config.elevenlabs.output_streaming = elevenlabs_streaming
-        elif voice_provider == TtsProvider.AZURE:
-            voice_name = voice
-            self.wingman.config.azure.tts.voice = voice
-        elif voice_provider == TtsProvider.XVASYNTH:
-            voice_name = voice.voice_name
-            self.wingman.config.xvasynth.voice = voice
-        elif voice_provider == TtsProvider.EDGE_TTS:
-            voice_name = voice
-            self.wingman.config.edge_tts.voice = voice
-        elif voice_provider == TtsProvider.HUME:
-            voice_name = voice.name
-            self.wingman.config.hume.voice = voice
-        elif voice_provider == TtsProvider.INWORLD:
-            voice_name = voice
-            self.wingman.config.inworld.voice_id = voice
-            self.wingman.config.inworld.output_streaming = inworld_streaming
-        elif voice_provider == TtsProvider.POCKET_TTS:
-            voice_name = voice
-            self.wingman.config.pocket_tts.voice = voice
-            self.wingman.config.pocket_tts.output_streaming = pocket_tts_streaming
-        elif voice_provider == TtsProvider.OPENAI_COMPATIBLE:
-            voice_name = voice
-            self.wingman.config.openai_compatible_tts.voice = voice
-            self.wingman.config.openai_compatible_tts.output_streaming = (
-                openai_compatible_streaming
-            )
-        else:
-            error = True
-
-        if error or not voice_name or not voice_provider:
-            await self.printr.print_async(
-                f"Voice switching failed due to an unknown voice provider/subprovider or different error. Provider: {voice_provider.value}",
-                LogType.ERROR,
-            )
-            return
-
         if self.settings.debug_mode:
-            await self.printr.print_async(
-                f"Switching voice to {voice_name} ({voice_provider.value})"
-            )
+            provider = getattr(voice_setting.provider, "value", voice_setting.provider)
+            await self.printr.print_async(f"Switching radio voice ({provider})")
 
-        await self.wingman.switch_tts_provider(voice_provider)
+        # Apply the voice to the current provider only (no cross-provider switching;
+        # configs are migrated so radio voices match the active provider).
+        await self.wingman.tts.set_voice(voice_setting.voice)
 
     async def _get_original_voice_setting(self) -> VoiceSelection:
         voice_provider = self.wingman.config.features.tts_provider

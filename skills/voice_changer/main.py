@@ -7,11 +7,7 @@ from api.interface import (
     VoiceSelection,
     WingmanInitializationError,
 )
-from api.enums import (
-    LogType,
-    TtsProvider,
-    WingmanProTtsProvider,
-)
+from api.enums import LogType
 from skills.skill_base import Skill, command_action
 
 if TYPE_CHECKING:
@@ -46,8 +42,8 @@ class VoiceChanger(Skill):
         voices: list[VoiceSelection] = self.retrieve_custom_property_value(
             "voice_changer_voices", errors
         )
-        # Provider initialization is handled by ProviderFactory via
-        # switch_tts_provider() at voice-switch time. No pre-init needed.
+        # Voices are applied to the current provider via ctx.tts.set_voice() at
+        # voice-switch time (which rebuilds the TTS instance). No pre-init needed.
 
         return errors
 
@@ -142,11 +138,13 @@ class VoiceChanger(Skill):
             )
 
     async def _switch_voice(self, voices: list[VoiceSelection]) -> str:
-        """Switch voice to the given voice setting."""
+        """Pick a (different) configured voice and set it on the current provider.
 
-        provider_name = None
-
-        # choose voice
+        The sanctioned ctx.tts.set_voice applies the voice to the wingman's CURRENT
+        TTS provider only — no provider switching. Configs are migrated so the voice
+        list only contains voices for the active provider.
+        """
+        # choose a voice different from the current one
         while True:
             index = randrange(len(voices)) - 1
             if (
@@ -165,76 +163,7 @@ class VoiceChanger(Skill):
             )
             return "Voice switching failed due to missing voice settings."
 
-        voice_provider = voice_setting.provider
-        voice = voice_setting.voice
-        voice_name = None
-        error = False
-
-        if voice_provider == TtsProvider.WINGMAN_PRO:
-            if voice_setting.subprovider == WingmanProTtsProvider.OPENAI:
-                voice_name = voice.value
-                provider_name = "Wingman Pro / OpenAI"
-                self.wingman.config.openai.tts_voice = voice
-            elif voice_setting.subprovider == WingmanProTtsProvider.AZURE:
-                voice_name = voice
-                provider_name = "Wingman Pro / Azure TTS"
-                self.wingman.config.azure.tts.voice = voice
-            elif voice_setting.subprovider == WingmanProTtsProvider.INWORLD:
-                voice_name = voice
-                provider_name = "Wingman Pro / Inworld"
-                self.wingman.config.inworld.voice_id = voice
-                self.wingman.config.inworld.output_streaming = False
-        elif voice_provider == TtsProvider.OPENAI:
-            voice_name = voice.value
-            provider_name = "OpenAI"
-            self.wingman.config.openai.tts_voice = voice
-        elif voice_provider == TtsProvider.ELEVENLABS:
-            voice_name = voice.name or voice.id
-            provider_name = "Elevenlabs"
-            self.wingman.config.elevenlabs.voice = voice
-            self.wingman.config.elevenlabs.output_streaming = False
-        elif voice_provider == TtsProvider.AZURE:
-            voice_name = voice
-            provider_name = "Azure TTS"
-            self.wingman.config.azure.tts.voice = voice
-        elif voice_provider == TtsProvider.XVASYNTH:
-            voice_name = voice.voice_name
-            provider_name = "XVASynth"
-            self.wingman.config.xvasynth.voice = voice
-        elif voice_provider == TtsProvider.EDGE_TTS:
-            voice_name = voice
-            provider_name = "Edge TTS"
-            self.wingman.config.edge_tts.voice = voice
-        elif voice_provider == TtsProvider.INWORLD:
-            voice_name = voice
-            self.wingman.config.inworld.voice_id = voice
-            self.wingman.config.inworld.output_streaming = False
-            provider_name = "InWorld"
-        elif voice_provider == TtsProvider.POCKET_TTS:
-            voice_name = voice
-            self.wingman.config.pocket_tts.voice = voice
-            self.wingman.config.pocket_tts.output_streaming = False
-            provider_name = "PocketTTS"
-        elif voice_provider == TtsProvider.OPENAI_COMPATIBLE:
-            voice_name = voice
-            self.wingman.config.openai_compatible_tts.voice = voice
-            self.wingman.config.openai_compatible_tts.output_streaming = False
-            provider_name = "OpenAI Compatible"
-        else:
-            error = True
-
-        if error or not voice_name or not voice_provider:
-            await self.printr.print_async(
-                f"Voice switching failed due to an unknown voice provider/subprovider or different error. Provider: {voice_provider.value}",
-                LogType.ERROR,
-            )
-            return f"Voice switching failed due to an unknown voice provider/subprovider. Provider: {voice_provider.value}"
-
-        await self.wingman.switch_tts_provider(voice_provider)
-        if not provider_name:
-            provider_name = voice_provider.value
-
-        return f"Switched {self.wingman.name}'s voice to {voice_name} ({provider_name})"
+        return await self.wingman.tts.set_voice(voice_setting.voice)
 
     async def _switch_personality(self) -> str:
         # if no next context is available, generate a new one
@@ -253,28 +182,14 @@ class VoiceChanger(Skill):
         if not context_prompt:
             return
 
-        messages = [
-            {
-                "role": "system",
-                "content": """
-                    Generate new context based on the input in the \"You\"-perspective.
-                    Like \"You are a grumpy...\" or \"You are an enthusiastic...\" and so on.
-                    Only output the personality description without additional context or commentary.
-                """,
-            },
-            {
-                "role": "user",
-                "content": context_prompt,
-            },
-        ]
-        completion = await self.llm_call(messages)
-        generated_context = (
-            completion.choices[0].message.content
-            if completion and completion.choices
-            else ""
+        system = """
+            Generate new context based on the input in the "You"-perspective.
+            Like "You are a grumpy..." or "You are an enthusiastic..." and so on.
+            Only output the personality description without additional context or commentary.
+        """
+        self.context_personality_next = await self.wingman.ai.generate(
+            context_prompt, system=system
         )
-
-        self.context_personality_next = generated_context
 
     async def get_prompt(self) -> str | None:
         prompts = []

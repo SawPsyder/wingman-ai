@@ -84,6 +84,15 @@ class ReadOnlyConfigView:
     def __hash__(self) -> int:
         return id(object.__getattribute__(self, "_model"))
 
+    def __deepcopy__(self, memo):
+        # A deep copy detaches from the live config: return a real, MUTABLE copy of
+        # the underlying model. Skills legitimately do
+        # ``copy.deepcopy(ctx.config.sound)`` to build a customized config to pass to
+        # playback — they get an independent object, not a read-only view.
+        import copy
+
+        return copy.deepcopy(object.__getattribute__(self, "_model"), memo)
+
 
 class _ReadOnlyList:
     """Read-only, recursively-wrapping view over a list. Indexing/iteration/len work;

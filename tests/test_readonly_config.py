@@ -101,6 +101,14 @@ def main():
     assert view == model
     assert view.openai == model.openai
 
+    # 10. deepcopy of a read-only view yields a real MUTABLE detached model copy
+    import copy
+    snap = copy.deepcopy(view.openai)
+    assert isinstance(snap, Inner) and not isinstance(snap, ReadOnlyConfigView)
+    snap.voice = "changed"          # must be mutable
+    assert snap.voice == "changed"
+    assert model.openai.voice == "fable"  # live config untouched
+
     print("ALL OK")
 
 
