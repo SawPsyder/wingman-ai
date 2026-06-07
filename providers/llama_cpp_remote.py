@@ -58,7 +58,10 @@ class LlamaCppRemote:
         presence_penalty: float = 2.0,
     ) -> "SupportResult":
         """Process text via remote llama-server support model."""
-        from providers.llama_cpp_provider import SupportResult
+        from providers.llama_cpp_provider import (
+            SupportResult,
+            build_support_extra_body,
+        )
 
         if not system_prompt:
             from services.file import get_prompt
@@ -75,7 +78,9 @@ class LlamaCppRemote:
                 temperature=temperature,
                 top_p=top_p,
                 presence_penalty=presence_penalty,
-                extra_body={"top_k": top_k},
+                extra_body=build_support_extra_body(
+                    top_k, self.settings.reasoning_effort
+                ),
             )
             raw = response.choices[0].message.content
             cleaned = self._deduplicate_lines(raw) if raw else None

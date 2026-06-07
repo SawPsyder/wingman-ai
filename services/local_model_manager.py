@@ -50,8 +50,13 @@ EMBED_MODELS: dict[str, dict] = {
 
 DEFAULT_EMBED_MODEL = EMBED_MODELS["nomic-embed-text-v1.5.f16.gguf"]
 
-# llama-server binary release — update this to get newer llama.cpp features
-LLAMA_SERVER_VERSION = "b8400"
+# llama-server binary release — update this to get newer llama.cpp features.
+# NOTE on disabling Qwen3.5 thinking: older builds (b8400) honored the
+# `--reasoning-budget 0` launch flag, but newer builds (verified b9488) ignore
+# it for this model and require `chat_template_kwargs={"enable_thinking": false}`
+# in the request body instead (see llama_cpp_provider.support / llama_cpp_remote).
+# Both mechanisms are now sent, so this is safe to keep current.
+LLAMA_SERVER_VERSION = "b9488"
 
 # Platform + backend → release asset name
 # On Windows, multiple backends are available; macOS/Linux use one universal build.
