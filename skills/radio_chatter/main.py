@@ -120,10 +120,14 @@ class RadioChatter(Skill):
         return errors
 
     def _get_voices(self) -> list[VoiceSelection]:
-        """Retrieve fresh voices list at runtime."""
+        """Retrieve fresh voices list at runtime, limited to the active TTS provider
+        (cross-provider radio voices are no longer supported)."""
         errors: list[WingmanInitializationError] = []
         voices = self.retrieve_custom_property_value("voices", errors)
-        return voices if voices else []
+        if not voices:
+            return []
+        current_provider = self.wingman.config.features.tts_provider
+        return [v for v in voices if v.provider == current_provider]
 
     def _get_prompt(self) -> str | None:
         """Retrieve fresh prompt at runtime."""

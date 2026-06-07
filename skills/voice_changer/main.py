@@ -144,6 +144,12 @@ class VoiceChanger(Skill):
         TTS provider only — no provider switching. Configs are migrated so the voice
         list only contains voices for the active provider.
         """
+        # Only voices for the active provider are usable (no cross-provider switching).
+        current_provider = self.wingman.config.features.tts_provider
+        voices = [v for v in voices if v.provider == current_provider]
+        if not voices:
+            return "No configured voice matches the current TTS provider."
+
         # choose a voice different from the current one
         while True:
             index = randrange(len(voices)) - 1
