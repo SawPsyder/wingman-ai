@@ -830,7 +830,14 @@ class Skill:
         return False
 
     async def llm_call(self, messages, tools: list[dict] = None) -> any:
-        return any
+        from wingmen.facade import FacadeError
+
+        raise FacadeError(
+            "self.llm_call(...) has been removed. Use the sanctioned, capped call "
+            "instead: `await self.wingman.ai.generate(prompt, system=..., data=..., "
+            "image=...)` for a single-turn side-call. For bulk summarization use the "
+            "local model via `self.local_ai.summarize(...)`."
+        )
 
     async def retrieve_secret(
         self,

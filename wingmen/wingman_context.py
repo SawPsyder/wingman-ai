@@ -4,7 +4,6 @@ from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     from openai.types.chat import ChatCompletion
-    from api.enums import TtsProvider
     from api.interface import SoundConfig, WingmanConfig, SettingsConfig
     from services.audio_player import AudioPlayer
     from wingmen.facade import (
@@ -36,7 +35,15 @@ class WingmanContext:
 
     @property
     def config(self) -> "WingmanConfig":
-        return self._wingman.config
+        """Read-only view of the live wingman config.
+
+        Reads pass through to the live config (always current); any write raises
+        FacadeError. To change something, use a sanctioned capability —
+        ctx.tts.set_voice(...), ctx.audio.*, ctx.commands.*.
+        """
+        from wingmen.facade import ReadOnlyConfigView
+
+        return ReadOnlyConfigView(self._wingman.config)
 
     @property
     def settings(self) -> "SettingsConfig":
@@ -169,33 +176,8 @@ class WingmanContext:
             self._ai = SkillAi(self._wingman)
         return self._ai
 
-    # --- Provider switching (DEPRECATED — removed once skills move to ctx.tts.set_voice) ---
-
-    async def switch_tts_provider(self, provider: "TtsProvider",
-                                  errors: list = None) -> bool:
-        """Hot-swap the TTS provider at runtime.
-
-        Updates config.features.tts_provider and creates a new TTS instance.
-        Used by voice_changer skill.
-        """
-        from services.provider_factory import ProviderFactory
-        old_provider = self._wingman.config.features.tts_provider
-        self._wingman.config.features.tts_provider = provider
-        factory = ProviderFactory(
-            config=self._wingman.config,
-            settings=self._wingman.settings,
-            secret_keeper=self._wingman.secret_keeper,
-            shared_providers=self._wingman._shared_providers,
-            wingman_name=self._wingman.name,
-        )
-        _errors = errors or []
-        new_tts = await factory.create_tts(_errors)
-        if new_tts:
-            self._wingman.tts = new_tts
-            return True
-        # Roll back config on failure
-        self._wingman.config.features.tts_provider = old_provider
-        return False
+    # NOTE: runtime TTS *provider* switching is intentionally NOT offered to skills.
+    # Skills may only change the voice on the current provider via ctx.tts.set_voice(...).
 
     # --- Commands ---
 
