@@ -12,7 +12,7 @@ from api.enums import (
     TtsProvider,
     WingmanProTtsProvider,
 )
-from skills.skill_base import Skill
+from skills.skill_base import Skill, command_action
 
 if TYPE_CHECKING:
     from wingmen.wingman_context import WingmanContext
@@ -109,6 +109,17 @@ class VoiceChanger(Skill):
 
         if last_message_diff >= voice_timespan:
             await self._initiate_change()
+
+    @command_action(
+        label="Switch voice now",
+        description="Immediately switch to a random configured voice, regardless of the timed schedule.",
+        respond="speak",
+    )
+    async def switch_voice_now(self) -> str:
+        voices = self._get_voices()
+        if not voices:
+            return "No voices are configured to switch to."
+        return await self._switch_voice(voices)
 
     async def _initiate_change(self):
         messages = []

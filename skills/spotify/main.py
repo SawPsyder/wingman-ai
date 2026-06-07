@@ -4,7 +4,7 @@ from spotipy.oauth2 import SpotifyOauthError, SpotifyOAuth, SpotifyStateError
 from services.benchmark import Benchmark
 from api.enums import LogSource, LogType
 from api.interface import SettingsConfig, SkillConfig, WingmanInitializationError
-from skills.skill_base import Skill, tool
+from skills.skill_base import Skill, command_action, tool
 from services.file import get_generated_files_dir
 
 if TYPE_CHECKING:
@@ -294,6 +294,11 @@ class Spotify(Skill):
     @tool(
         name="control_spotify_playback",
         description="Control Spotify playback with actions like play, pause, next/previous track, or set volume. Use when user wants to control music: 'play music', 'pause', 'skip', 'volume up'.",
+    )
+    @command_action(
+        label="Control Spotify playback",
+        description="Bind a fixed playback action (play, pause, skip, etc.) to a command. Set 'volume_level' only when the action is 'set_volume'.",
+        respond="speak",
     )
     def control_spotify_playback(
         self,

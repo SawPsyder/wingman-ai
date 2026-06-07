@@ -25,7 +25,7 @@ from api.enums import LogType, WingmanInitializationErrorType
 from api.interface import SettingsConfig, SkillConfig, WingmanInitializationError
 from services.file import get_writable_dir
 from services.printr import Printr
-from skills.skill_base import Skill, tool
+from skills.skill_base import Skill, command_action, tool
 from hud_server.http_client import HudHttpClient
 from hud_server.types import Anchor, HudColor, FontFamily, LayoutMode, MessageProps, PersistentProps, WindowType
 from hud_server.validation import validate_hud_settings
@@ -1289,6 +1289,11 @@ class HUD(Skill):
         return f"Updated info panel: {title}"
 
     @tool()
+    @command_action(
+        label="Hide HUD",
+        description="Hide the HUD elements (they keep updating in the background).",
+        respond="speak",
+    )
     async def hud_hide(self) -> str:
         """
         Hide the HUD elements (message window and persistent info panel).
@@ -1316,6 +1321,11 @@ class HUD(Skill):
         return "HUD is now hidden."
 
     @tool()
+    @command_action(
+        label="Show HUD",
+        description="Show the HUD elements again after hiding them.",
+        respond="speak",
+    )
     async def hud_show(self) -> str:
         """
         Show the HUD elements (message window and persistent info panel).

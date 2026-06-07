@@ -19,7 +19,7 @@ from api.enums import (
     SoundEffect,
 )
 from services.file import get_prompt
-from skills.skill_base import Skill, tool
+from skills.skill_base import Skill, command_action, tool
 
 if TYPE_CHECKING:
     from wingmen.wingman_context import WingmanContext
@@ -222,6 +222,11 @@ class RadioChatter(Skill):
         name="turn_on_radio",
         description="Turn the radio on to pick up ambient chatter on open frequencies. Creates immersive background radio communication. Use when user wants radio ambience or communication atmosphere.",
     )
+    @command_action(
+        label="Turn radio on",
+        description="Start ambient radio chatter on open frequencies.",
+        respond="speak",
+    )
     def turn_on_radio(self) -> str:
         """Turn the radio on."""
         if self.radio_status:
@@ -234,6 +239,11 @@ class RadioChatter(Skill):
         name="turn_off_radio",
         description="Turn the radio off to stop ambient chatter. Use when user wants silence or to disable radio communication sounds.",
     )
+    @command_action(
+        label="Turn radio off",
+        description="Stop ambient radio chatter.",
+        respond="speak",
+    )
     def turn_off_radio(self) -> str:
         """Turn the radio off."""
         if self.radio_status:
@@ -243,6 +253,11 @@ class RadioChatter(Skill):
             return "Radio is already off."
 
     @tool(name="radio_status", description="Get the status (on/off) of the radio.")
+    @command_action(
+        label="Radio status",
+        description="Speak whether the radio is currently on or off.",
+        respond="speak",
+    )
     def get_radio_status(self) -> str:
         """Get the current radio status."""
         if self.radio_status:
