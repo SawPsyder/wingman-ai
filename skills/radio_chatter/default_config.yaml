@@ -1,5 +1,6 @@
 module: skills.radio_chatter.main
 name: RadioChatter
+api_version: 3
 display_name: Radio Chatter
 author: JayMatthew
 tags:

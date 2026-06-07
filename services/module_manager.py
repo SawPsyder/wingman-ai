@@ -57,9 +57,13 @@ class ModuleManager:
         return module_name, module_path
 
     @staticmethod
-    def load_skill(
-        config: SkillConfig, settings: SettingsConfig, wingman: "Wingman"
-    ) -> Skill:
+    def resolve_skill_module(config: SkillConfig):
+        """Resolve and import a skill's Python module WITHOUT instantiating it.
+
+        Mirrors load_skill's 3-tier resolution (sys.path/dev → bundled → custom).
+        Returns the imported module. Raises on import/exec failure or if not found.
+        """
+        from contextlib import contextmanager
 
         @contextmanager
         def add_to_sys_path(path_to_add: str):
@@ -72,7 +76,7 @@ class ModuleManager:
         skill_name, skill_path = ModuleManager.get_module_name_and_path(config.module)
         module = None
 
-        # 1. Try import_module first (works for dev mode or bundled skills in sys.path)
+        # 1. import_module (dev / bundled in sys.path)
         try:
             dependencies_dir = (
                 path.join(skill_path, "venv", "lib", "python3.11", "site-packages")
@@ -85,43 +89,30 @@ class ModuleManager:
         except ModuleNotFoundError:
             pass
 
-        # 2. Try bundled skills directory (for release mode)
+        # 2. bundled skills dir (release)
         if module is None:
             bundled_dir = get_bundled_skills_dir()
             if bundled_dir:
-                # skill_path is like "skills/spotify", we need just "spotify"
                 skill_folder = skill_path.replace("skills/", "").replace("skills\\", "")
                 bundled_skill_path = path.join(bundled_dir, skill_folder)
                 plugin_module_path = path.join(bundled_skill_path, "main.py")
-
                 if path.isfile(plugin_module_path):
                     dependencies_dir = (
-                        path.join(
-                            bundled_skill_path,
-                            "venv",
-                            "lib",
-                            "python3.11",
-                            "site-packages",
-                        )
+                        path.join(bundled_skill_path, "venv", "lib", "python3.11", "site-packages")
                         if sys.platform != "win32"
-                        else path.join(
-                            bundled_skill_path, "venv", "Lib", "site-packages"
-                        )
+                        else path.join(bundled_skill_path, "venv", "Lib", "site-packages")
                     )
                     with add_to_sys_path(dependencies_dir):
-                        spec = util.spec_from_file_location(
-                            skill_name, plugin_module_path
-                        )
+                        spec = util.spec_from_file_location(skill_name, plugin_module_path)
                         module = util.module_from_spec(spec)
                         spec.loader.exec_module(module)
 
-        # 3. Try custom skills directory (for user-created skills)
+        # 3. custom skills dir (user)
         if module is None:
             custom_skills_dir = get_custom_skills_dir()
             skill_folder = skill_path.replace("skills/", "").replace("skills\\", "")
             custom_skill_path = path.join(custom_skills_dir, skill_folder)
             plugin_module_path = path.join(custom_skill_path, "main.py")
-
             if path.isfile(plugin_module_path):
                 dependencies_dir = path.join(custom_skill_path, "dependencies")
                 with add_to_sys_path(dependencies_dir):
@@ -133,10 +124,26 @@ class ModuleManager:
             raise FileNotFoundError(
                 f"Skill '{skill_name}' not found in bundled skills or custom skills directory"
             )
+        return module
 
+    @staticmethod
+    def load_skill(
+        config: SkillConfig, settings: SettingsConfig, wingman: "Wingman"
+    ) -> Skill:
+        module = ModuleManager.resolve_skill_module(config)
         DerivedSkillClass = getattr(module, config.name)
         instance = DerivedSkillClass(config=config, settings=settings, wingman=wingman)
         return instance
+
+    @staticmethod
+    def probe_import(config: SkillConfig) -> None:
+        """Import-probe a skill: resolve its module and confirm its class exists,
+        WITHOUT instantiating. Raises on any failure (caller treats as 'invalid')."""
+        module = ModuleManager.resolve_skill_module(config)
+        if not hasattr(module, config.name):
+            raise AttributeError(
+                f"Skill class '{config.name}' not found in module '{config.module}'"
+            )
 
     @staticmethod
     def _get_untracked_skill_folders(skills_dir: str) -> set[str] | None:

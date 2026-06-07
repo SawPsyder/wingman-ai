@@ -135,6 +135,7 @@ class Wingman:
             wingman_name=name,
             on_reset_history=self.reset_conversation_history,
             on_add_forced_commands=self.conversation.add_forced_assistant_command_calls,
+            on_execute_skill_action=self.execute_skill_command_action,
         )
 
         # --- Metrics service ---
@@ -753,6 +754,16 @@ class Wingman:
             execute_command_fn=self.command_executor.execute_command,
             play_to_user_fn=self.play_to_user,
         )
+
+    async def execute_skill_command_action(
+        self, skill_name: str, function_name: str, parameters: dict
+    ) -> tuple[str, str]:
+        """Invoke a skill's @command_action. Returns (function_response, instant_response).
+        Returns ('', '') if the skill isn't active or the function is unknown."""
+        skill = self.skill_manager.command_action_skills.get((skill_name, function_name))
+        if not skill:
+            return "", ""
+        return await skill.execute_command_action(function_name, parameters)
 
     # ───────────────── Conversation delegation ───────────────── #
 

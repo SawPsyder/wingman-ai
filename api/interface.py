@@ -667,6 +667,15 @@ class CommandJoystickConfig(BaseModel):
     """The joystick GUID to use. Optional."""
 
 
+class CommandSkillActionConfig(BaseModel):
+    skill_name: str
+    """The Skill class name that owns the @command_action function (e.g. 'Timer')."""
+    function_name: str
+    """The @command_action method name to invoke."""
+    parameters: Optional[dict] = None
+    """Static parameter values for the function, keyed by parameter name."""
+
+
 class CommandActionConfig(BaseModel):
     keyboard: Optional[CommandKeyboardConfig] = None
     """The keyboard configuration for this action. Optional."""
@@ -685,6 +694,9 @@ class CommandActionConfig(BaseModel):
 
     joystick: Optional[CommandJoystickConfig] = None
     """The joystick configuration for this action. Optional."""
+
+    skill_action: Optional[CommandSkillActionConfig] = None
+    """Invoke a skill's @command_action function with static parameters. Optional."""
 
 
 class CommandCategoryConfig(BaseModel):
@@ -831,6 +843,13 @@ class SkillConfig(CustomClassConfig):
     - ['screenshots', 'OCR', 'image analysis', 'text recognition']
     - ['flight simulator', 'altitude', 'speed', 'autopilot', 'navigation']
     """
+    api_version: Optional[int] = None
+    """Skill API contract version. Declares which version of the Skill base class +
+    WingmanContext facade this skill targets. Independent of the Wingman app version —
+    it only changes when the skill-facing contract makes a breaking change. Skills
+    without this field are treated as legacy (pre-v3) and are not loaded. Current: 3."""
+    version: Optional[str] = None
+    """Optional skill release version (free-form, e.g. '2.0.1'). Used for telemetry only."""
 
 
 class SkillToolInfo(BaseModel):

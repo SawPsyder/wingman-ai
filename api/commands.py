@@ -164,3 +164,21 @@ class ConversationTokenUsageCommand(WebSocketCommandModel):
     """Tokens in the LLM response."""
     is_local: bool = False
     """True for LOCAL_LLM provider (free, not billed)."""
+
+
+class SkillRegisteredCommand(WebSocketCommandModel):
+    """Sent when a skill registers during Core startup."""
+
+    command: Literal["skill_registered"] = "skill_registered"
+    skill: str
+    """Name of the skill that registered."""
+    origin: str
+    """Where the skill came from: 'bundled' | 'custom'."""
+    outcome: str
+    """Registration outcome: 'ok' | 'failed' | 'quarantined' | 'legacy_v2'."""
+    id_hash: str
+    """Hash of the skill's identity."""
+    version: Optional[str] = None
+    """Skill version if available."""
+    api_version: Optional[int] = None
+    """Skill API version if available."""

@@ -1,5 +1,6 @@
 module: skills.ats_telemetry.main
 name: ATSTelemetry
+api_version: 3
 display_name: Truck Simulator 2 Telemetry
 author: teddybear082
 auto_activate: true

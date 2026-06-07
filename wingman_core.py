@@ -1317,6 +1317,18 @@ class WingmanCore(WebSocketUser):
         if self.is_joystick_configured(config):
             await self.init_joystick(config)
 
+        # Skill pre-flight: gate eligibility once, before any Wingman loads skills.
+        from services.skill_catalog import SkillCatalog
+        from api.commands import SkillRegisteredCommand
+
+        skill_catalog = SkillCatalog()
+        skill_catalog.scan()
+        for rec in skill_catalog.telemetry_records():
+            await self._connection_manager.broadcast(SkillRegisteredCommand(**rec))
+
+        # Auto-disable legacy/incompatible skills that are still enabled in any wingman config.
+        await self.config_service.disable_ineligible_skills(skill_catalog.ineligible_skill_names())
+
         self.tower = Tower(
             config=config,
             config_dir=config_dir_info.config_dir,
@@ -1332,6 +1344,9 @@ class WingmanCore(WebSocketUser):
         self.tower_errors = await self.tower.instantiate_wingmen(
             self.config_manager.settings_config
         )
+
+        for rec in skill_catalog.drain_runtime_records():
+            await self._connection_manager.broadcast(SkillRegisteredCommand(**rec))
 
         for wingman in self.tower.wingmen:
             if isinstance(wingman, OpenAiWingman):

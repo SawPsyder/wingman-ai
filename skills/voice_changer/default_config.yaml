@@ -1,5 +1,6 @@
 module: skills.voice_changer.main
 name: VoiceChanger
+api_version: 3
 display_name: Voice Changer
 author: JayMatthew
 auto_activate: true

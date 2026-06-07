@@ -55,6 +55,8 @@ class WingmanSkillManager:
         self.skills: list[Skill] = []
         self.tool_skills: dict[str, Skill] = {}
         self.skill_tools: list[dict] = []
+        # (skill_name, function_name) -> Skill, for @command_action dispatch
+        self.command_action_skills: dict[tuple[str, str], Skill] = {}
 
     # ──────────────────────────── Private helpers ─────────────────────────────── #
 
@@ -134,6 +136,9 @@ class WingmanSkillManager:
         errors = []
         self.skills = []
 
+        from services.skill_catalog import SkillCatalog
+        catalog = SkillCatalog()
+
         user_skill_configs = self._build_user_skill_configs()
         available_skills = ModuleManager.read_available_skill_configs()
         discoverable_skills = self.config.discoverable_skills
@@ -152,6 +157,10 @@ class WingmanSkillManager:
                     continue
 
                 if skill_config.name not in discoverable_skills:
+                    continue
+
+                if not catalog.is_eligible(skill_folder_name):
+                    # Quarantined/legacy/invalid — never instantiate. Catalog already logged it.
                     continue
 
                 ok, reason = self._check_platform_supported(skill_config)
@@ -185,6 +194,7 @@ class WingmanSkillManager:
                         error_type=WingmanInitializationErrorType.SKILL_INITIALIZATION_FAILED,
                     )
                 )
+                catalog.record_runtime_failure(skill_folder_name, str(e))
 
         if self.skills:
             skill_names = [s.config.name for s in self.skills]
@@ -200,26 +210,47 @@ class WingmanSkillManager:
         return errors
 
     async def prepare_skill(self, skill: Skill):
+        registered_tool_names: list[str] = []
         try:
             for tool_name, tool in skill.get_tools():
                 self.tool_skills[tool_name] = skill
                 self.skill_tools.append(tool)
+                registered_tool_names.append(tool_name)
 
             self.skill_registry.register_skill(skill)
+
+            for fn_name in getattr(skill, "_command_actions", {}):
+                self.command_action_skills[(skill.name, fn_name)] = skill
 
             if skill.config.auto_activate:
                 success, message = await skill.ensure_activated()
                 if not success:
-                    await printr.print_async(
-                        f"Auto-activated skill '{skill.config.display_name}' failed to activate: {message}",
-                        color=LogType.ERROR,
-                    )
+                    raise RuntimeError(f"auto-activation failed: {message}")
         except Exception as e:
+            # Roll back any partial registration so no half-dead skill lingers.
+            for tool_name in registered_tool_names:
+                self.tool_skills.pop(tool_name, None)
+                self.skill_tools = [
+                    t for t in self.skill_tools
+                    if t.get("function", {}).get("name") != tool_name
+                ]
+            try:
+                self.skill_registry.unregister_skill(skill.name)
+            except Exception:
+                pass
+            self.command_action_skills = {
+                k: v for k, v in self.command_action_skills.items() if k[0] != skill.name
+            }
+            if skill in self.skills:
+                self.skills.remove(skill)
             await printr.print_async(
-                f"Error while preparing skill '{skill.name}': {str(e)}",
+                f"Skill '{skill.name}' failed during prepare/activate and was removed: {e}",
                 color=LogType.ERROR,
             )
             printr.print(traceback.format_exc(), color=LogType.ERROR, server_only=True)
+            from services.skill_catalog import SkillCatalog
+            folder = _get_skill_folder_from_module(skill.config.module)
+            SkillCatalog().record_runtime_failure(folder, str(e))
 
         skill.llm_call = self._wingman.actual_llm_call
 
@@ -239,6 +270,9 @@ class WingmanSkillManager:
                 color=LogType.ERROR,
             )
             printr.print(traceback.format_exc(), color=LogType.ERROR, server_only=True)
+        self.command_action_skills = {
+            k: v for k, v in self.command_action_skills.items() if k[0] != skill.name
+        }
         self._sync_conversation_skill_context()
 
     async def enable_skill(self, skill_name: str) -> tuple[bool, str]:
@@ -264,6 +298,10 @@ class WingmanSkillManager:
 
                 if skill_config.name != skill_name:
                     continue
+
+                from services.skill_catalog import SkillCatalog
+                if not SkillCatalog().is_eligible(skill_folder_name):
+                    return False, f"Skill '{skill_name}' is not compatible with this version of Wingman."
 
                 ok, reason = self._check_platform_supported(skill_config)
                 if not ok:
@@ -336,5 +374,6 @@ class WingmanSkillManager:
                 )
         self.tool_skills = {}
         self.skill_tools = []
+        self.command_action_skills = {}
         self.skill_registry.clear()
         self._sync_conversation_skill_context()

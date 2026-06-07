@@ -1,5 +1,6 @@
 module: skills.audio_device_changer.main
 name: AudioDeviceChanger
+api_version: 3
 display_name: Audio Device Changer
 author: ShipBit
 tags:

@@ -1,5 +1,6 @@
 module: skills.hud.main
 name: HUD
+api_version: 3
 display_name: HUD Overlay
 auto_activate: true
 discoverable_by_default: false

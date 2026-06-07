@@ -265,12 +265,109 @@ def tool(
     return decorator
 
 
+# Parameter types renderable as static command-action inputs.
+_ALLOWED_COMMAND_ACTION_JSON_TYPES = {"string", "integer", "number", "boolean"}
+
+
+def _validate_command_action_params(func: Callable, schema: dict) -> None:
+    """Raise ValueError if any parameter isn't a UI-renderable scalar / Literal enum."""
+    props = schema.get("function", {}).get("parameters", {}).get("properties", {})
+    for param_name, param_schema in props.items():
+        json_type = param_schema.get("type")
+        if json_type not in _ALLOWED_COMMAND_ACTION_JSON_TYPES:
+            raise ValueError(
+                f"@command_action '{func.__qualname__}': parameter '{param_name}' has "
+                f"unsupported type for a command action (got JSON type '{json_type}'). "
+                f"Allowed: str, int, float, bool, Literal[...]."
+            )
+
+
+# Where a @command_action's return value goes:
+#   "ai"    -> handed to the AI (it voices/uses it, may paraphrase or chain)
+#   "speak" -> spoken verbatim via TTS (and also given to the AI)
+CommandActionRespond = Literal["ai", "speak"]
+
+
+class CommandActionDefinition:
+    """Metadata for a method registered via @command_action."""
+
+    def __init__(
+        self,
+        func: Callable,
+        label: Optional[str] = None,
+        description: Optional[str] = None,
+        respond: CommandActionRespond = "ai",
+    ):
+        if respond not in ("ai", "speak"):
+            raise ValueError(
+                f"@command_action '{func.__qualname__}': respond must be 'ai' or 'speak', "
+                f"got {respond!r}."
+            )
+        self.func = func
+        self.name = func.__name__
+        self.label = label or func.__name__
+        self.description = description
+        self.respond = respond
+        # UI hint for the command editor: does this action voice a result verbatim?
+        self.speaks = respond == "speak"
+        self.is_async = asyncio.iscoroutinefunction(func)
+        _name, schema = _generate_tool_schema(func, name=self.name, description=description)
+        _validate_command_action_params(func, schema)
+        self.parameters_schema = schema["function"]["parameters"]
+
+    async def execute(self, parameters: dict, skill_instance: "Skill"):
+        # Only pass parameters this function actually declares. Stale/extra keys — e.g. left
+        # over in the command config after switching the selected function in the editor — are
+        # dropped so they can't crash the call with "unexpected keyword argument".
+        allowed = set(self.parameters_schema.get("properties", {}).keys())
+        filtered = {k: v for k, v in (parameters or {}).items() if k in allowed}
+        if self.is_async:
+            return await self.func(skill_instance, **filtered)
+        return self.func(skill_instance, **filtered)
+
+
+def command_action(
+    label: Optional[str] = None,
+    description: Optional[str] = None,
+    respond: CommandActionRespond = "ai",
+):
+    """Decorator: expose a skill method as a user-bindable Command action.
+
+    Distinct from @tool (a function may carry both). Parameters must be scalars
+    (str/int/float/bool) or Literal[...] enums — rendered as static inputs in the command editor.
+
+    Your function returns a plain string (or None); ``respond`` decides where that string goes:
+
+    - ``respond="ai"`` (default): the return is handed to the AI, which voices/uses it (it may
+      paraphrase or chain). Pair with a command's static ``responses`` for a fixed acknowledgment.
+    - ``respond="speak"``: the return is spoken VERBATIM via TTS (no AI roundtrip on instant
+      activation) and also given to the AI. Use for a dynamic, input-dependent spoken reply.
+
+    Returning ``None`` -> the command falls through to its usual "OK" acknowledgment
+    (fire-and-forget), exactly like a keyboard command.
+    """
+
+    def decorator(func: Callable) -> Callable:
+        func._command_action_definition = CommandActionDefinition(
+            func=func, label=label, description=description, respond=respond
+        )
+        return func
+
+    return decorator
+
+
 class Skill:
     """
     Base class for all Wingman AI skills.
 
     DO NOT cache wingman.config or other wingman properties in your skill!
     Access them when needed using self.wingman.config.property_name.
+
+    Skill API contract (v3):
+        Declare `api_version: 3` in your default_config.yaml manifest.
+        Do NOT perform any work at import / module-load time (no network, no file I/O,
+        no global side effects at module scope). All setup belongs in __init__, validate(),
+        or prepare(). Core import-probes your module during catalog scan without instantiating it.
 
     Tool Registration:
         Skills can define tools in two ways:
@@ -325,6 +422,9 @@ class Skill:
         # Collect @tool decorated methods
         self._decorated_tools: dict[str, ToolDefinition] = {}
         self._collect_decorated_tools()
+
+        self._command_actions: dict[str, CommandActionDefinition] = {}
+        self._collect_command_actions()
 
     @property
     def local_ai(self) -> "SkillLocalAI":
@@ -403,6 +503,22 @@ class Skill:
                     self._decorated_tools[tool_def.tool_name] = tool_def
             except Exception:
                 # Skip attributes that can't be inspected
+                pass
+
+    def _collect_command_actions(self) -> None:
+        """Discover @command_action-decorated methods."""
+        for attr_name in dir(self):
+            if attr_name.startswith("_"):
+                continue
+            try:
+                attr = getattr(self, attr_name, None)
+                if attr is None:
+                    continue
+                func = getattr(attr, "__func__", attr)
+                if hasattr(func, "_command_action_definition"):
+                    cad: CommandActionDefinition = func._command_action_definition
+                    self._command_actions[cad.name] = cad
+            except Exception:
                 pass
 
     async def validate(self) -> list[WingmanInitializationError]:
@@ -594,6 +710,43 @@ class Skill:
         Override this method to add dynamic data to context.
         """
         return self.config.prompt or None
+
+    async def execute_command_action(
+        self, function_name: str, parameters: dict
+    ) -> tuple[str, str]:
+        """Execute a @command_action by name. Returns (function_response, instant_response).
+
+        Routing depends on the action's ``respond`` mode:
+        - ``respond="ai"``    -> the return goes to the AI (function_response); nothing spoken verbatim.
+        - ``respond="speak"`` -> the return is spoken verbatim (instant_response) AND given to the AI.
+
+        Returning ``None`` -> ('', '') so the command falls through to its usual "OK"
+        acknowledgment. Returns ('', '') if the function name is unknown.
+        """
+        cad = self._command_actions.get(function_name)
+        if not cad:
+            return "", ""
+        result = await cad.execute(parameters or {}, self)
+        if result is None:
+            return "", ""
+        text = str(result)
+        if cad.respond == "speak":
+            return text, text  # spoken verbatim + the AI is told what was said
+        return text, ""        # respond="ai": hand it to the AI
+
+    def list_command_actions(self) -> list[dict]:
+        """Describe this skill's command-actions for the client editor."""
+        return [
+            {
+                "skill_name": self.name,
+                "function_name": cad.name,
+                "label": cad.label,
+                "description": cad.description,
+                "speaks": cad.speaks,
+                "parameters_schema": cad.parameters_schema,
+            }
+            for cad in self._command_actions.values()
+        ]
 
     async def execute_tool(
         self, tool_name: str, parameters: dict[str, any], benchmark: Benchmark
