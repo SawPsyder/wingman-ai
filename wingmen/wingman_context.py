@@ -8,6 +8,7 @@ if TYPE_CHECKING:
     from api.interface import SoundConfig, WingmanConfig, SettingsConfig
     from services.audio_player import AudioPlayer
     from wingmen.facade import (
+        SkillAi,
         SkillAudio,
         SkillCommands,
         SkillRegistryView,
@@ -25,6 +26,7 @@ class WingmanContext:
         self._audio = None
         self._commands = None
         self._registry = None
+        self._ai = None
 
     # --- Properties ---
 
@@ -154,6 +156,18 @@ class WingmanContext:
 
             self._registry = SkillRegistryView(self._wingman)
         return self._registry
+
+    # --- AI (sanctioned main-model access) ---
+
+    @property
+    def ai(self) -> "SkillAi":
+        """Sanctioned main-model access. ``ctx.ai.generate(...)`` is a capped,
+        single-turn side-call. Use instead of the raw self.llm_call."""
+        if self._ai is None:
+            from wingmen.facade import SkillAi
+
+            self._ai = SkillAi(self._wingman)
+        return self._ai
 
     # --- Provider switching (DEPRECATED — removed once skills move to ctx.tts.set_voice) ---
 

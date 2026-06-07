@@ -592,6 +592,10 @@ class FeaturesConfig(BaseModel):
     condense_keep_recent: int
     """Number of recent user messages (and their associated assistant/tool messages) to
     always keep verbatim. Older messages get condensed into the running summary."""
+    skill_max_input_tokens: int = 16000
+    """Max input tokens a skill may send to the main model in one ctx.ai.generate
+    side-call. Only enforced while ``condense_conversation`` is enabled. Wingman Pro
+    hardcodes a lower limit (8000) that users cannot change."""
 
 
 class AudioFile(BaseModel):

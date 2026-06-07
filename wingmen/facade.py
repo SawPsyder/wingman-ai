@@ -191,6 +191,95 @@ def apply_voice_to_current_provider(config: Any, voice: Any) -> tuple[Any, str] 
     return None
 
 
+# Wingman Pro pays per-use on our dime, so it gets a fixed, lower side-call cap that
+# users cannot raise. Own-provider users use config.features.skill_max_input_tokens.
+WINGMAN_PRO_MAX_INPUT_TOKENS = 8000
+# Flat per-image token estimate — we must NOT count the raw base64 string (it would be
+# enormous and falsely trip the cap). Mirrors a high-detail image's real token cost.
+IMAGE_TOKEN_ESTIMATE = 1000
+
+
+class SkillAi:
+    """Sanctioned access to the main (cloud) AI model for skills.
+
+    ``generate`` is a single-turn side-call: the skill supplies its own prompt/system,
+    the result is NOT added to the conversation, and there's no history/condensation.
+    This is the one chokepoint for the input-token cap (and future per-skill limits).
+    Bulk reduction belongs on the local model (``self.local_ai.summarize``).
+    """
+
+    def __init__(self, wingman: "Wingman") -> None:
+        self._wingman = wingman
+
+    def _max_input_tokens(self) -> int:
+        from api.enums import ConversationProvider
+
+        features = self._wingman.config.features
+        if features.conversation_provider == ConversationProvider.WINGMAN_PRO:
+            return WINGMAN_PRO_MAX_INPUT_TOKENS
+        return getattr(features, "skill_max_input_tokens", 16000)
+
+    async def generate(
+        self,
+        prompt: str,
+        *,
+        system: str | None = None,
+        data: str | None = None,
+        image: str | None = None,
+        auto_shorten: bool = False,
+    ) -> str:
+        """Single-turn generation on the main model. Returns the response text.
+
+        ``prompt`` is the instruction; ``data`` is an optional larger payload appended
+        to it; ``image`` is an optional data-URL for vision. When conversation
+        condensation is enabled the combined input is capped (see class docstring):
+        over the cap raises :class:`FacadeError`, or truncates if ``auto_shorten``.
+        """
+        from services.token_utils import count_tokens, truncate_to_tokens
+
+        features = self._wingman.config.features
+        user_text = prompt if not data else f"{prompt}\n\n{data}"
+
+        if features.condense_conversation:
+            cap = self._max_input_tokens()
+            system_tokens = count_tokens(system) if system else 0
+            image_tokens = IMAGE_TOKEN_ESTIMATE if image else 0
+            total = system_tokens + count_tokens(user_text) + image_tokens
+            if total > cap:
+                if auto_shorten:
+                    budget = max(0, cap - system_tokens - image_tokens)
+                    user_text = truncate_to_tokens(user_text, budget)
+                else:
+                    raise FacadeError(
+                        f"Skill tried to send ~{total} tokens to the main model, but the "
+                        f"limit is {cap}. Reduce the input or pre-summarize it cheaply with "
+                        f"self.local_ai.summarize(...). (On your own AI provider you can raise "
+                        f"features.skill_max_input_tokens or turn off conversation condensation; "
+                        f"on Wingman Pro the limit is fixed.)"
+                    )
+
+        messages: list = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        if image:
+            messages.append(
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": user_text},
+                        {"type": "image_url", "image_url": {"url": image, "detail": "high"}},
+                    ],
+                }
+            )
+        else:
+            messages.append({"role": "user", "content": user_text})
+
+        completion = await self._wingman.actual_llm_call(messages)
+        if completion and completion.choices:
+            return completion.choices[0].message.content or ""
+        return ""
+
+
 class SkillRegistryView:
     """Sanctioned read + invoke over the wingman's tools/commands.
 
