@@ -8,9 +8,12 @@ Skills that legitimately need to change something use a sanctioned capability
 """
 
 from types import MappingProxyType
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
+
+if TYPE_CHECKING:
+    from wingmen.wingman import Wingman
 
 
 class FacadeError(Exception):
@@ -128,3 +131,107 @@ def _wrap(value: Any) -> Any:
         return MappingProxyType({k: _wrap(v) for k, v in value.items()})
     # Scalars, enums, tuples, None, callables (e.g. model_dump) pass through as-is.
     return value
+
+
+def apply_voice_to_current_provider(config: Any, voice: Any) -> tuple[Any, str] | None:
+    """Write ``voice`` into the config field of the wingman's CURRENT TTS provider
+    (and toggle off streaming where the provider requires it).
+
+    Returns ``(voice_name, provider_label)`` for display, or ``None`` if the current
+    provider isn't a supported voice target. Pure: only mutates ``config`` — no I/O,
+    no provider rebuild — so it can be unit-tested in isolation. Provider switching is
+    deliberately NOT handled here; this only ever touches the active provider.
+    """
+    from api.enums import TtsProvider, WingmanProTtsProvider
+
+    provider = config.features.tts_provider
+
+    if provider == TtsProvider.WINGMAN_PRO:
+        # Wingman Pro TTS is only ever Azure or Inworld (per WingmanProTtsProvider).
+        subprovider = config.wingman_pro.tts_provider
+        if subprovider == WingmanProTtsProvider.AZURE:
+            config.azure.tts.voice = voice
+            return voice, "Wingman Pro / Azure TTS"
+        if subprovider == WingmanProTtsProvider.INWORLD:
+            config.inworld.voice_id = voice
+            config.inworld.output_streaming = False
+            return voice, "Wingman Pro / Inworld"
+        return None
+    if provider == TtsProvider.OPENAI:
+        config.openai.tts_voice = voice
+        return getattr(voice, "value", voice), "OpenAI"
+    if provider == TtsProvider.ELEVENLABS:
+        config.elevenlabs.voice = voice
+        config.elevenlabs.output_streaming = False
+        return getattr(voice, "name", None) or getattr(voice, "id", voice), "Elevenlabs"
+    if provider == TtsProvider.AZURE:
+        config.azure.tts.voice = voice
+        return voice, "Azure TTS"
+    if provider == TtsProvider.XVASYNTH:
+        config.xvasynth.voice = voice
+        return getattr(voice, "voice_name", voice), "XVASynth"
+    if provider == TtsProvider.EDGE_TTS:
+        config.edge_tts.voice = voice
+        return voice, "Edge TTS"
+    if provider == TtsProvider.HUME:
+        config.hume.voice = voice
+        return voice, "Hume"
+    if provider == TtsProvider.INWORLD:
+        config.inworld.voice_id = voice
+        config.inworld.output_streaming = False
+        return voice, "InWorld"
+    if provider == TtsProvider.POCKET_TTS:
+        config.pocket_tts.voice = voice
+        config.pocket_tts.output_streaming = False
+        return voice, "PocketTTS"
+    if provider == TtsProvider.OPENAI_COMPATIBLE:
+        config.openai_compatible_tts.voice = voice
+        config.openai_compatible_tts.output_streaming = False
+        return voice, "OpenAI Compatible"
+    return None
+
+
+class SkillTts:
+    """Sanctioned TTS capabilities for skills.
+
+    The ONE thing skills may change about TTS is the voice — on the *currently
+    selected* provider only. Switching the TTS provider at runtime is intentionally
+    not offered (skills must not move a paying user onto a different provider).
+    """
+
+    def __init__(self, wingman: "Wingman") -> None:
+        self._wingman = wingman
+
+    async def set_voice(self, voice: Any, errors: list | None = None) -> str:
+        """Set the voice on the wingman's current TTS provider and rebuild the TTS
+        instance so it takes effect immediately.
+
+        ``voice`` must be a voice value appropriate for the current provider (the
+        same type that provider's config field holds). Returns a human-readable
+        result string suitable for a ``respond="speak"`` command action.
+        """
+        from services.provider_factory import ProviderFactory
+
+        config = self._wingman.config
+        applied = apply_voice_to_current_provider(config, voice)
+        if applied is None:
+            provider = config.features.tts_provider
+            return (
+                "Voice change failed: unsupported TTS provider "
+                f"'{getattr(provider, 'value', provider)}'."
+            )
+        voice_name, provider_label = applied
+
+        # Rebuild the TTS instance so the new voice is used (same provider, no switch).
+        factory = ProviderFactory(
+            config=config,
+            settings=self._wingman.settings,
+            secret_keeper=self._wingman.secret_keeper,
+            shared_providers=self._wingman._shared_providers,
+            wingman_name=self._wingman.name,
+        )
+        new_tts = await factory.create_tts(errors or [])
+        if not new_tts:
+            return "Voice change failed while reinitializing the TTS provider."
+        self._wingman.tts = new_tts
+        return f"Switched {self._wingman.name}'s voice to {voice_name} ({provider_label})."

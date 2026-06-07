@@ -7,6 +7,7 @@ if TYPE_CHECKING:
     from api.enums import TtsProvider
     from api.interface import SoundConfig, WingmanConfig, SettingsConfig
     from services.audio_player import AudioPlayer
+    from wingmen.facade import SkillTts
     from wingmen.wingman import Wingman
 
 
@@ -15,6 +16,7 @@ class WingmanContext:
 
     def __init__(self, wingman: "Wingman"):
         self._wingman = wingman
+        self._tts = None
 
     # --- Properties ---
 
@@ -96,7 +98,22 @@ class WingmanContext:
             config_dir_name=self._wingman.tower.config_dir.name if self._wingman.tower and self._wingman.tower.config_dir and self._wingman.tower.config_dir.name else None,
         )
 
-    # --- Provider switching (for voice_changer and similar) ---
+    # --- TTS (sanctioned voice control) ---
+
+    @property
+    def tts(self) -> "SkillTts":
+        """Sanctioned TTS capabilities (set the voice on the current provider).
+
+        Skills should use ``ctx.tts.set_voice(...)`` instead of mutating config or
+        switching the provider.
+        """
+        if self._tts is None:
+            from wingmen.facade import SkillTts
+
+            self._tts = SkillTts(self._wingman)
+        return self._tts
+
+    # --- Provider switching (DEPRECATED — removed once skills move to ctx.tts.set_voice) ---
 
     async def switch_tts_provider(self, provider: "TtsProvider",
                                   errors: list = None) -> bool:
