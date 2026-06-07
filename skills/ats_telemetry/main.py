@@ -316,26 +316,12 @@ class ATSTelemetry(Skill):
             units_phrase = "Use the metric system like meters, kilometers, kilometers per hour, and kilograms in your responses."
         backstory = self._get_dispatcher_backstory()
         user_content = f"{changed_data}"
-        messages = [
-            {
-                "role": "system",
-                "content": f"""
+        system_content = f"""
                     {backstory}
                     Acting in character at all times, react to the following changed information.
                     {units_phrase}
-                """,
-            },
-            {
-                "role": "user",
-                "content": user_content,
-            },
-        ]
-        completion = await self.llm_call(messages)
-        response = (
-            completion.choices[0].message.content
-            if completion and completion.choices
-            else ""
-        )
+                """
+        response = await self.wingman.ai.generate(user_content, system=system_content)
 
         if not response:
             return

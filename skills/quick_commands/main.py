@@ -85,7 +85,7 @@ class QuickCommands(Skill):
         """Hook to start learning process."""
         if tool_calls:
             self.threaded_execution(
-                self._process_messages, tool_calls, self.wingman.messages[-1]
+                self._process_messages, tool_calls, self.wingman.get_conversation_history()[-1]
             )
 
     async def _process_messages(self, tool_calls, last_message) -> None:
@@ -208,10 +208,7 @@ class QuickCommands(Skill):
 
         commands = self.learning_data[phrase]["commands"]
 
-        messages = [
-            {
-                "role": "system",
-                "content": """
+        system = """
                     I'll give you one or multiple commands and a phrase. You have to decide, if the commands fit to the phrase or not.
                     Return 'yes' if the commands fit to the phrase and 'no' if they dont.
 
@@ -222,15 +219,12 @@ class QuickCommands(Skill):
                     - Phrase: "Yes, please." Command: "enableShields" -> no
                     - Phrase: "We are being attacked by rockets." Command: "throwCountermessures" -> yes
                     - Phrase: "Its way too dark in here." Command: "toggleLight" -> yes
-                """,
-            },
-            {
-                "role": "user",
-                "content": f"Phrase: '{phrase}' Commands: '{', '.join(commands)}'",
-            },
-        ]
-        completion = await self.llm_call(messages)
-        answer = completion.choices[0].message.content or ""
+                """
+        response = await self.wingman.ai.generate(
+            f"Phrase: '{phrase}' Commands: '{', '.join(commands)}'",
+            system=system,
+        )
+        answer = response or ""
         if answer.lower() == "yes":
             await self.printr.print_async(
                 f"Instant activation phrase for '{', '.join(commands)}' learned.",

@@ -350,11 +350,12 @@ class Timer(Skill):
     ) -> str | None:
         if timer.silent:
             return None
-        messages = self.wingman.messages
-        messages.append(
-            {
-                "role": "user",
-                "content": f"""
+        history = self.wingman.get_conversation_history()
+        conversation = "\n".join(
+            f"{message.get('role', '')}: {message.get('content', '')}"
+            for message in history
+        )
+        prompt = f"""
                     Timed "{timer.function_name}" with "{timer.function_arguments}" was executed.
                     Create a small summary of what was executed.
                     Dont mention it was a function call, go by the meaning.
@@ -364,16 +365,13 @@ class Timer(Skill):
                     ```
                     {response}
                     ```
-                """,
-            },
-        )
+                """
         try:
-            completion = await self.llm_call(messages)
-            answer = (
-                completion.choices[0].message.content
-                if completion and completion.choices
-                else ""
+            summary = await self.wingman.ai.generate(
+                prompt,
+                data=conversation,
+                auto_shorten=True,
             )
-            return answer
+            return summary
         except Exception:
             return None
