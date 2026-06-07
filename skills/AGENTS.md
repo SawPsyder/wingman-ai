@@ -224,11 +224,41 @@ async def unload(self) -> None
 ```python
 self.retrieve_custom_property_value(property_id, errors)  # Config value (just-in-time!)
 await self.retrieve_secret(secret_name, errors, hint)      # Secrets via SecretKeeper
-self.wingman.config                                        # Wingman configuration
-self.wingman.audio_player                                  # Audio player
+self.wingman.config                                        # READ-ONLY view of the config
 self.printr.print() / await self.printr.print_async()      # Logging
 self.get_generated_files_dir()                             # Persistent storage directory
 ```
+
+### The facade — what you may read vs. change
+
+`self.wingman` is a **controlled facade** (`WingmanContext`). You can **read** almost everything,
+but you may only **change** things through sanctioned capabilities. Writing to config raises
+`FacadeError` with guidance.
+
+```python
+# READ (free): self.wingman.config.<...>  — live, read-only. Writing raises FacadeError.
+#   copy.deepcopy(self.wingman.config.sound) gives a mutable detached copy if you need to customize.
+
+# CHANGE (sanctioned capabilities only):
+await self.wingman.tts.set_voice(voice)                 # voice on the CURRENT provider (no switching)
+self.wingman.audio.is_playing                           # read playback state
+await self.wingman.audio.play(cfg) / .stop(cfg)         # play/stop your own audio
+self.wingman.audio.on_playback_started(cb) / .on_playback_finished(cb)  # + off_* to unsubscribe
+await self.wingman.audio.set_output_device(device_id)   # switch output device in-process
+self.wingman.commands.get(name) / .all() / await .save()  # read/edit/persist commands
+self.wingman.registry.has_tool(name) / await .invoke(name, args)  # discover + invoke tools/commands
+
+# MAIN AI — two clearly-different calls (both replace the removed self.llm_call):
+text = await self.wingman.ai.generate(prompt, system=..., data=..., image=..., auto_shorten=False)
+#   single-turn side-call, NOT added to the conversation. Input is CAPPED when conversation
+#   condensation is on (Wingman Pro hardcoded; own providers config.features.skill_max_input_tokens).
+#   Over the cap -> FacadeError (or truncates if auto_shorten=True). Images are charged a flat
+#   estimate, never the base64 length.
+summary = await self.local_ai.summarize(...)            # bulk reduction on the FREE local model
+```
+
+**Removed (do NOT use):** `self.llm_call(...)` (use `ctx.ai.generate`), `self.wingman.switch_tts_provider(...)`
+(runtime provider switching is not allowed), and writing to `self.wingman.config` (use the capabilities above).
 
 ## Local Support Model — Sampling Parameters
 
