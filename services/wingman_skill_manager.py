@@ -252,7 +252,8 @@ class WingmanSkillManager:
             folder = _get_skill_folder_from_module(skill.config.module)
             SkillCatalog().record_runtime_failure(folder, str(e))
 
-        skill.llm_call = self._wingman.actual_llm_call
+        # Raw self.llm_call is no longer injected; skills use the capped, sanctioned
+        # ctx.ai.generate(...) side-call (see Skill.llm_call below for the guidance error).
 
     async def unprepare_skill(self, skill: Skill):
         try:

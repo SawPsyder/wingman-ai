@@ -37,9 +37,11 @@ class Tower:
         parakeet: Parakeet,
         xvasynth: XVASynth,
         pocket_tts: PocketTTS,
+        settings_service=None,
     ):
         self.audio_player = audio_player
         self.audio_library = audio_library
+        self.settings_service = settings_service
         self.config = config
         self.config_dir = config_dir
         self.config_manager = config_manager
@@ -120,6 +122,7 @@ class Tower:
                 xvasynth=self.xvasynth,
                 pocket_tts=self.pocket_tts,
                 tower=self,
+                settings_service=self.settings_service,
             )
         except FileNotFoundError as e:  # pylint: disable=broad-except
             wingman_config.disabled = True

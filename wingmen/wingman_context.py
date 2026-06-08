@@ -4,9 +4,15 @@ from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     from openai.types.chat import ChatCompletion
-    from api.enums import TtsProvider
     from api.interface import SoundConfig, WingmanConfig, SettingsConfig
     from services.audio_player import AudioPlayer
+    from wingmen.facade import (
+        SkillAi,
+        SkillAudio,
+        SkillCommands,
+        SkillRegistryView,
+        SkillTts,
+    )
     from wingmen.wingman import Wingman
 
 
@@ -15,6 +21,11 @@ class WingmanContext:
 
     def __init__(self, wingman: "Wingman"):
         self._wingman = wingman
+        self._tts = None
+        self._audio = None
+        self._commands = None
+        self._registry = None
+        self._ai = None
 
     # --- Properties ---
 
@@ -24,7 +35,15 @@ class WingmanContext:
 
     @property
     def config(self) -> "WingmanConfig":
-        return self._wingman.config
+        """Read-only view of the live wingman config.
+
+        Reads pass through to the live config (always current); any write raises
+        FacadeError. To change something, use a sanctioned capability —
+        ctx.tts.set_voice(...), ctx.audio.*, ctx.commands.*.
+        """
+        from wingmen.facade import ReadOnlyConfigView
+
+        return ReadOnlyConfigView(self._wingman.config)
 
     @property
     def settings(self) -> "SettingsConfig":
@@ -96,33 +115,69 @@ class WingmanContext:
             config_dir_name=self._wingman.tower.config_dir.name if self._wingman.tower and self._wingman.tower.config_dir and self._wingman.tower.config_dir.name else None,
         )
 
-    # --- Provider switching (for voice_changer and similar) ---
+    # --- TTS (sanctioned voice control) ---
 
-    async def switch_tts_provider(self, provider: "TtsProvider",
-                                  errors: list = None) -> bool:
-        """Hot-swap the TTS provider at runtime.
+    @property
+    def tts(self) -> "SkillTts":
+        """Sanctioned TTS capabilities (set the voice on the current provider).
 
-        Updates config.features.tts_provider and creates a new TTS instance.
-        Used by voice_changer skill.
+        Skills should use ``ctx.tts.set_voice(...)`` instead of mutating config or
+        switching the provider.
         """
-        from services.provider_factory import ProviderFactory
-        old_provider = self._wingman.config.features.tts_provider
-        self._wingman.config.features.tts_provider = provider
-        factory = ProviderFactory(
-            config=self._wingman.config,
-            settings=self._wingman.settings,
-            secret_keeper=self._wingman.secret_keeper,
-            shared_providers=self._wingman._shared_providers,
-            wingman_name=self._wingman.name,
-        )
-        _errors = errors or []
-        new_tts = await factory.create_tts(_errors)
-        if new_tts:
-            self._wingman.tts = new_tts
-            return True
-        # Roll back config on failure
-        self._wingman.config.features.tts_provider = old_provider
-        return False
+        if self._tts is None:
+            from wingmen.facade import SkillTts
+
+            self._tts = SkillTts(self._wingman)
+        return self._tts
+
+    # --- Audio (sanctioned playback control) ---
+
+    @property
+    def audio(self) -> "SkillAudio":
+        """Sanctioned audio capabilities (play/stop skill audio, observe playback,
+        read is_playing). Use instead of the raw audio_player/audio_library."""
+        if self._audio is None:
+            from wingmen.facade import SkillAudio
+
+            self._audio = SkillAudio(self._wingman)
+        return self._audio
+
+    # --- Commands (sanctioned read + edit + persist) ---
+
+    @property
+    def commands(self) -> "SkillCommands":
+        """Sanctioned access to the wingman's commands (get/all/save)."""
+        if self._commands is None:
+            from wingmen.facade import SkillCommands
+
+            self._commands = SkillCommands(self._wingman)
+        return self._commands
+
+    # --- Registry (sanctioned tool/command discovery + invoke) ---
+
+    @property
+    def registry(self) -> "SkillRegistryView":
+        """Sanctioned access to discover tools/commands and invoke one by name."""
+        if self._registry is None:
+            from wingmen.facade import SkillRegistryView
+
+            self._registry = SkillRegistryView(self._wingman)
+        return self._registry
+
+    # --- AI (sanctioned main-model access) ---
+
+    @property
+    def ai(self) -> "SkillAi":
+        """Sanctioned main-model access. ``ctx.ai.generate(...)`` is a capped,
+        single-turn side-call. Use instead of the raw self.llm_call."""
+        if self._ai is None:
+            from wingmen.facade import SkillAi
+
+            self._ai = SkillAi(self._wingman)
+        return self._ai
+
+    # NOTE: runtime TTS *provider* switching is intentionally NOT offered to skills.
+    # Skills may only change the voice on the current provider via ctx.tts.set_voice(...).
 
     # --- Commands ---
 

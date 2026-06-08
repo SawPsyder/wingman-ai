@@ -1340,6 +1340,7 @@ class WingmanCore(WebSocketUser):
             parakeet=self.parakeet,
             xvasynth=self.xvasynth,
             pocket_tts=self.pocket_tts,
+            settings_service=self.settings_service,
         )
         self.tower_errors = await self.tower.instantiate_wingmen(
             self.config_manager.settings_config

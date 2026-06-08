@@ -197,6 +197,22 @@ class ToolExecutor:
                         tool_name=function_name,
                     )
 
+                # Hard backstop: even when compression is off or unavailable, never feed
+                # an oversized tool/MCP response to the (paid) main model. Same cap + gating
+                # as ctx.ai.generate. Truncate (not reject) — the tool already executed.
+                if self._config.features.condense_conversation:
+                    from wingmen.facade import skill_input_cap
+                    from services.token_utils import count_tokens, truncate_to_tokens
+
+                    cap = skill_input_cap(self._config)
+                    resp_str = str(function_response)
+                    if count_tokens(resp_str) > cap:
+                        function_response = (
+                            truncate_to_tokens(resp_str, cap)
+                            + "\n\n[response truncated: exceeded the per-response token "
+                            "limit — compress or paginate]"
+                        )
+
                 if tool_call.id:
                     # updating the dummy tool response with the actual response
                     await update_tool_response_fn(tool_call.id, function_response)

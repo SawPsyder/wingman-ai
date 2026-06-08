@@ -97,6 +97,7 @@ class Wingman:
         xvasynth=None,
         pocket_tts=None,
         tower: "Tower" = None,
+        settings_service=None,
     ):
         self.config = config
         self.settings = settings
@@ -104,6 +105,9 @@ class Wingman:
         self.audio_player = audio_player
         self.audio_library = audio_library
         self.tower = tower
+        # Used by the sanctioned ctx.audio.set_output_device capability (in-process,
+        # replacing AudioDeviceChanger's HTTP-to-localhost hack). May be None in tests.
+        self.settings_service = settings_service
 
         self.secret_keeper = SecretKeeper()
         self.secret_keeper.secret_events.subscribe(

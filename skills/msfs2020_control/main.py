@@ -348,28 +348,16 @@ class Msfs2020Control(Skill):
             on_ground_statement = "The plane is currently on the ground."
         backstory = self._get_data_monitoring_backstory()
         user_content = f"{on_ground_statement}  Information about the location: {data}"
-        messages = [
-            {
-                "role": "system",
-                "content": f"""
+        system_content = f"""
                     {backstory}
-                """,
-            },
-            {
-                "role": "user",
-                "content": user_content,
-            },
-        ]
+                """
         if self.settings.debug_mode:
             await self.printr.print_async(
                 f"Attempting LLM call with parameters: {backstory}, {user_content}.",
                 color=LogType.INFO,
             )
-        completion = await self.llm_call(messages)
-        response = (
-            completion.choices[0].message.content
-            if completion and completion.choices
-            else ""
+        response = await self.wingman.ai.generate(
+            user_content, system=system_content, auto_shorten=True
         )
 
         if not response:
