@@ -105,10 +105,18 @@ class PocketTTS:
         self._loading = False
         self.on_model_reloaded: Optional[Callable[[], None]] = None
         # Two layers of serialization for v2's explicitly-non-thread-safe TTSModel:
-        # - _async_gen_lock: only one coroutine may synthesize at a time
+        # - _async_gen_lock: only one coroutine may synthesize at a time. This
+        #   singleton outlives any single event loop: push-to-talk interactions
+        #   each run on their own loop (see the asyncio.new_event_loop() handlers
+        #   in wingman_core). An asyncio.Lock binds to the loop it is first used
+        #   on and raises "bound to a different event loop" everywhere else, so
+        #   we keep one lock per loop, created on demand in _gen_lock(). This
+        #   only needs to prevent same-loop re-entrancy (which could deadlock on
+        #   _model_swap_lock); cross-thread model safety is _model_swap_lock's job.
         # - _model_swap_lock: reload (daemon thread) waits for in-flight
         #   generation (executor / audio callback threads) before unloading.
-        self._async_gen_lock = asyncio.Lock()
+        self._async_gen_lock: Optional[asyncio.Lock] = None
+        self._async_gen_lock_loop: Optional[asyncio.AbstractEventLoop] = None
         self._model_swap_lock = threading.Lock()
 
         # Precompute progress state — surfaced via get_status() so the UI can
@@ -720,6 +728,24 @@ class PocketTTS:
             )
             raise ValueError(f"Voice '{voice_id_or_path}' could not be loaded.") from e
 
+    def _gen_lock(self) -> asyncio.Lock:
+        """Return an ``asyncio.Lock`` bound to the *current* running loop.
+
+        The provider is a long-lived singleton, but synthesis can be awaited
+        from different event loops over the app's lifetime (each push-to-talk
+        handler thread creates its own loop). An ``asyncio.Lock`` is bound to
+        the loop it is first used on and raises "bound to a different event
+        loop" if awaited elsewhere, so we lazily (re)create the lock whenever
+        the running loop changes. Same-loop callers always get the same lock,
+        preserving the re-entrancy guard that keeps the event-loop thread from
+        deadlocking on ``_model_swap_lock``.
+        """
+        loop = asyncio.get_running_loop()
+        if self._async_gen_lock is None or self._async_gen_lock_loop is not loop:
+            self._async_gen_lock = asyncio.Lock()
+            self._async_gen_lock_loop = loop
+        return self._async_gen_lock
+
     async def play_audio(
         self,
         text: str,
@@ -763,8 +789,10 @@ class PocketTTS:
             voice_state = self.get_voice_state(voice_id)
 
             # v2's TTSModel is not thread-safe; serialize concurrent synthesis
-            # from multiple wingmen sharing this singleton.
-            async with self._async_gen_lock:
+            # from multiple wingmen sharing this singleton. The lock is bound to
+            # the current running loop (see _gen_lock) so this works across the
+            # per-interaction event loops the app uses.
+            async with self._gen_lock():
                 if config.output_streaming:
                     await self._stream_audio(
                         text, voice_state, sound_config, audio_player, wingman_name
