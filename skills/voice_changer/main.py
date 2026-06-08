@@ -194,7 +194,7 @@ class VoiceChanger(Skill):
             Only output the personality description without additional context or commentary.
         """
         self.context_personality_next = await self.wingman.ai.generate(
-            context_prompt, system=system
+            context_prompt, system=system, auto_shorten=True
         )
 
     async def get_prompt(self) -> str | None:

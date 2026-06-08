@@ -321,7 +321,9 @@ class ATSTelemetry(Skill):
                     Acting in character at all times, react to the following changed information.
                     {units_phrase}
                 """
-        response = await self.wingman.ai.generate(user_content, system=system_content)
+        response = await self.wingman.ai.generate(
+            user_content, system=system_content, auto_shorten=True
+        )
 
         if not response:
             return

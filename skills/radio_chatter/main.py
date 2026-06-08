@@ -120,14 +120,10 @@ class RadioChatter(Skill):
         return errors
 
     def _get_voices(self) -> list[VoiceSelection]:
-        """Retrieve fresh voices list at runtime, limited to the active TTS provider
-        (cross-provider radio voices are no longer supported)."""
+        """Retrieve fresh voices list at runtime."""
         errors: list[WingmanInitializationError] = []
         voices = self.retrieve_custom_property_value("voices", errors)
-        if not voices:
-            return []
-        current_provider = self.wingman.config.features.tts_provider
-        return [v for v in voices if v.provider == current_provider]
+        return voices if voices else []
 
     def _get_prompt(self) -> str | None:
         """Retrieve fresh prompt at runtime."""
@@ -302,7 +298,11 @@ class RadioChatter(Skill):
             count_participants=count_participants,
             count_messages=count_message,
         )
-        messages = await self.wingman.ai.generate(str(prompt), system=system)
+        # auto_shorten so a large radio prompt is truncated to the cap rather than
+        # raising (which, in this background thread, would silently kill the loop).
+        messages = await self.wingman.ai.generate(
+            str(prompt), system=system, auto_shorten=True
+        )
 
         if not messages:
             return
@@ -450,12 +450,23 @@ class RadioChatter(Skill):
         if not voice_setting:
             return
 
-        if self.settings.debug_mode:
-            provider = getattr(voice_setting.provider, "value", voice_setting.provider)
-            await self.printr.print_async(f"Switching radio voice ({provider})")
+        # Cross-provider switching was removed: we can only set a voice that belongs to
+        # the wingman's CURRENT TTS provider. Voices for other providers are skipped
+        # (that participant just keeps the current voice) — chatter still plays.
+        current_provider = self.wingman.config.features.tts_provider
+        if voice_setting.provider != current_provider:
+            if self.settings.debug_mode:
+                await self.printr.print_async(
+                    f"Radio: skipping voice for {getattr(voice_setting.provider, 'value', voice_setting.provider)} "
+                    f"(current provider is {getattr(current_provider, 'value', current_provider)})"
+                )
+            return
 
-        # Apply the voice to the current provider only (no cross-provider switching;
-        # configs are migrated so radio voices match the active provider).
+        if self.settings.debug_mode:
+            await self.printr.print_async(
+                f"Switching radio voice ({getattr(current_provider, 'value', current_provider)})"
+            )
+
         await self.wingman.tts.set_voice(voice_setting.voice)
 
     async def _get_original_voice_setting(self) -> VoiceSelection:

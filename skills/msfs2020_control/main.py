@@ -356,7 +356,9 @@ class Msfs2020Control(Skill):
                 f"Attempting LLM call with parameters: {backstory}, {user_content}.",
                 color=LogType.INFO,
             )
-        response = await self.wingman.ai.generate(user_content, system=system_content)
+        response = await self.wingman.ai.generate(
+            user_content, system=system_content, auto_shorten=True
+        )
 
         if not response:
             if self.settings.debug_mode:
