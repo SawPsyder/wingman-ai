@@ -87,24 +87,6 @@ def get_audio_library_dir() -> str:
     return audio_library_path
 
 
-def get_local_models_dir() -> str:
-    """Get the path to the local AI models directory.
-
-    NOT versioned - models persist across Wingman AI updates.
-    Location: APPDATA/WingmanAI/local_models/
-    """
-    dirs = PlatformDirs(
-        appname=APP_NAME,
-        appauthor=APP_AUTHOR,
-        ensure_exists=True,
-        roaming=True,
-    )
-    local_models_path = path.join(dirs.user_data_dir, "local_models")
-    if not path.exists(local_models_path):
-        makedirs(local_models_path)
-    return local_models_path
-
-
 def get_models_dir() -> str:
     """Get the path to the unified models directory.
 

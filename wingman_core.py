@@ -69,7 +69,6 @@ from services.file import (
     get_audio_library_dir,
     get_custom_voices_dir,
     get_custom_skills_dir,
-    get_local_models_dir,
     get_models_dir,
     get_pocket_tts_models_dir,
     get_prompt,
@@ -2570,7 +2569,7 @@ class WingmanCore(WebSocketUser):
 
     # POST /open-filemanager/local-models
     def open_local_models_directory(self):
-        show_in_file_manager(get_local_models_dir())
+        show_in_file_manager(get_models_dir())
 
     # POST /open-filemanager/custom-skills
     def open_custom_skills_directory(self):
