@@ -7,8 +7,9 @@ Skills that legitimately need to change something use a sanctioned capability
 (e.g. ``ctx.tts.set_voice(...)``) instead of mutating config by reference.
 """
 
+from dataclasses import dataclass
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable, Optional
 
 from pydantic import BaseModel
 
@@ -22,6 +23,59 @@ class FacadeError(Exception):
     The message always names the sanctioned capability to use instead, so a skill
     author gets actionable feedback (we don't gate the catalog on this).
     """
+
+
+@dataclass
+class ToolResult:
+    """Result of ctx.tools.invoke(). `response` is fed to the AI; `instant_response`
+    is spoken verbatim if present; `skill`/`label` identify what ran."""
+    response: str
+    instant_response: str = ""
+    skill: Optional[str] = None
+    label: Optional[str] = None
+
+
+@dataclass
+class ToolDescriptor:
+    """Describes one callable function available to the wingman (skill tool, MCP tool,
+    or command). `parameters` is the JSON-schema object for its arguments."""
+    name: str
+    source: Optional[str]
+    description: Optional[str]
+    parameters: dict
+
+
+class Subscription:
+    """Handle returned by ctx.audio.on_playback_*; call unsubscribe() to detach."""
+
+    __slots__ = ("_off", "_done")
+
+    def __init__(self, off: Callable[[], None]) -> None:
+        self._off = off
+        self._done = False
+
+    def unsubscribe(self) -> None:
+        """Detach the callback. Safe to call more than once."""
+        if not self._done:
+            self._done = True
+            self._off()
+
+
+class CommandCategory:
+    """A command category (group) the user sees. Wraps a CommandCategoryConfig."""
+
+    __slots__ = ("id", "name", "_commands")
+
+    def __init__(self, id: str, name: str, commands: Optional[list] = None) -> None:
+        self.id = id
+        self.name = name
+        self._commands = commands if commands is not None else []
+
+    def add(self, command) -> None:
+        """Put a command in this category (sets its category_id)."""
+        command.category_id = self.id
+        if command not in self._commands:
+            self._commands.append(command)
 
 
 class ReadOnlyConfigView:
@@ -220,6 +274,27 @@ def skill_input_cap(config: Any) -> int:
     return getattr(features, "skill_max_input_tokens", 16000)
 
 
+def _count_message_tokens(messages: list) -> int:
+    """Token count of a prebuilt message list — string contents are counted directly;
+    multimodal image parts are charged a flat IMAGE_TOKEN_ESTIMATE (never the base64)."""
+    from services.token_utils import count_tokens
+
+    total = 0
+    for message in messages:
+        content = message.get("content") if isinstance(message, dict) else None
+        if isinstance(content, str):
+            total += count_tokens(content)
+        elif isinstance(content, list):
+            for part in content:
+                if not isinstance(part, dict):
+                    continue
+                if part.get("type") == "text":
+                    total += count_tokens(part.get("text", ""))
+                elif part.get("type") == "image_url":
+                    total += IMAGE_TOKEN_ESTIMATE
+    return total
+
+
 class SkillAi:
     """Sanctioned access to the main (cloud) AI model for skills.
 
@@ -237,23 +312,47 @@ class SkillAi:
 
     async def generate(
         self,
-        prompt: str,
+        prompt: str = "",
         *,
         system: str | None = None,
         data: str | None = None,
         image: str | None = None,
+        messages: list | None = None,
         auto_shorten: bool = False,
     ) -> str:
         """Single-turn generation on the main model. Returns the response text.
 
         ``prompt`` is the instruction; ``data`` is an optional larger payload appended
-        to it; ``image`` is an optional data-URL for vision. When conversation
+        to it; ``image`` is an optional data-URL for vision. Pass ``messages`` (a prebuilt
+        OpenAI-style message list) to send your own turns directly — it is sent as-is and
+        ``prompt``/``system``/``data``/``image`` are ignored. When conversation
         condensation is enabled the combined input is capped (see class docstring):
-        over the cap raises :class:`FacadeError`, or truncates if ``auto_shorten``.
+        over the cap raises :class:`FacadeError`, or (for the prompt/data path) truncates
+        if ``auto_shorten``. The ``messages`` path can't be auto-shortened — it raises.
         """
         from services.token_utils import count_tokens, truncate_to_tokens
 
         features = self._wingman.config.features
+
+        # Prebuilt message-list path: send the skill's own turns directly (still capped).
+        if messages is not None:
+            if features.condense_conversation:
+                cap = self._max_input_tokens()
+                total = _count_message_tokens(messages)
+                if total > cap:
+                    raise FacadeError(
+                        f"Skill tried to send ~{total} tokens to the main model, but the "
+                        f"limit is {cap}. Reduce the messages or pre-summarize them cheaply "
+                        f"with self.local_ai.summarize(...). (A structured message list can't "
+                        f"be auto-shortened — trim it yourself. On your own AI provider you can "
+                        f"raise features.skill_max_input_tokens or turn off condensation; on "
+                        f"Wingman Pro the limit is fixed.)"
+                    )
+            completion = await self._wingman.actual_llm_call(messages)
+            if completion and completion.choices:
+                return completion.choices[0].message.content or ""
+            return ""
+
         user_text = prompt if not data else f"{prompt}\n\n{data}"
 
         if features.condense_conversation:
@@ -295,38 +394,201 @@ class SkillAi:
             return completion.choices[0].message.content or ""
         return ""
 
+    async def converse(self, user_message: str) -> str:
+        """Conversation-aware reply: uses the wingman's own system prompt + live history
+        and is subject to the normal auto-condensation. Use generate() for off-topic
+        side work that should NOT join the conversation."""
+        await self._wingman.add_user_message(user_message)
+        messages = list(self._wingman.conversation.messages)
+        completion = await self._wingman.actual_llm_call(messages)
+        text = ""
+        if completion and completion.choices:
+            text = completion.choices[0].message.content or ""
+        if text:
+            await self._wingman.conversation.add_assistant_message(text)
+        return text
 
-class SkillRegistryView:
-    """Sanctioned read + invoke over the wingman's tools/commands.
+    async def summarize(self, text: str, *, system: str | None = None) -> str:
+        """Summarize text via the main CLOUD model (capped like generate). For bulk/cheap
+        summarization prefer ctx.local_ai.summarize() (free, local)."""
+        return await self.generate(text, system=system or "Summarize the following concisely.")
 
-    Lets a skill discover which tool functions exist and invoke one (or a command)
-    by name — without reaching into build_tools()/the renamed internal dispatcher.
-    The invoke surface is deliberately scoped to enumerable tools/commands, not
-    arbitrary attribute calls.
-    """
+    async def generate_image(self, prompt: str) -> str:
+        """Generate an image from a prompt; returns the generated file path/URL."""
+        return await self._wingman.generate_image(prompt)
+
+
+def _text_or_empty(resp) -> str:
+    return resp.text if resp is not None and getattr(resp, "text", None) else ""
+
+
+class SkillLocalAiView:
+    """Free, local model. generate()/summarize() return plain strings ("" if the local
+    model is unavailable — check `available`). Tune with a SamplingPreset or temperature/top_p."""
+
+    def __init__(self, local_ai) -> None:
+        self._la = local_ai
+
+    @property
+    def available(self) -> bool:
+        return bool(self._la.available)
+
+    async def generate(self, text: str, *, system: str = "", preset=None,
+                       temperature=None, top_p=None, top_k=None) -> str:
+        resp = await self._la.support(text, system_prompt=system, preset=preset,
+                                      temperature=temperature, top_p=top_p, top_k=top_k)
+        return _text_or_empty(resp)
+
+    def generate_sync(self, text: str, *, system: str = "", preset=None,
+                     temperature=None, top_p=None, top_k=None) -> str:
+        resp = self._la.support_sync(text, system_prompt=system, preset=preset,
+                                     temperature=temperature, top_p=top_p, top_k=top_k)
+        return _text_or_empty(resp)
+
+    async def summarize(self, text: str, *, instruction: str = "", preset=None,
+                       temperature=None, top_p=None) -> str:
+        resp = await self._la.summarize(text, instruction=instruction, preset=preset,
+                                        temperature=temperature, top_p=top_p)
+        return _text_or_empty(resp)
+
+    def summarize_sync(self, text: str, *, instruction: str = "", preset=None,
+                      temperature=None, top_p=None) -> str:
+        resp = self._la.summarize_sync(text, instruction=instruction, preset=preset,
+                                       temperature=temperature, top_p=top_p)
+        return _text_or_empty(resp)
+
+    async def embed(self, texts: list[str]):
+        return await self._la.embed(texts)
+
+    def embed_sync(self, texts: list[str]):
+        return self._la.embed_sync(texts)
+
+
+class SkillMemory:
+    """Local persistent memory (free). Returns None/empty when unavailable (check `available`)."""
+
+    def __init__(self, local_ai) -> None:
+        self._la = local_ai
+
+    @property
+    def available(self) -> bool:
+        return bool(getattr(self._la, "memory_available", False))
+
+    async def remember(self, content: str, **kw):
+        return await self._la.remember_fact(content, **kw)
+
+    async def recall(self, query: str, **kw):
+        return await self._la.recall_memory(query, **kw)
+
+    async def context(self, query: str, max_tokens: int = 500) -> str:
+        return await self._la.memory_context(query, max_tokens=max_tokens)
+
+    async def update(self, entry_id: int, new_content: str) -> bool:
+        return await self._la.update_memory(entry_id, new_content)
+
+    async def forget(self, query: str) -> bool:
+        return await self._la.memory_forget(query)
+
+    async def forget_by_id(self, entry_id: int) -> bool:
+        return await self._la.forget_memory_by_id(entry_id)
+
+
+class SkillTools:
+    """Discover and invoke the wingman's callable functions (skill @tools, MCP tools,
+    commands) by name. Scoped to enumerable tools — not arbitrary attribute access."""
 
     def __init__(self, wingman: "Wingman") -> None:
         self._wingman = wingman
 
-    def tool_names(self) -> set[str]:
-        """Names of all currently-available tool functions."""
-        names = set()
-        for tool in self._wingman.build_tools():
-            name = tool.get("function", {}).get("name")
-            if name:
-                names.add(name)
-        return names
+    def _tool_defs(self) -> dict:
+        return {t.get("function", {}).get("name"): t.get("function", {})
+                for t in self._wingman.build_tools()
+                if t.get("function", {}).get("name")}
 
-    def has_tool(self, name: str) -> bool:
-        """True if a tool function with this name is currently available."""
-        return name in self.tool_names()
+    def names(self) -> set[str]:
+        return set(self._tool_defs().keys())
 
-    async def invoke(self, function_name: str, arguments: dict | None = None):
-        """Invoke a tool/command by name. Returns
-        ``(function_response, instant_response, used_skill, tool_label)``."""
-        return await self._wingman.execute_command_by_function_call(
-            function_name, arguments or {}
-        )
+    def has(self, name: str) -> bool:
+        return name in self._tool_defs()
+
+    def source(self, name: str) -> str | None:
+        """Human-readable origin of a tool: the owning skill's name, or the MCP server's
+        display name. Prefers mcp_registry PUBLIC accessors; falls back to internals."""
+        skill = (self._wingman.tool_skills or {}).get(name)
+        if skill is not None:
+            return getattr(skill, "name", None)
+        mcp = self._wingman.mcp_registry
+        if not mcp:
+            return None
+        try:
+            for manifest in mcp.get_connected_servers():
+                sname = getattr(manifest, "name", None)
+                tools = mcp.get_server_tools(sname) if sname else []
+                tool_names = {getattr(t, "prefixed_name", None) or getattr(t, "name", None) for t in tools}
+                if name in tool_names:
+                    return getattr(manifest, "display_name", sname)
+        except Exception:
+            pass
+        # Fallback to internals if the public shapes differ.
+        server = getattr(mcp, "_tool_to_server", {}).get(name)
+        manifests = getattr(mcp, "_manifests", {})
+        if server and server in manifests:
+            return getattr(manifests[server], "display_name", server)
+        return None
+
+    def describe(self, name: str) -> "ToolDescriptor | None":
+        fn = self._tool_defs().get(name)
+        if not fn:
+            return None
+        return ToolDescriptor(name=name, source=self.source(name),
+                              description=fn.get("description"),
+                              parameters=fn.get("parameters", {}))
+
+    def all(self) -> tuple:
+        return tuple(self.describe(n) for n in self._tool_defs())
+
+    def icon(self, name: str) -> str | None:
+        """Filesystem path to the owning skill's ``logo.png`` for a tool, or ``None`` (MCP
+        tools, commands, or skills without a logo). Lets a UI show a per-tool icon without
+        touching the skill object."""
+        skill = (self._wingman.tool_skills or {}).get(name)
+        if skill is None:
+            return None
+        import inspect
+        import os
+
+        try:
+            skill_dir = os.path.dirname(inspect.getfile(skill.__class__))
+            logo_path = os.path.join(skill_dir, "logo.png")
+            return logo_path if os.path.exists(logo_path) else None
+        except Exception:
+            return None
+
+    def servers(self) -> tuple:
+        """Active MCP servers as dicts: name, display_name, connected, tools (prefixed names)."""
+        mcp = self._wingman.mcp_registry
+        if not mcp:
+            return ()
+        out = []
+        for manifest in mcp.get_connected_servers():
+            sname = getattr(manifest, "name", None)
+            tools = mcp.get_server_tools(sname) if sname else []
+            out.append({
+                "name": sname,
+                "display_name": getattr(manifest, "display_name", sname),
+                "connected": bool(getattr(manifest, "is_connected", True)),
+                "tools": [getattr(t, "prefixed_name", None) or getattr(t, "name", None) for t in tools],
+            })
+        return tuple(out)
+
+    async def invoke(self, name: str, arguments: dict | None = None) -> "ToolResult":
+        result = await self._wingman.execute_command_by_function_call(name, arguments or {})
+        func_resp, instant_resp, used_skill, label = (list(result) + [None, None, None, None])[:4]
+        # execute_command_by_function_call returns the owning Skill object in slot 3;
+        # ToolResult.skill is the skill NAME (str | None) per the public contract.
+        skill_name = getattr(used_skill, "name", used_skill)
+        return ToolResult(response=func_resp or "", instant_response=instant_resp or "",
+                          skill=skill_name, label=label)
 
 
 class SkillCommands:
@@ -355,6 +617,89 @@ class SkillCommands:
             return False
         return self._wingman.tower.save_wingman_commands(self._wingman.name)
 
+    def add(self, command, *, category=None) -> None:
+        """Add a command (optionally into a category). Call save() to persist."""
+        if self._wingman.config.commands is None:
+            self._wingman.config.commands = []
+        if category is not None:
+            command.category_id = category.id if isinstance(category, CommandCategory) else category
+        self._wingman.config.commands.append(command)
+
+    def remove(self, name: str) -> None:
+        """Remove a command by name. Call save() to persist."""
+        cmds = self._wingman.config.commands or []
+        self._wingman.config.commands = [c for c in cmds if c.name != name]
+
+    def add_category(self, name: str) -> "CommandCategory":
+        """Create (or return the existing) category with this name. Idempotent by name."""
+        from api.interface import CommandCategoryConfig
+        import uuid
+        cats = self._wingman.config.command_categories
+        if cats is None:
+            cats = self._wingman.config.command_categories = []
+        for cfg in cats:
+            if cfg.name == name:
+                return CommandCategory(id=cfg.id, name=cfg.name, commands=self._commands_in(cfg.id))
+        cfg = CommandCategoryConfig(id=str(uuid.uuid4()), name=name)
+        cats.append(cfg)
+        return CommandCategory(id=cfg.id, name=cfg.name)
+
+    def update_category(self, category: "CommandCategory") -> None:
+        for cfg in (self._wingman.config.command_categories or []):
+            if cfg.id == category.id:
+                cfg.name = category.name
+                return
+
+    def delete_category(self, id_or_name: str) -> None:
+        cats = self._wingman.config.command_categories or []
+        self._wingman.config.command_categories = [
+            c for c in cats if c.id != id_or_name and c.name != id_or_name
+        ]
+
+    def categories(self) -> tuple:
+        return tuple(
+            CommandCategory(id=c.id, name=c.name, commands=self._commands_in(c.id))
+            for c in (self._wingman.config.command_categories or [])
+        )
+
+    def _commands_in(self, category_id: str) -> list:
+        return [c for c in (self._wingman.config.commands or []) if getattr(c, "category_id", None) == category_id]
+
+    def register_function(self, func, *, label=None, description=None,
+                          respond="ai", parameters=None) -> str:
+        """Register a live skill method as a bindable command function at runtime — the
+        dynamic equivalent of @command_action. Returns the registered function name."""
+        from skills.skill_base import CommandActionDefinition
+        skill = getattr(func, "__self__", None)
+        if skill is None:
+            raise FacadeError("register_function requires a bound skill method (func.__self__).")
+        cad = CommandActionDefinition(func=func.__func__, label=label,
+                                      description=description, respond=respond)
+        skill._command_actions[cad.name] = cad
+        self._wingman.skill_manager.command_action_skills[(skill.name, cad.name)] = skill
+        return cad.name
+
+    def unregister_function(self, name: str) -> None:
+        registry = self._wingman.skill_manager.command_action_skills
+        for key in [k for k in registry if k[1] == name]:
+            skill = registry.pop(key)
+            skill._command_actions.pop(name, None)
+
+    def add_skill_command(self, name: str, func, *, category=None,
+                          instant_phrases=None, respond="ai") -> None:
+        """One call: register `func` as a command function, build a command named `name`
+        bound to it (with optional instant-activation phrases), categorize it. Call save()."""
+        from api.interface import CommandConfig, CommandActionConfig, CommandSkillActionConfig
+        fn_name = self.register_function(func, label=name, respond=respond)
+        skill = func.__self__
+        action = CommandActionConfig(
+            skill_action=CommandSkillActionConfig(skill_name=skill.name, function_name=fn_name)
+        )
+        command = CommandConfig(name=name, actions=[action])
+        if instant_phrases:
+            command.instant_activation = list(instant_phrases)
+        self.add(command, category=category)
+
 
 class SkillAudio:
     """Sanctioned audio capabilities for skills.
@@ -372,29 +717,27 @@ class SkillAudio:
         """True while the wingman is currently playing TTS/audio."""
         return bool(self._wingman.audio_player.is_playing)
 
-    async def play(self, audio_config: Any, volume_modifier: float = 1.0) -> None:
-        """Start playback of a skill-owned audio file (``AudioFile``/``AudioFileConfig``)."""
-        await self._wingman.audio_library.start_playback(audio_config, volume_modifier)
+    async def play(self, audio_config: Any, *, volume: float = 1.0) -> None:
+        """Start playback of a skill-owned audio file."""
+        await self._wingman.audio_library.start_playback(audio_config, volume)
 
-    async def stop(self, audio_config: Any, fade_out_time: float = 0.5) -> None:
+    async def stop(self, audio_config: Any, *, fade_out: float = 0.5) -> None:
         """Stop playback of a skill-owned audio file (optionally fading out)."""
-        await self._wingman.audio_library.stop_playback(audio_config, fade_out_time)
+        await self._wingman.audio_library.stop_playback(audio_config, fade_out)
 
-    def on_playback_started(self, callback: Any) -> None:
-        """Subscribe to playback-started events. Callback receives the wingman name."""
+    def on_playback_started(self, callback: Any) -> "Subscription":
+        """Observe playback start. Returns a Subscription — call .unsubscribe() to detach."""
         self._wingman.audio_player.playback_events.subscribe("started", callback)
+        return Subscription(
+            lambda: self._wingman.audio_player.playback_events.unsubscribe("started", callback)
+        )
 
-    def on_playback_finished(self, callback: Any) -> None:
-        """Subscribe to playback-finished events. Callback receives the wingman name."""
+    def on_playback_finished(self, callback: Any) -> "Subscription":
+        """Observe playback finish. Returns a Subscription — call .unsubscribe() to detach."""
         self._wingman.audio_player.playback_events.subscribe("finished", callback)
-
-    def off_playback_started(self, callback: Any) -> None:
-        """Unsubscribe a previously-registered playback-started callback."""
-        self._wingman.audio_player.playback_events.unsubscribe("started", callback)
-
-    def off_playback_finished(self, callback: Any) -> None:
-        """Unsubscribe a previously-registered playback-finished callback."""
-        self._wingman.audio_player.playback_events.unsubscribe("finished", callback)
+        return Subscription(
+            lambda: self._wingman.audio_player.playback_events.unsubscribe("finished", callback)
+        )
 
     # --- output/input device control (in-process; replaces HTTP-to-backend hacks) ---
 
@@ -410,12 +753,15 @@ class SkillAudio:
         audio = self._wingman.settings.audio
         return audio.input if audio else None
 
-    async def set_output_device(self, device_id: int) -> bool:
-        """Switch the system audio OUTPUT device. Returns False if unavailable."""
+    async def set_output_device(self, device_id: int | None) -> bool:
+        """Switch the system audio OUTPUT device (in-process; persists + re-routes playback).
+        Pass None to reset to the system default. Returns False if device control is
+        unavailable (no settings service)."""
         return await self._set_devices(output_device=device_id)
 
-    async def set_input_device(self, device_id: int) -> bool:
-        """Switch the system audio INPUT device. Returns False if unavailable."""
+    async def set_input_device(self, device_id: int | None) -> bool:
+        """Switch the system audio INPUT device (in-process). Pass None to reset to the
+        system default. Returns False if device control is unavailable."""
         return await self._set_devices(input_device=device_id)
 
     async def _set_devices(self, input_device: int | None = None,
@@ -441,6 +787,83 @@ class SkillTts:
 
     def __init__(self, wingman: "Wingman") -> None:
         self._wingman = wingman
+
+    @property
+    def voice(self):
+        """The voice configured on the current TTS provider (read)."""
+        from api.enums import TtsProvider
+
+        config = self._wingman.config
+        provider = config.features.tts_provider
+        mapping = {
+            TtsProvider.OPENAI: lambda: config.openai.tts_voice,
+            TtsProvider.ELEVENLABS: lambda: config.elevenlabs.voice,
+            TtsProvider.AZURE: lambda: config.azure.tts.voice,
+            TtsProvider.EDGE_TTS: lambda: config.edge_tts.voice,
+            TtsProvider.XVASYNTH: lambda: config.xvasynth.voice,
+            TtsProvider.HUME: lambda: config.hume.voice,
+            TtsProvider.INWORLD: lambda: config.inworld.voice_id,
+            TtsProvider.POCKET_TTS: lambda: config.pocket_tts.voice,
+            TtsProvider.OPENAI_COMPATIBLE: lambda: config.openai_compatible_tts.voice,
+        }
+        getter = mapping.get(provider)
+        return getter() if getter else None
+
+    async def voices(self) -> list:
+        """ALL voices available on the current provider (not just the user-picked ones).
+
+        Best-effort: providers that need a secret/network round-trip or that aren't
+        cheaply enumerable here return ``[]`` rather than raising. Providers whose live
+        TTS instance exposes a cached/static voice list are read from it. Full
+        per-provider enumeration lives in the VoiceService HTTP API; skills that need the
+        exhaustive list should call that. (Correctness is smoke-checked at boot.)
+        """
+        from api.enums import TtsProvider
+
+        config = self._wingman.config
+        provider = config.features.tts_provider
+
+        # Prefer the live TTS instance if it advertises a voice list (e.g. static providers
+        # like Edge / Pocket cache their catalogue).
+        tts = getattr(self._wingman, "tts", None)
+        for attr in ("available_voices", "voices", "get_available_voices"):
+            candidate = getattr(tts, attr, None) if tts is not None else None
+            if candidate is None:
+                continue
+            try:
+                if callable(candidate):
+                    result = candidate()
+                    if hasattr(result, "__await__"):
+                        result = await result
+                else:
+                    result = candidate
+                if result:
+                    return list(result)
+            except Exception:
+                pass
+
+        # Pocket TTS can enumerate its local voices without a secret/network call.
+        if provider == TtsProvider.POCKET_TTS:
+            pocket = getattr(self._wingman, "pocket_tts", None) or getattr(tts, "pocket_tts", None)
+            getter = getattr(pocket, "get_available_voices", None)
+            if getter is not None:
+                try:
+                    result = getter()
+                    if hasattr(result, "__await__"):
+                        result = await result
+                    return list(result or [])
+                except Exception:
+                    return []
+
+        # Everything else (OpenAI, ElevenLabs, Azure, Hume, Inworld, OpenAI-compatible,
+        # XVASynth) needs a secret and/or network call we don't make here.
+        return []
+
+    async def speak(self, text: str, *, interrupt: bool = True, sound_config=None) -> None:
+        """Say text in the wingman's voice. interrupt=True (default) speaks immediately,
+        cutting off current playback; interrupt=False waits for it to finish."""
+        await self._wingman.play_to_user(text, no_interrupt=(not interrupt),
+                                         sound_config=sound_config)
 
     async def set_voice(self, voice: Any, errors: list | None = None) -> str:
         """Set the voice on the wingman's current TTS provider and rebuild the TTS
@@ -475,3 +898,95 @@ class SkillTts:
             return "Voice change failed while reinitializing the TTS provider."
         self._wingman.tts = new_tts
         return f"Switched {self._wingman.name}'s voice to {voice_name} ({provider_label})."
+
+
+class SkillConversation:
+    """Read + append to the live conversation, and summarize it (free, local)."""
+
+    def __init__(self, wingman: "Wingman") -> None:
+        self._wingman = wingman
+
+    def history(self) -> list[dict]:
+        """Shallow copy of the live history. Don't mutate individual messages."""
+        return list(self._wingman.conversation.messages)
+
+    @property
+    def summary(self) -> str:
+        return self._wingman.condenser.summary or ""
+
+    async def add_user(self, content: str) -> None:
+        await self._wingman.add_user_message(content)
+
+    async def add_assistant(self, content: str) -> None:
+        await self._wingman.conversation.add_assistant_message(content)
+
+    async def reset(self) -> None:
+        await self._wingman.reset_conversation_history()
+
+    async def summarize(self) -> str:
+        """Summarize the live conversation via the FREE local model. '' if unavailable."""
+        from services.skill_local_ai import SkillLocalAI
+        text = "\n".join(
+            f"{m.get('role','')}: {m.get('content','')}"
+            for m in self._wingman.conversation.messages
+            if isinstance(m.get("content"), str)
+        )
+        return await SkillLocalAiView(SkillLocalAI(self._wingman)).summarize(text)
+
+
+class SkillSecrets:
+    """Fetch stored secrets (prompts the user if missing)."""
+
+    def __init__(self, wingman: "Wingman") -> None:
+        self._wingman = wingman
+
+    async def retrieve(self, name: str, errors: list | None = None) -> str | None:
+        return await self._wingman.retrieve_secret(name, errors if errors is not None else [])
+
+
+class SkillSkills:
+    """Read which skills are currently loaded on this wingman."""
+
+    def __init__(self, wingman: "Wingman") -> None:
+        self._wingman = wingman
+
+    def active(self) -> tuple:
+        out = []
+        for s in self._wingman.skill_manager.skills:
+            out.append({"name": getattr(s, "name", None),
+                        "display_name": getattr(getattr(s, "config", None), "display_name", None)})
+        return tuple(out)
+
+    def has(self, name: str) -> bool:
+        """Is a skill with this name currently loaded? (symmetric with ctx.tools.has)"""
+        return any(getattr(s, "name", None) == name for s in self._wingman.skill_manager.skills)
+
+
+class SkillSettings:
+    """Read-only view of app settings + the one sanctioned mutation (audio devices)."""
+
+    __slots__ = ("_wingman",)
+
+    def __init__(self, wingman: "Wingman") -> None:
+        object.__setattr__(self, "_wingman", wingman)
+
+    def __getattr__(self, name: str) -> Any:
+        if name.startswith("__") and name.endswith("__"):
+            raise AttributeError(name)
+        return _wrap(getattr(object.__getattribute__(self, "_wingman").settings, name))
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        raise FacadeError(
+            f"Settings are read-only for skills — cannot set '{name}'. "
+            f"Use ctx.audio.set_output_device(...) to change devices."
+        )
+
+    @property
+    def output_device(self):
+        audio = object.__getattribute__(self, "_wingman").settings.audio
+        return audio.output if audio else None
+
+    @property
+    def input_device(self):
+        audio = object.__getattribute__(self, "_wingman").settings.audio
+        return audio.input if audio else None
