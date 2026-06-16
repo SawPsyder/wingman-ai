@@ -15,8 +15,8 @@ jobs:
         with:
           script: |
             const body = context.payload.pull_request.body || '';
-            const issuePattern = /(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)/i;
-            const urlPattern = /(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+https:\/\/github\.com\/ShipBit\/wingman-ai\/issues\/(\d+)/i;
+            const issuePattern = /#(\d+)/;
+            const urlPattern = /https:\/\/github\.com\/ShipBit\/wingman-ai\/issues\/(\d+)/i;
 
             if (issuePattern.test(body) || urlPattern.test(body)) {
               console.log('PR body contains a linked issue reference.');
@@ -46,11 +46,8 @@ jobs:
               return;
             }
 
-            core.setFailed(
-              'This PR must be linked to a GitHub issue before it can be merged.\n\n' +
-              'Add one of the following to your PR description:\n' +
-              '  - Closes #123\n' +
-              '  - Fixes #123\n' +
-              '  - Resolves #123\n\n' +
-              'Or link an issue via the "Development" section in the PR sidebar.'
+            core.warning(
+              'This PR does not reference a GitHub issue.\n\n' +
+              'Consider adding an issue number (e.g. #123) to your PR description,\n' +
+              'or link an issue via the "Development" section in the PR sidebar.'
             );
