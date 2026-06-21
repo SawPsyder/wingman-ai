@@ -73,6 +73,29 @@ against that with `EXAMPLE_LEAK_TOKENS`).
 - **n_ctx** stays at the user's setting. The 2B baseline isn't context-limited on
   these sessions; larger windows are for bigger remote models.
 
+## The marathon stress case (`sc_va_marathon`)
+
+A 46-turn voice-activation session — STT mishearings ("cut less", "lore ville",
+"Houston" for Hurston, "a wreck" for aUEC), mic-caught self-talk and a false
+trigger ("not you mom"), four skill/MCP tool calls (ship loadout, UEX trade,
+reminder, mobiGlas), and transient locations/prices/cargo — with 12 durable facts
+buried in the noise. What it tells us about the 2B:
+
+- **Precision holds up under heavy noise: 100%.** The model ignored every STT
+  artifact, tool output (96 SCU, quantanium price), location, and false trigger.
+  It correctly kept real-life "Hamburg" while dropping in-game locations. The
+  noise-filtering is genuinely good.
+- **Completeness is the ceiling: ~67% on 46 noisy turns.** It reliably gets the
+  name, both ships, org, both friends, the dislike, the wing-commander goal and
+  home city — but tends to drop the two *likes* (bounty, salvage) and one of two
+  goals (the Javelin). The "scan every message" prompt helps but a long, bloaty
+  transcript still loses about a third of the facts. A bigger support model is the
+  only real fix; these misses are capability, not prompt bugs.
+- **forget_by_query is phrasing-fragile.** "forget that I'm in Midnight Reapers"
+  scored below the 0.7 delete threshold against "Member of the Midnight Reapers
+  org" and deleted nothing, while sc_long's forget worked. Worth revisiting the
+  forget threshold / making forget match on the noun, not the whole sentence.
+
 ## Open items (for a future model or session)
 
 - Top-1 embedding accuracy (~41%) — a stronger embed model would help recall most.

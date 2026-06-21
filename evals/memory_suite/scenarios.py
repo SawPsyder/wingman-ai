@@ -301,7 +301,113 @@ GERMAN = Scenario(
 )
 
 
-SCENARIOS = [SC_LONG, SC_COMBAT, ELITE, ASSISTANT, EMPTY_CHAT, GERMAN]
+# ── Star Citizen: the brutal one — long VA session, STT noise, skills ────
+# Simulates a real player with Voice Activation always on: half-sentences, the
+# mic catching room noise and self-talk, STT mishearings ("cut less", "lore
+# ville", "Houston" for Hurston, "a wreck" for aUEC), skill/MCP tool calls
+# (ship loadout, UEX trade, reminder, mobiGlas), transient locations/prices/cargo
+# from those tools — with ~12 durable facts scattered across 46 turns. This is
+# the stress test: can the model find the signal buried in all that bloat?
+
+SC_VA_MARATHON = Scenario(
+    id="sc_va_marathon",
+    title="Star Citizen — voice-activation marathon (STT noise + skills)",
+    category="star_citizen",
+    messages=[
+        _m("user", "Okay okay I'm in. Comms check — you hearing me?"),
+        _m("assistant", "Loud and clear, pilot."),
+        _m("user", "Right. So uh, where was I. Hold on, let me spawn the ship."),
+        _m("user", "Pulling out my Constellation Andromeda. God I love this thing."),
+        _m("assistant", "The Constellation Andromeda, a fine choice. Want me to pull the loadout?"),
+        _m("user", "Yeah run the uh, the ship loadout skill, show me my components."),
+        _m("assistant", "(ship loadout skill) Your Andromeda has size-4 shields and four S5 weapons mounted."),
+        _m("user", "nice nice nice. wait no not you mom, I'm on the game. sorry about that."),
+        _m("user", "Anyway it's me, Marcus, by the way — never said hi properly."),
+        _m("assistant", "Good to fly with you, Marcus."),
+        _m("user", "I also keep a cut less, ugh, a Cutlass Black for the smaller runs."),
+        _m("assistant", "Noted — a Cutlass Black as your secondary."),
+        _m("user", "Where's the... okay quantum spooling. Heading to Crusader, gimme a sec."),
+        _m("user", "ugh the tutorial guy at lore ville never shuts up"),
+        _m("assistant", "Spooling complete. Safe travels to Crusader."),
+        _m("user", "So my org, Midnight Reapers, we've got bounty night tonight."),
+        _m("assistant", "Midnight Reapers — sounds like a serious crew."),
+        _m("user", "yeah me and Vince and Lena basically run the bounty wing together."),
+        _m("assistant", "A solid trio."),
+        _m("user", "honestly bounty hunting is the best, and I love a good salvage run too."),
+        _m("assistant", "Combat and salvage — you like the hands-on work."),
+        _m("user", "can't STAND trading though, hauling boxes around bores me to death."),
+        _m("assistant", "Then we'll keep you out of the cargo lanes."),
+        _m("user", "hey what's quantanium going for right now? check the trade thing."),
+        _m("assistant", "(UEX trade skill) Quantanium is selling at ArcCorp 027 for about 28 a unit."),
+        _m("user", "a wreck per unit, not bad. wait, aUEC, you know what I mean."),
+        _m("assistant", "Indeed — 28 aUEC per unit."),
+        _m("user", "how much cargo does the Connie hold again?"),
+        _m("assistant", "(ship loadout skill) The Constellation Andromeda carries 96 SCU."),
+        _m("user", "right right. okay forget the trading, that's boring anyway."),
+        _m("user", "set me a reminder to refuel in ten minutes, will ya?"),
+        _m("assistant", "(reminder skill) Reminder set: refuel in ten minutes."),
+        _m("user", "perfect. open my mobiGlas real quick."),
+        _m("assistant", "Opening your mobiGlas."),
+        _m("user", "ugh where did that pirate go. come on. scanning, scanning."),
+        _m("user", "Houston traffic control is a nightmare today, so many ships out here."),
+        _m("assistant", "Stay sharp out there."),
+        _m("user", "you know my actual dream? becoming wing commander of the Reapers someday."),
+        _m("assistant", "A worthy ambition, Marcus."),
+        _m("user", "and one day, ONE day, I'm buying a Javelin. a whole capital ship, man."),
+        _m("assistant", "Dream big. The Javelin is the ultimate goal."),
+        _m("user", "for now I'm grinding. oh by the way I'm playing from Hamburg, it's like 1am here."),
+        _m("assistant", "Late night in Hamburg — respect the dedication."),
+        _m("user", "okay engaging the pirate, here we go, weapons hot. talk after."),
+        _m("assistant", "Good hunting, Marcus."),
+        _m("user", "got him! okay logging off for tonight. later."),
+    ],
+    expect_facts=[
+        ["marcus", "markus"],
+        ["constellation", "andromeda"],
+        ["cutlass"],
+        ["midnight reapers", "reapers"],
+        ["vince"],
+        ["lena"],
+        ["bounty"],
+        ["salvage"],
+        ["trading", "hauling", "haul"],   # the dislike
+        ["wing commander", "commander"],
+        ["javelin"],
+        ["hamburg"],
+    ],
+    forbid_facts=[
+        "lore ville", "lorville", "crusader", "arccorp", "houston", "mobiglas",
+        "quantanium", "scu", "auec", "96", "refuel", "reminder",
+    ],
+    at_most_one=[["reapers"], ["constellation"], ["cutlass"]],
+    recall=[
+        RecallProbe("What ships do I own?", [["constellation", "cutlass", "andromeda"]]),
+        RecallProbe("What's my org?", [["reapers", "midnight"]]),
+        RecallProbe("Who do I fly with?", [["vince", "lena"]]),
+        RecallProbe("What do I enjoy doing?", [["bounty", "salvage"]]),
+        RecallProbe("What do I dislike?", [["trading", "hauling"]]),
+        RecallProbe("What's my big dream ship?", [["javelin"]]),
+        RecallProbe("Where do I live in real life?", [["hamburg"]]),
+        RecallProbe("Where am I flying right now?",
+                    expect_absent=["lorville", "lore ville", "crusader", "arccorp"],
+                    note="in-game locations must never have been stored"),
+    ],
+    forget=[
+        ForgetProbe("forget that I'm in Midnight Reapers",
+                    expect_gone=["reapers", "midnight"],
+                    expect_kept=["javelin"]),
+    ],
+    edits=[
+        EditProbe(find_query="the Javelin I want to buy",
+                  new_content="Goal: save up for an Idris frigate",
+                  recall_query="What capital ship am I saving for?",
+                  expect_any=[["idris"]], expect_absent=["javelin"],
+                  note="player changed their dream ship"),
+    ],
+)
+
+
+SCENARIOS = [SC_LONG, SC_COMBAT, ELITE, ASSISTANT, EMPTY_CHAT, GERMAN, SC_VA_MARATHON]
 
 
 def get_scenarios(ids=None, categories=None):
