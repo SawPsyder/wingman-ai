@@ -22,7 +22,13 @@ printr = Printr()
 
 # Named constants
 MEMORY_MAX_TOKENS = 1024
-MEMORY_MIN_SIMILARITY = 0.5
+# Recall threshold for injecting stored facts into the prompt. Lowered from 0.5
+# to 0.4 after evals/memory_suite showed the embed model (nomic) frequently
+# scores a relevant fact 0.40-0.49 against a natural follow-up question ("who do
+# I play with?" vs "Friend is named Mara"). build_memory_context returns a
+# token-capped SET of facts, so a slightly looser gate lands the right fact in
+# the batch without meaningful precision cost. See evals/memory_suite/FINDINGS.md.
+MEMORY_MIN_SIMILARITY = 0.4
 DEDUP_THRESHOLD = 0.9
 MAX_SESSION_SUMMARIES = 20
 MIN_MESSAGES_FOR_EXTRACTION = 4

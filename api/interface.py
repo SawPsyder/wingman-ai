@@ -1222,6 +1222,11 @@ class PlaygroundChatRequest(BaseModel):
     iterations: int = 1
 
 
+class MemorySuiteRequest(BaseModel):
+    scenario_id: str
+    samples: int = 1
+
+
 class LlamaCppSettings(BaseModel):
     run_locally: bool = False
     gpu_backend: str = "cpu"

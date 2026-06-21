@@ -43,6 +43,7 @@ from api.interface import (
     MemoryUpdateRequest,
     OpenRouterEndpointResult,
     DetectContextSizeRequest,
+    MemorySuiteRequest,
     PlaygroundChatRequest,
     ParakeetSttConfig,
     PocketTTSConfig,
@@ -502,6 +503,18 @@ class WingmanCore(WebSocketUser):
             methods=["POST"],
             path="/settings/local-ai/detect-context-size",
             endpoint=self.detect_remote_context_size,
+            tags=tags,
+        )
+        self.router.add_api_route(
+            methods=["GET"],
+            path="/settings/local-ai/playground/memory-scenarios",
+            endpoint=self.playground_list_memory_scenarios,
+            tags=tags,
+        )
+        self.router.add_api_route(
+            methods=["POST"],
+            path="/settings/local-ai/playground/memory-suite",
+            endpoint=self.playground_run_memory_scenario,
             tags=tags,
         )
 
@@ -3074,6 +3087,56 @@ class WingmanCore(WebSocketUser):
                 "reachable llama.cpp server that exposes /props."
             ),
         }
+
+    # GET /settings/local-ai/playground/memory-scenarios
+    async def playground_list_memory_scenarios(self) -> list[dict]:
+        """List the simulated conversations the Persistent Memory test suite can run."""
+        from evals.memory_suite.scenarios import SCENARIOS
+
+        return [
+            {
+                "id": s.id,
+                "title": s.title,
+                "category": s.category,
+                "message_count": len(s.messages),
+                "expected_fact_count": len(s.expect_facts),
+                "recall_probe_count": len(s.recall),
+            }
+            for s in SCENARIOS
+        ]
+
+    # POST /settings/local-ai/playground/memory-suite
+    async def playground_run_memory_scenario(
+        self, request: MemorySuiteRequest
+    ) -> dict:
+        """Run one Persistent Memory scenario end-to-end against the loaded models
+        and return a scorecard (extraction facts, recall probes, greeting).
+
+        This drives the REAL pipeline (extract -> store -> recall) on a throwaway
+        database, so it never touches the user's actual memories.
+        """
+        if not self.local_ai_service.is_ready():
+            return {
+                "success": False,
+                "error": "Local AI service is not ready. Make sure the models are loaded.",
+            }
+
+        from evals.memory_suite.harness import run_scenario
+        from evals.memory_suite.profiles import DEFAULT
+        from evals.memory_suite.scenarios import get_scenarios
+
+        matches = get_scenarios(ids=[request.scenario_id]) if request.scenario_id else []
+        if not matches:
+            return {"success": False, "error": f"Unknown scenario '{request.scenario_id}'."}
+
+        scenario = matches[0]
+        samples = max(1, min(request.samples, 5))
+        result = await asyncio.to_thread(
+            run_scenario, self.local_ai_service, scenario, DEFAULT, samples
+        )
+        # Include the conversation so the UI can show what was fed in.
+        result["messages"] = scenario.messages
+        return {"success": True, "result": result}
 
     # POST /settings/local-ai/playground/embed
     async def playground_embed(self, texts: list[str] = Body(...)) -> dict:
