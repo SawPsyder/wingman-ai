@@ -99,24 +99,56 @@ class SupportResult(NamedTuple):
     prompt_tokens: int = 0
     completion_tokens: int = 0
     truncated: bool = False
+    # The model's <think> block when reasoning is enabled (llama.cpp returns it
+    # separately from the answer in ``reasoning_content``). None when reasoning
+    # is off or the build doesn't surface it.
+    reasoning_content: Optional[str] = None
 
 
-def build_support_extra_body(top_k: int, reasoning_effort: int) -> dict:
+def resolve_enable_thinking(reasoning: bool | None) -> bool:
+    """Decide whether a single support call should think.
+
+    Reasoning is opt-in per call and defaults to OFF (fast): callers that want
+    quality on background work pass ``reasoning=True`` (e.g. memory extraction),
+    while latency-sensitive paths (greetings, skill/tool calls) leave it unset.
+    There is no global user toggle — the support model is fast by default.
+    """
+    return bool(reasoning)
+
+
+def build_support_extra_body(top_k: int, enable_thinking: bool) -> dict:
     """Build the ``extra_body`` for a support-model chat completion.
 
-    When reasoning is disabled (``reasoning_effort == 0``) we must request it
-    per call via ``chat_template_kwargs``. Newer llama.cpp builds (verified
-    b9488) ignore the ``--reasoning-budget 0`` launch flag for Qwen3.5, so
-    without this the model spends its entire token budget emitting a ``<think>``
-    block (returned in ``reasoning_content``) and leaves ``content`` empty —
-    which the caller reads as an empty response. Older builds (b8400) accept it
-    harmlessly, and it also covers remote servers whose launch flags we can't
-    control.
+    When thinking is disabled we must request it per call via
+    ``chat_template_kwargs``. Newer llama.cpp builds (verified b9488) ignore the
+    ``--reasoning-budget 0`` launch flag for Qwen3.5, so without this the model
+    spends its entire token budget emitting a ``<think>`` block (returned in
+    ``reasoning_content``) and leaves ``content`` empty — which the caller reads
+    as an empty response. Older builds (b8400) accept it harmlessly, and it also
+    covers remote servers whose launch flags we can't control.
     """
     extra_body: dict = {"top_k": top_k}
-    if reasoning_effort == 0:
+    if not enable_thinking:
         extra_body["chat_template_kwargs"] = {"enable_thinking": False}
     return extra_body
+
+
+def extract_reasoning_content(message) -> Optional[str]:
+    """Pull the model's <think> block from a chat-completion message, if any.
+
+    llama.cpp returns reasoning separately from the answer in a non-standard
+    ``reasoning_content`` field. The OpenAI client keeps unknown fields, so we
+    read it directly with a ``model_extra`` fallback. Returns None when absent
+    or empty (reasoning off, or a build that doesn't surface it)."""
+    value = getattr(message, "reasoning_content", None)
+    if value is None:
+        extra = getattr(message, "model_extra", None)
+        if extra:
+            value = extra.get("reasoning_content")
+    if isinstance(value, str):
+        value = value.strip()
+        return value or None
+    return None
 
 
 class LlamaCppProvider:
@@ -297,19 +329,23 @@ class LlamaCppProvider:
         model_path = self.model_manager.get_support_model_path()
         n_ctx = self.settings.n_ctx
         n_threads = self._resolve_n_threads()
-        rb = 0 if self.settings.reasoning_effort == 0 else -1
+        # Always launch with thinking AVAILABLE (-1 = model default). Whether a
+        # given call actually thinks is decided per-call via enable_thinking in
+        # build_support_extra_body, which is the only mechanism newer llama.cpp
+        # builds honour for Qwen3.5. Baking reasoning off at launch (-budget 0)
+        # would make per-task reasoning (e.g. memory extraction) impossible.
+        rb = -1
         backend = self.model_manager._get_active_backend()
         gpu_label = "metal" if platform.system() == "Darwin" else backend
         model_name = os.path.basename(model_path)
         printr.print(
             f"Starting support server: {model_name} "
             f"(n_ctx={n_ctx}, n_threads={n_threads}, gpu={gpu_label}, "
-            f"reasoning={'off' if rb == 0 else 'on'}, port={MANAGED_SUPPORT_PORT})",
+            f"reasoning=per-call, port={MANAGED_SUPPORT_PORT})",
             color=LogType.INFO,
             server_only=True,
         )
 
-        # reasoning_budget: 0 = disable thinking (fast), >0 = allow thinking tokens
         self._support_process = self._start_server(
             model_path=model_path,
             port=MANAGED_SUPPORT_PORT,
@@ -458,6 +494,7 @@ class LlamaCppProvider:
         top_p: float = 1.0,
         top_k: int = 20,
         presence_penalty: float = 2.0,
+        reasoning: bool | None = None,
     ) -> SupportResult:
         """Process text using the managed llama-server support model.
 
@@ -465,6 +502,7 @@ class LlamaCppProvider:
         tokenizer, and whether the output was truncated (finish_reason=length).
 
         Sampling defaults follow Qwen3.5 recommendations for non-thinking mode.
+        ``reasoning`` overrides thinking for this call (None = global default).
         """
         if not system_prompt:
             from services.file import get_prompt
@@ -485,11 +523,13 @@ class LlamaCppProvider:
                 top_p=top_p,
                 presence_penalty=presence_penalty,
                 extra_body=build_support_extra_body(
-                    top_k, self.settings.reasoning_effort
+                    top_k, resolve_enable_thinking(reasoning)
                 ),
             )
-            raw = result.choices[0].message.content
+            message = result.choices[0].message
+            raw = message.content
             cleaned = self._deduplicate_lines(raw) if raw else None
+            reasoning_content = extract_reasoning_content(message)
 
             # Extract real token counts from the model's native tokenizer
             prompt_tokens = 0
@@ -507,6 +547,7 @@ class LlamaCppProvider:
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
                 truncated=truncated,
+                reasoning_content=reasoning_content,
             )
         except Exception as e:
             input_tokens = count_tokens(system_prompt) + count_tokens(text) if text else 0

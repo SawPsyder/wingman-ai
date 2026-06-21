@@ -23,7 +23,40 @@ SAFETY_MARGIN = 0.9
 cl100k_base (used for estimation) and the model's actual tokenizer."""
 
 MIN_OUTPUT_TOKENS = 256
-"""Minimum output tokens guaranteed even when input is large."""
+"""Minimum output tokens reserved for a non-thinking call."""
+
+REASONING_OUTPUT_TOKENS = 1024
+"""Output tokens to reserve when reasoning is enabled. The <think> block shares
+the output budget with the answer, so a 256-token reservation (fine for plain
+output) gets eaten by thinking and truncates the answer. Reserve more headroom.
+
+This is an absolute target — a 2B model's think block is roughly constant in
+size regardless of context window — but ``_output_reservation`` caps it at half
+the usable context so a small ``n_ctx`` still leaves room for input. Validated
+against the real model via ``evals/run_memory_eval.py``; retune there if needed.
+"""
+
+
+def _output_reservation(reasoning: bool, safe_ctx: int) -> int:
+    """Output tokens to reserve for a call, respecting the user's context size.
+
+    Non-thinking calls reserve ``MIN_OUTPUT_TOKENS``. Thinking calls reserve
+    ``REASONING_OUTPUT_TOKENS`` so the <think> block and the answer both fit,
+    but never more than half of ``safe_ctx`` — on a small ``n_ctx`` we'd rather
+    chunk the input than starve it.
+    """
+    if not reasoning:
+        return MIN_OUTPUT_TOKENS
+    return min(REASONING_OUTPUT_TOKENS, max(MIN_OUTPUT_TOKENS, safe_ctx // 2))
+
+# Qwen3.5 non-thinking sampling defaults (HuggingFace-recommended). Used as the
+# final fallback when a support call passes neither explicit sampling args nor a
+# SamplingPreset. Not user-configurable — callers that need different values use
+# a SamplingPreset or pass args directly.
+DEFAULT_TEMPERATURE = 1.0
+DEFAULT_TOP_P = 1.0
+DEFAULT_TOP_K = 20
+DEFAULT_PRESENCE_PENALTY = 2.0
 
 
 # ── Token Budget ───────────────────────────────────────────────────
@@ -51,7 +84,8 @@ class TokenBudget:
     with ``MIN_OUTPUT_TOKENS`` reserved for the response."""
 
     min_output_tokens: int
-    """Minimum output tokens guaranteed (``MIN_OUTPUT_TOKENS``)."""
+    """Output tokens reserved for this budget — ``MIN_OUTPUT_TOKENS`` normally,
+    more when ``reasoning=True`` (see ``_output_reservation``)."""
 
 
 # ── Service ────────────────────────────────────────────────────────
@@ -101,31 +135,37 @@ class LocalAiService:
             config_changed = (
                 old.n_ctx != new_settings.n_ctx
                 or old.n_threads != new_settings.n_threads
-                or old.reasoning_effort != new_settings.reasoning_effort
             )
             if backend_changed or model_changed or config_changed:
                 await self.initialize()
 
     # ── Token budget API ───────────────────────────────────────────
 
-    def get_token_budget(self, system_prompt: str = "") -> TokenBudget:
+    def get_token_budget(
+        self, system_prompt: str = "", reasoning: bool = False
+    ) -> TokenBudget:
         """Compute the token budget for a support model call.
 
         Returns a ``TokenBudget`` telling callers how much input text they can
         send alongside the given ``system_prompt``.  Use this for planning
         (e.g. deciding whether to chunk) — the actual output cap is computed
         inside ``support()`` per-call.
+
+        Pass ``reasoning=True`` to mirror a thinking call: more output is
+        reserved (so chunked callers leave room for the <think> block), which
+        lowers ``max_input_tokens`` and yields smaller chunks.
         """
         safe_ctx = int(self.settings.n_ctx * SAFETY_MARGIN)
         system_tokens = count_tokens(system_prompt) if system_prompt else 0
-        max_input = max(0, safe_ctx - system_tokens - MIN_OUTPUT_TOKENS)
+        min_output = _output_reservation(reasoning, safe_ctx)
+        max_input = max(0, safe_ctx - system_tokens - min_output)
 
         return TokenBudget(
             n_ctx=self.settings.n_ctx,
             safe_ctx=safe_ctx,
             system_tokens=system_tokens,
             max_input_tokens=max_input,
-            min_output_tokens=MIN_OUTPUT_TOKENS,
+            min_output_tokens=min_output,
         )
 
     # ── Support model call ─────────────────────────────────────────
@@ -139,6 +179,7 @@ class LocalAiService:
         top_p: float | None = None,
         top_k: int | None = None,
         presence_penalty: float | None = None,
+        reasoning: bool | None = None,
     ) -> "SupportResult":
         """Process text using the support model (local or remote).
 
@@ -148,7 +189,11 @@ class LocalAiService:
         Sampling resolution order (highest priority first):
         1. Per-call keyword arguments (temperature, top_p, etc.)
         2. ``preset`` (a ``SamplingPreset`` enum member)
-        3. User's ``LlamaCppSettings`` values (the global defaults)
+        3. Qwen3.5 default constants (DEFAULT_TEMPERATURE, etc.)
+
+        ``reasoning`` controls thinking for this call and defaults to OFF (fast).
+        Pass ``True`` for background quality work (memory extraction,
+        summarization); leave it unset on latency-sensitive paths.
 
         Returns a ``SupportResult`` with text, token usage, and truncation flag.
         """
@@ -160,13 +205,16 @@ class LocalAiService:
 
         safe_ctx = int(self.settings.n_ctx * SAFETY_MARGIN)
         system_tokens = count_tokens(system_prompt)
-        max_input = safe_ctx - system_tokens - MIN_OUTPUT_TOKENS
+        # Reasoning shares the output budget with the <think> block, so reserve
+        # more output (and truncate input more aggressively) on thinking calls.
+        min_output = _output_reservation(bool(reasoning), safe_ctx)
+        max_input = safe_ctx - system_tokens - min_output
         if count_tokens(text) > max_input:
             text = truncate_to_tokens(text, max(0, max_input))
         input_tokens = system_tokens + count_tokens(text)
-        max_tokens = max(MIN_OUTPUT_TOKENS, safe_ctx - input_tokens)
+        max_tokens = max(min_output, safe_ctx - input_tokens)
 
-        # Resolve sampling: explicit args > preset > settings defaults
+        # Resolve sampling: explicit args > preset > Qwen3.5 default constants
         t = temperature
         p = top_p
         k = top_k
@@ -180,14 +228,18 @@ class LocalAiService:
                 k = preset.top_k
             if pp is None:
                 pp = preset.presence_penalty
-        t = t if t is not None else self.settings.temperature
-        p = p if p is not None else self.settings.top_p
-        k = k if k is not None else self.settings.top_k
-        pp = pp if pp is not None else self.settings.presence_penalty
+        t = t if t is not None else DEFAULT_TEMPERATURE
+        p = p if p is not None else DEFAULT_TOP_P
+        k = k if k is not None else DEFAULT_TOP_K
+        pp = pp if pp is not None else DEFAULT_PRESENCE_PENALTY
 
         if self.settings.run_locally:
-            return self.provider.support(text, system_prompt, max_tokens, t, p, k, pp)
-        return self.remote.support(text, system_prompt, max_tokens, t, p, k, pp)
+            return self.provider.support(
+                text, system_prompt, max_tokens, t, p, k, pp, reasoning
+            )
+        return self.remote.support(
+            text, system_prompt, max_tokens, t, p, k, pp, reasoning
+        )
 
     # ── Embeddings ─────────────────────────────────────────────────
 

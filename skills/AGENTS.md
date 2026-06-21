@@ -270,7 +270,7 @@ text = await self.wingman.ai.generate(prompt, system=..., data=..., image=..., m
 #   Over the cap -> FacadeError (or truncates if auto_shorten=True). Images are charged a flat
 #   estimate, never the base64 length. Pass messages= to send a prebuilt message list directly.
 summary = await self.wingman.local_ai.summarize(...)    # bulk reduction on the FREE local model
-text2 = await self.wingman.local_ai.generate(t, system=...)  # free local single-turn -> str
+resp = await self.wingman.local_ai.generate(t, system_prompt=...)  # free local single-turn -> SupportResponse (.text)
 ```
 
 **Removed (do NOT use):** the raw LLM call (`self.llm_call(...)` / `actual_llm_call` — use `self.wingman.ai.generate`),
@@ -305,6 +305,8 @@ MCP tool names are prefixed by the registry — use the name exactly as it appea
 ## Local Model — Sampling Parameters
 
 Global defaults are tuned for summarization (low temperature). **Override for creative tasks.** Use `SamplingPreset` from `services/skill_local_ai.py` or pass `temperature` / `top_p` directly to `self.wingman.local_ai.generate()`, `.generate_sync()`, and `.summarize()`. Manual values override presets. See `SamplingPreset` docstring for available presets and values.
+
+Pass `reasoning=True` to make the local model *think* before answering — better quality on structured or analytical work, but slower. Only do this on background tasks the user is not waiting for. Leave it unset (or `False`) on anything latency-sensitive. Available on `generate()`, `generate_sync()`, `summarize()`, and `summarize_sync()`.
 
 ## Example Skills
 

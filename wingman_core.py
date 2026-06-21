@@ -42,6 +42,7 @@ from api.interface import (
     MemoryEntryResponse,
     MemoryUpdateRequest,
     OpenRouterEndpointResult,
+    DetectContextSizeRequest,
     PlaygroundChatRequest,
     ParakeetSttConfig,
     PocketTTSConfig,
@@ -495,6 +496,12 @@ class WingmanCore(WebSocketUser):
             methods=["GET"],
             path="/settings/local-ai/playground/presets",
             endpoint=self.playground_list_presets,
+            tags=tags,
+        )
+        self.router.add_api_route(
+            methods=["POST"],
+            path="/settings/local-ai/detect-context-size",
+            endpoint=self.detect_remote_context_size,
             tags=tags,
         )
 
@@ -2026,6 +2033,17 @@ class WingmanCore(WebSocketUser):
                 preset=greeting_preset,
             )
 
+            from services.memory_debug_log import log_memory_event
+
+            log_memory_event(
+                "greeting",
+                wingman_name,
+                variant="returning" if session_summary else "default",
+                preset=greeting_preset.name,
+                session_summary=session_summary or None,
+                raw_output=response.text if response else None,
+            )
+
             if response and self._connection_manager:
                 text = response.text or ""
                 additional_data = None
@@ -2876,11 +2894,14 @@ class WingmanCore(WebSocketUser):
                     top_p=request.top_p,
                     top_k=request.top_k,
                     presence_penalty=request.presence_penalty,
+                    reasoning=request.reasoning,
                 )
                 snap = benchmark.finish_snapshot()
                 elapsed_ms = snap.execution_time_ms if snap else 0
                 responses.append({
                     "text": result.text if result.text else "",
+                    "reasoning": result.reasoning_content or "",
+                    "truncated": result.truncated,
                     "completion_tokens": result.completion_tokens or 0,
                     "time_ms": round(elapsed_ms, 1),
                 })
@@ -2902,6 +2923,7 @@ class WingmanCore(WebSocketUser):
     PROMPT_LAB_CONFIG: dict[str, dict] = {
         "condense-conversation": {
             "production_preset": "Balanced",
+            "production_reasoning": True,
             "example_message": (
                 "CONVERSATION TO SUMMARIZE:\n"
                 "User: What's the best ship for solo bounty hunting?\n"
@@ -2926,6 +2948,7 @@ class WingmanCore(WebSocketUser):
         },
         "extract-memories": {
             "production_preset": "Precise",
+            "production_reasoning": True,
             "example_message": (
                 "user: Hey, can you check the trade prices for laranite at Lorville?\n"
                 "assistant: Laranite is currently buying at 31.26 aUEC per unit at the TDD in Lorville. "
@@ -3010,6 +3033,7 @@ class WingmanCore(WebSocketUser):
                     "label": first_line[:60] + ("…" if len(first_line) > 60 else ""),
                     "content": content,
                     "production_preset": lab_config.get("production_preset"),
+                    "production_reasoning": lab_config.get("production_reasoning", False),
                     "example_message": lab_config.get("example_message"),
                 })
         return results
@@ -3028,6 +3052,28 @@ class WingmanCore(WebSocketUser):
             }
             for preset in SamplingPreset
         ]
+
+    # POST /settings/local-ai/detect-context-size
+    async def detect_remote_context_size(
+        self, request: DetectContextSizeRequest
+    ) -> dict:
+        """Detect a remote llama.cpp support server's context window via /props.
+
+        Lets users point Wingman at a powerful self-hosted model and have all
+        the auto-sized budgets scale to its real context window.
+        """
+        n_ctx = await asyncio.to_thread(
+            LlamaCppRemote.detect_context_size, request.host, request.port
+        )
+        if n_ctx:
+            return {"success": True, "n_ctx": n_ctx}
+        return {
+            "success": False,
+            "error": (
+                "Could not read context size. Make sure the host/port point at a "
+                "reachable llama.cpp server that exposes /props."
+            ),
+        }
 
     # POST /settings/local-ai/playground/embed
     async def playground_embed(self, texts: list[str] = Body(...)) -> dict:

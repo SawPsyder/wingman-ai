@@ -14,6 +14,7 @@ from os import path
 
 from api.enums import LogType
 from services.file import get_persistent_memory_dir
+from services.memory_debug_log import log_memory_event
 from services.printr import Printr
 from services.token_utils import count_tokens
 
@@ -286,15 +287,31 @@ class PersistentMemoryService:
         from services.token_utils import count_tokens, truncate_to_tokens
 
         system_prompt = get_prompt("extract-memories")
+        # Reasoning is intentionally OFF here: on the bundled 2B model it rambles
+        # 3000+ <think> tokens and truncates before emitting the JSON (0 facts) —
+        # proven by evals/run_memory_eval.py. The rewritten prompt already yields
+        # clean facts without it. Skill authors / capable remote models can still
+        # opt into reasoning via the per-call param.
         budget = self.local_ai_service.get_token_budget(system_prompt)
         text_tokens = count_tokens(conversation_text)
 
         if text_tokens <= budget.max_input_tokens:
-            # Fits in one pass
+            # Fits in one pass.
             result = self.local_ai_service.support(
                 text=conversation_text,
                 system_prompt=system_prompt,
                 preset=SamplingPreset.PRECISE,
+            )
+            log_memory_event(
+                "extraction",
+                self.wingman_name,
+                mode="single",
+                reasoning=False,
+                generate_summary=generate_summary,
+                input_tokens=text_tokens,
+                conversation=conversation_text,
+                raw_output=result.text if result else None,
+                truncated=result.truncated if result else None,
             )
             self._process_extraction_result(result, generate_summary)
         else:
@@ -329,6 +346,17 @@ class PersistentMemoryService:
                     text=chunk,
                     system_prompt=system_prompt,
                     preset=SamplingPreset.PRECISE,
+                )
+                log_memory_event(
+                    "extraction",
+                    self.wingman_name,
+                    mode="chunk",
+                    reasoning=False,
+                    chunk_index=i,
+                    chunk_count=len(chunks),
+                    conversation=chunk,
+                    raw_output=result.text if result else None,
+                    truncated=result.truncated if result else None,
                 )
                 if result and result.text:
                     data = self._parse_json_response(result.text)

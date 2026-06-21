@@ -424,7 +424,9 @@ def _text_or_empty(resp) -> str:
 
 class SkillLocalAiView:
     """Free, local model. generate()/summarize() return plain strings ("" if the local
-    model is unavailable — check `available`). Tune with a SamplingPreset or temperature/top_p."""
+    model is unavailable — check `available`). Tune with a SamplingPreset or temperature/top_p.
+    Pass reasoning=True to make the model think first (slower, higher quality) — use only on
+    background work the user is not waiting for."""
 
     def __init__(self, local_ai) -> None:
         self._la = local_ai
@@ -434,27 +436,35 @@ class SkillLocalAiView:
         return bool(self._la.available)
 
     async def generate(self, text: str, *, system: str = "", preset=None,
-                       temperature=None, top_p=None, top_k=None) -> str:
-        resp = await self._la.support(text, system_prompt=system, preset=preset,
-                                      temperature=temperature, top_p=top_p, top_k=top_k)
+                       temperature=None, top_p=None, top_k=None,
+                       reasoning: bool | None = None) -> str:
+        resp = await self._la.generate(text, system_prompt=system, preset=preset,
+                                       temperature=temperature, top_p=top_p, top_k=top_k,
+                                       reasoning=reasoning)
         return _text_or_empty(resp)
 
     def generate_sync(self, text: str, *, system: str = "", preset=None,
-                     temperature=None, top_p=None, top_k=None) -> str:
-        resp = self._la.support_sync(text, system_prompt=system, preset=preset,
-                                     temperature=temperature, top_p=top_p, top_k=top_k)
+                     temperature=None, top_p=None, top_k=None,
+                     reasoning: bool | None = None) -> str:
+        resp = self._la.generate_sync(text, system_prompt=system, preset=preset,
+                                      temperature=temperature, top_p=top_p, top_k=top_k,
+                                      reasoning=reasoning)
         return _text_or_empty(resp)
 
     async def summarize(self, text: str, *, instruction: str = "", preset=None,
-                       temperature=None, top_p=None) -> str:
+                       temperature=None, top_p=None,
+                       reasoning: bool | None = None) -> str:
         resp = await self._la.summarize(text, instruction=instruction, preset=preset,
-                                        temperature=temperature, top_p=top_p)
+                                        temperature=temperature, top_p=top_p,
+                                        reasoning=reasoning)
         return _text_or_empty(resp)
 
     def summarize_sync(self, text: str, *, instruction: str = "", preset=None,
-                      temperature=None, top_p=None) -> str:
+                      temperature=None, top_p=None,
+                      reasoning: bool | None = None) -> str:
         resp = self._la.summarize_sync(text, instruction=instruction, preset=preset,
-                                       temperature=temperature, top_p=top_p)
+                                       temperature=temperature, top_p=top_p,
+                                       reasoning=reasoning)
         return _text_or_empty(resp)
 
     async def embed(self, texts: list[str]):

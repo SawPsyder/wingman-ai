@@ -34,6 +34,36 @@ class LlamaCppRemote:
             api_key="not-needed",
         )
 
+    @staticmethod
+    def detect_context_size(host: str, port: int) -> Optional[int]:
+        """Query a llama.cpp server's ``/props`` endpoint for its context window.
+
+        Returns the server's ``n_ctx`` so Wingman can size its budgets to the
+        remote model (which may be far larger than the bundled 2B baseline).
+        Returns None if the server is unreachable, isn't a llama.cpp server, or
+        doesn't expose the field. ``host`` is expected to include the scheme
+        (e.g. ``http://127.0.0.1``), matching the support_remote_host setting.
+        """
+        import json
+        import urllib.request
+
+        url = f"{host}:{port}".rstrip("/") + "/props"
+        try:
+            with urllib.request.urlopen(url, timeout=5) as resp:  # noqa: S310
+                data = json.loads(resp.read().decode("utf-8"))
+        except Exception:
+            return None
+
+        # llama.cpp reports n_ctx under default_generation_settings; some builds
+        # also surface it top-level. Check both.
+        for path in (("default_generation_settings", "n_ctx"), ("n_ctx",)):
+            node = data
+            for key in path:
+                node = node.get(key) if isinstance(node, dict) else None
+            if isinstance(node, int) and node > 0:
+                return node
+        return None
+
     def update_settings(self, new_settings: LlamaCppSettings):
         """Update settings and reinitialize clients if endpoints changed."""
         old = self.settings
@@ -56,11 +86,17 @@ class LlamaCppRemote:
         top_p: float = 1.0,
         top_k: int = 20,
         presence_penalty: float = 2.0,
+        reasoning: bool | None = None,
     ) -> "SupportResult":
-        """Process text via remote llama-server support model."""
+        """Process text via remote llama-server support model.
+
+        ``reasoning`` overrides thinking for this call (None = global default).
+        """
         from providers.llama_cpp_provider import (
             SupportResult,
             build_support_extra_body,
+            extract_reasoning_content,
+            resolve_enable_thinking,
         )
 
         if not system_prompt:
@@ -79,11 +115,13 @@ class LlamaCppRemote:
                 top_p=top_p,
                 presence_penalty=presence_penalty,
                 extra_body=build_support_extra_body(
-                    top_k, self.settings.reasoning_effort
+                    top_k, resolve_enable_thinking(reasoning)
                 ),
             )
-            raw = response.choices[0].message.content
+            message = response.choices[0].message
+            raw = message.content
             cleaned = self._deduplicate_lines(raw) if raw else None
+            reasoning_content = extract_reasoning_content(message)
 
             prompt_tokens = 0
             completion_tokens = 0
@@ -102,6 +140,7 @@ class LlamaCppRemote:
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
                 truncated=truncated,
+                reasoning_content=reasoning_content,
             )
         except Exception as e:
             from services.token_utils import count_tokens as _count

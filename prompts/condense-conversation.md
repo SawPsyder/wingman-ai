@@ -13,4 +13,5 @@ Rules:
 - Never repeat a bullet point
 - NEVER add meta-commentary about the summary itself (e.g. "no additional facts were included")
 - NEVER say "conversation concludes with..." -- just list the facts
+- Output ONLY the bullet lines. No intro, no closing remark. After the last fact, STOP -- do not explain that you finished or that nothing more was said.
 - If merging with an existing summary, integrate new facts without repeating old ones
