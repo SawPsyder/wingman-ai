@@ -128,31 +128,35 @@ class QuickCommands(Skill):
 
     async def _cleanup_learning_data(self) -> None:
         """Cleanup learning data. (Remove for commands that are no loner available)"""
-        pops = []
+        pops = set()
         for phrase, commands in self.learning_learned.items():
             for command in commands:
                 if not self.wingman.commands.get(command):
-                    pops.append(phrase)
+                    pops.add(phrase)
+                    break
         if pops:
             for phrase in pops:
                 self.learning_learned.pop(phrase)
 
-        pops = []
+        pops = set()
         finished = []
         for phrase in self.learning_data.keys():
             commands = self.learning_data[phrase]["commands"]
             for command in commands:
                 if not self.wingman.commands.get(command):
-                    pops.append(phrase)
+                    pops.add(phrase)
+                    break
                 elif self.learning_data[phrase]["count"] >= self._get_rule_count():
-                    finished.append(phrase)
+                    if phrase not in finished:
+                        finished.append(phrase)
 
         if pops:
             for phrase in pops:
                 self.learning_data.pop(phrase)
         if finished:
             for phrase in finished:
-                await self._finish_learning(phrase)
+                if phrase not in pops:
+                    await self._finish_learning(phrase)
 
         await self._save_learning_data()
 
