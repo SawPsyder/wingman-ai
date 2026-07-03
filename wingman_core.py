@@ -1821,6 +1821,26 @@ class WingmanCore(WebSocketUser):
         self.ensure_async(self._connection_manager.broadcast(command))
 
     def toggle_voice_recognition(self):
+        # During playback the mic is transiently muted so the wingman doesn't hear
+        # itself. Toggling then must flip the user's post-playback INTENT rather than
+        # act on the transient muted state (which would start the recognizer
+        # mid-playback and/or be overridden when playback ends). on_playback_finished
+        # restores from was_listening_before_playback, so updating that is enough.
+        if (
+            self.audio_player
+            and self.audio_player.is_playing
+            and self.settings_service.settings.voice_activation.enabled
+        ):
+            self.was_listening_before_playback = not self.was_listening_before_playback
+            self.ensure_async(
+                self._connection_manager.broadcast(
+                    VoiceActivationMutedCommand(
+                        muted=not self.was_listening_before_playback
+                    )
+                )
+            )
+            return
+
         mute = self.is_listening
         self.start_voice_recognition(mute)
 
