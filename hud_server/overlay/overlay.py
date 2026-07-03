@@ -1155,7 +1155,7 @@ class HeadsUpOverlay:
             [0, 0, width - 1, final_h - 1],
             radius=radius,
             fill=bg + (bg_alpha,),
-            outline=(55, 62, 74),
+            outline=(55, 62, 74, bg_alpha),
         )
 
         # Crop content - show bottom portion when clipped (newest content), top when fits
@@ -1496,7 +1496,7 @@ class HeadsUpOverlay:
             [0, 0, width - 1, final_h - 1],
             radius=radius,
             fill=bg + (bg_alpha,),
-            outline=(55, 62, 74),
+            outline=(55, 62, 74, bg_alpha),
         )
 
         crop = temp.crop((0, 0, width, final_h))
@@ -1809,7 +1809,7 @@ class HeadsUpOverlay:
             [0, 0, width - 1, final_h - 1],
             radius=radius,
             fill=bg + (bg_alpha,),
-            outline=(55, 62, 74),
+            outline=(55, 62, 74, bg_alpha),
         )
 
         # Composite content - scroll to bottom (show newest messages)
