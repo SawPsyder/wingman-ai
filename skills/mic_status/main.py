@@ -9,6 +9,9 @@ microphone state of Wingman AI:
 - Muted (grey mic with a red slash) when in push-to-talk mode, when muted via the
   mute-toggle key / GUI, OR while audio is playing back (Core pauses listening
   during playback so the wingman doesn't hear itself).
+- Recording (the recording wingman's avatar with a red recording dot) while a
+  push-to-talk / mouse / joystick key is held or a GUI mic toggle is active, so
+  it's clear WHICH wingman is currently being spoken to.
 
 Placement, position and size are configurable and applied to the HUD immediately.
 
@@ -17,6 +20,8 @@ Works with stock Core - no Core changes required. Signals used:
 - Mute state: Core's ``voice_activation_muted`` WebSocket broadcast (change-only),
   seeded at startup from the live Core mic state.
 - Playback state: the ``self.wingman.audio.is_playing`` facade, polled in the loop.
+- Recording state: Core's in-process ``active_recording`` (``__main__.core``), which
+  holds the wingman being recorded while a push-to-talk key is held, polled in the loop.
 
 The HUD server must be enabled in the global settings.
 """
@@ -26,6 +31,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 from typing import TYPE_CHECKING, Optional
 
 import websockets
@@ -76,7 +82,9 @@ class MicStatus(Skill):
         self._client: Optional[HudHttpClient] = None
         self._task: Optional[asyncio.Task] = None
         self._mic_listening: Optional[bool] = None  # raw mute state (WS / seed)
-        self._rendered: Optional[bool] = None        # last effective state drawn
+        self._rendered_img: Optional[str] = None     # path of the last image drawn
+        # name -> composited "avatar + red dot" image path, built lazily per wingman.
+        self._rec_img_cache: dict[str, str] = {}
 
     async def validate(self) -> list[WingmanInitializationError]:
         return await super().validate()
@@ -107,7 +115,7 @@ class MicStatus(Skill):
         await self._client.create_group(
             self._group, WindowType.PERSISTENT, props=self._build_props()
         )
-        self._rendered = None
+        self._rendered_img = None
         await self._refresh()
 
     # ---- config helpers ----
@@ -151,6 +159,118 @@ class MicStatus(Skill):
             return bool(self.wingman.audio.is_playing)
         except Exception:
             return False
+
+    # ---- recording (push-to-talk) helpers ----
+
+    def _recording_wingman(self):
+        """The wingman currently being recorded (push-to-talk / mouse / joystick key
+        held, or GUI mic toggle), read in-process from Core, or None if idle.
+
+        Core keeps ``active_recording = {"key": ..., "wingman": <Wingman|None>}`` and
+        sets ``wingman`` for the whole duration a record key is held. The wingman may
+        differ from this skill's own wingman, which is exactly the point - it tells us
+        WHO is being spoken to.
+        """
+        main_mod = sys.modules.get("__main__")
+        core = getattr(main_mod, "core", None) if main_mod is not None else None
+        rec = getattr(core, "active_recording", None) if core is not None else None
+        if isinstance(rec, dict):
+            return rec.get("wingman")
+        return None
+
+    def _recording_image_for(self, wingman) -> str:
+        """Path to the "avatar + red recording dot" icon for the given wingman.
+
+        Cached, but keyed on the avatar's current path AND modification time, so a new
+        avatar saved during a session rebuilds the icon instead of serving a stale one.
+        ``get_avatar_path`` resolves the path fresh each call (custom file if present,
+        else the default), so this stays correct across save events. Falls back to the
+        plain mic-on icon if the avatar or Pillow is unavailable so we always show
+        *something*.
+        """
+        name = getattr(wingman, "name", None) or "wingman"
+
+        avatar = None
+        getter = getattr(wingman, "get_avatar_path", None)
+        if callable(getter):
+            try:
+                avatar = getter()
+            except Exception:
+                avatar = None
+
+        base = avatar if (avatar and os.path.exists(avatar)) else self._mic_on_img
+        try:
+            stamp = int(os.path.getmtime(base))
+        except Exception:
+            stamp = 0
+        cache_key = f"{name}|{base}|{stamp}"
+
+        cached = self._rec_img_cache.get(cache_key)
+        if cached and os.path.exists(cached):
+            return cached
+
+        built = self._build_recording_image(name, avatar)
+        img = built or self._mic_on_img
+        if built:
+            self._rec_img_cache[cache_key] = built
+        return img
+
+    def _build_recording_image(self, name: str, avatar_path: Optional[str]) -> Optional[str]:
+        """Composite the wingman avatar with a red recording dot and write it to a temp
+        PNG. Returns the path, or None on any failure (missing Pillow/avatar/write)."""
+        try:
+            from PIL import Image, ImageChops, ImageDraw
+        except Exception:
+            return None
+
+        base_path = (
+            avatar_path
+            if avatar_path and os.path.exists(avatar_path)
+            else self._mic_on_img
+        )
+        try:
+            img = Image.open(base_path).convert("RGBA")
+        except Exception:
+            return None
+
+        w, h = img.size
+        # Round off the avatar's corners with a mask before drawing the dot, so the
+        # dot (which pokes past the top-right corner) is never clipped. The mask is
+        # multiplied into the existing alpha so any avatar transparency is preserved.
+        radius = max(2, int(min(w, h) * 0.18))
+        mask = Image.new("L", (w, h), 0)
+        ImageDraw.Draw(mask).rounded_rectangle(
+            [0, 0, w - 1, h - 1], radius=radius, fill=255
+        )
+        img.putalpha(ImageChops.multiply(img.getchannel("A"), mask))
+
+        # Recording dot in the top-right corner, sized relative to the icon with a
+        # light ring behind it so it stays visible on any avatar.
+        diameter = max(12, int(min(w, h) * 0.30))
+        margin = max(2, int(diameter * 0.15))
+        x1, y0 = w - margin, margin
+        x0, y1 = x1 - diameter, y0 + diameter
+        draw = ImageDraw.Draw(img)
+        ring = max(1, int(diameter * 0.08))
+        draw.ellipse(
+            [x0 - ring, y0 - ring, x1 + ring, y1 + ring],
+            fill=(255, 255, 255, 235),
+        )
+        draw.ellipse([x0, y0, x1, y1], fill=(220, 32, 32, 255))
+
+        try:
+            out_dir = os.path.join(tempfile.gettempdir(), "wingman_mic_status")
+            os.makedirs(out_dir, exist_ok=True)
+            safe = re.sub(r"[^a-zA-Z0-9_-]", "_", name)
+            try:
+                stamp = int(os.path.getmtime(base_path))
+            except Exception:
+                stamp = 0
+            out = os.path.join(out_dir, f"{safe}_{stamp}_rec.png").replace("\\", "/")
+            img.save(out)
+            return out
+        except Exception:
+            return None
 
     def _build_props(self) -> PersistentProps:
         """Build the window props from the skill config (placement, position, size)."""
@@ -239,17 +359,25 @@ class MicStatus(Skill):
             await self._refresh()
 
     async def _refresh(self) -> None:
-        """Draw the icon for the current effective state (listening AND not playing)."""
+        """Draw the icon for the current effective state.
+
+        Recording (push-to-talk held) wins: it shows the recording wingman's avatar
+        with a red dot. Otherwise the mic reflects listening AND not playing.
+        """
         if not self._client:
             return
-        mic = self._mic_listening
-        if mic is None:
-            mic = self._seed_listening()
-        effective = bool(mic) and not self._is_playing()
-        if effective == self._rendered:
+        rec_wingman = self._recording_wingman()
+        if rec_wingman is not None:
+            img = self._recording_image_for(rec_wingman)
+        else:
+            mic = self._mic_listening
+            if mic is None:
+                mic = self._seed_listening()
+            effective = bool(mic) and not self._is_playing()
+            img = self._mic_on_img if effective else self._mic_off_img
+        if img == self._rendered_img:
             return
-        self._rendered = effective
-        img = self._mic_on_img if effective else self._mic_off_img
+        self._rendered_img = img
         # Empty alt text => the overlay renders the image with no caption below it.
         await self._client.add_item(
             group_name=self._group,
