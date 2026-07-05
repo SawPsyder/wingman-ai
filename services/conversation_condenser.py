@@ -123,7 +123,12 @@ class ConversationCondenser:
             background_tasks: Optional set to track background tasks for memory extraction.
             force: If True, skip the threshold check (used for manual trigger).
         """
+        # On the manual trigger (force), surface skips as self-vanishing toasts —
+        # otherwise it looks like the button did nothing. Automatic background
+        # runs stay server-only to avoid toast spam.
         if self._is_condensing:
+            if force:
+                printr.toast_info("Conversation summarization is already running.")
             await printr.print_async(
                 "Condensation skipped — already in progress.",
                 color=LogType.WARNING,
@@ -133,6 +138,10 @@ class ConversationCondenser:
             )
             return
         if not local_ai_service or not local_ai_service.is_ready():
+            if force:
+                printr.toast_warning(
+                    "Cannot summarize the conversation — local AI is not ready."
+                )
             await printr.print_async(
                 "Condensation skipped — local AI service not available.",
                 color=LogType.WARNING,
@@ -151,6 +160,10 @@ class ConversationCondenser:
 
         # Need at least something to condense beyond what we keep
         if total_msg_count <= keep_recent:
+            if force:
+                printr.toast_info(
+                    "Nothing to summarize yet — the conversation is still too short."
+                )
             await printr.print_async(
                 f"Condensation skipped — only {total_msg_count} messages, need more than {keep_recent} to condense.",
                 color=LogType.LOCALMODEL,

@@ -2144,10 +2144,15 @@ class WingmanCore(WebSocketUser):
     async def condense_conversation(self, wingman_name: str):
         wingman = self.tower.get_wingman_by_name(wingman_name)
         if not wingman:
+            self.printr.toast_warning(
+                f"Cannot summarize: Wingman '{wingman_name}' not found."
+            )
             return False
-        if not hasattr(wingman, "_condense_history"):
-            return False
-        await wingman._condense_history(force=True)
+        await wingman.condenser.condense(
+            local_ai_service=wingman.local_ai_service,
+            persistent_memory_service=wingman.persistent_memory_service,
+            force=True,
+        )
         return True
 
     # GET /wingman-context
