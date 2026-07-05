@@ -520,7 +520,7 @@ class AudioPlayer:
             )
             audio_buffer = bytearray(buffer_size)
             filled_size = buffer_callback(audio_buffer)
-            while filled_size > 0:
+            while filled_size > 0 and self.raw_stream is stream:
                 data_in_numpy = np.frombuffer(
                     audio_buffer[:filled_size], dtype=dtype
                 ).astype(np.float32)
@@ -562,8 +562,17 @@ class AudioPlayer:
                     self._save_preview_audio(full.astype(np.float32), sample_rate)
                 except Exception:
                     pass
-            while not stream_finished:
-                sd.sleep(100)
+            # stop_playback() detaches raw_stream and kills the audio callback,
+            # so stream_finished would never turn True — bail out then. Async
+            # sleep keeps the owning event loop responsive while draining.
+            while not stream_finished and self.raw_stream is stream:
+                await asyncio.sleep(0.1)
+
+            if self.raw_stream is not stream:
+                # Interrupted via stop_playback(), which already reset state
+                # and notified listeners. Skip the trailing beeps.
+                return
+            self.raw_stream = None
 
             contains_high_end_radio = SoundEffect.HIGH_END_RADIO in config.effects
             if contains_high_end_radio:
