@@ -749,6 +749,22 @@ class SkillAudio:
             lambda: self._wingman.audio_player.playback_events.unsubscribe("finished", callback)
         )
 
+    # --- mic / voice-activation state ---
+
+    @property
+    def mic_status(self):
+        """Current MicStatus snapshot (listening/playing/recording/...), or None before
+        Core has published one. Read without waiting for an event, e.g. to seed on load."""
+        return self._wingman.audio_player.voice_state
+
+    def on_mic_status_changed(self, callback: Any) -> "Subscription":
+        """Observe mic / voice-activation state changes. The callback receives the new
+        MicStatus. Returns a Subscription — call .unsubscribe() to detach."""
+        self._wingman.audio_player.voice_events.subscribe("changed", callback)
+        return Subscription(
+            lambda: self._wingman.audio_player.voice_events.unsubscribe("changed", callback)
+        )
+
     # --- output/input device control (in-process; replaces HTTP-to-backend hacks) ---
 
     @property

@@ -78,6 +78,7 @@ from hud_server.constants import (
     MAX_PROGRESS_GRADIENT_CACHE_SIZE,
     MAX_CORNER_CACHE_SIZE,
     MAX_LOADING_BAR_CACHE_SIZE,
+    DEFAULT_BORDER_COLOR,
 )
 
 
@@ -1155,7 +1156,7 @@ class HeadsUpOverlay:
             [0, 0, width - 1, final_h - 1],
             radius=radius,
             fill=bg + (bg_alpha,),
-            outline=(55, 62, 74, bg_alpha),
+            outline=(*DEFAULT_BORDER_COLOR, bg_alpha),
         )
 
         # Crop content - show bottom portion when clipped (newest content), top when fits
@@ -1496,7 +1497,7 @@ class HeadsUpOverlay:
             [0, 0, width - 1, final_h - 1],
             radius=radius,
             fill=bg + (bg_alpha,),
-            outline=(55, 62, 74, bg_alpha),
+            outline=(*DEFAULT_BORDER_COLOR, bg_alpha),
         )
 
         crop = temp.crop((0, 0, width, final_h))
@@ -1809,7 +1810,7 @@ class HeadsUpOverlay:
             [0, 0, width - 1, final_h - 1],
             radius=radius,
             fill=bg + (bg_alpha,),
-            outline=(55, 62, 74, bg_alpha),
+            outline=(*DEFAULT_BORDER_COLOR, bg_alpha),
         )
 
         # Composite content - scroll to bottom (show newest messages)

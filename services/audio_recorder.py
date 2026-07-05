@@ -254,18 +254,17 @@ class AudioRecorder:
                     color=LogType.ERROR,
                 )
 
-    def start_continuous_listening(self, va_settings: VoiceActivationSettings):
+    def start_continuous_listening(self, va_settings: VoiceActivationSettings) -> bool:
         self.va_settings = va_settings
+        # Bounded wait instead of an infinite spin: a session that never clears must
+        # not park the calling thread (hotkey/endpoint) forever. Flag and listener are
+        # set atomically under the lock so a concurrent stop can never observe (and
+        # leave behind) a half-started session.
+        deadline = time.time() + 5.0
         while True:
             with self.lock:
                 if not self.is_listening_continuously and self.stop_function is None:
                     self.is_listening_continuously = True
-                    break
-            time.sleep(0.1)
-
-        def safe_start():
-            with self.lock:
-                if self.is_listening_continuously:
                     self.stop_function = self.recognizer.listen_in_background(
                         self.microphone, self.__handle_continuous_listening
                     )
@@ -274,17 +273,27 @@ class AudioRecorder:
                         color=LogType.INFO,
                         server_only=True,
                     )
-
-        safe_start()
+                    return True
+            if time.time() >= deadline:
+                self.printr.print(
+                    "Could not start continuous voice recognition: the previous session did not stop in time.",
+                    color=LogType.ERROR,
+                    server_only=True,
+                )
+                return False
+            time.sleep(0.1)
 
     def stop_continuous_listening(self):
-        if self.stop_function:
-            self.stop_function(wait_for_stop=True)
-            self.stop_function = None
+        with self.lock:
+            if self.stop_function:
+                self.stop_function(wait_for_stop=True)
+                self.stop_function = None
+                time.sleep(0.1)  # Time might need adjustment based on testing.
+                self.printr.print(
+                    "Continous voice recognition stopped.",
+                    color=LogType.INFO,
+                    server_only=True,
+                )
+            # Clear the flag even without a stop_function so a corrupted half-started
+            # state heals on the next stop instead of blocking every future start.
             self.is_listening_continuously = False
-            time.sleep(0.1)  # Time might need adjustment based on testing.
-            self.printr.print(
-                "Continous voice recognition stopped.",
-                color=LogType.INFO,
-                server_only=True,
-            )

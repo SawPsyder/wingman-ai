@@ -38,6 +38,9 @@ class AudioPlayer:
         self.wingman_name = ""
         self.playback_events = PubSub()
         self.stream_event = PubSub()
+        # Mic / voice-activation state bus. Core is the sole writer.
+        self.voice_events = PubSub()
+        self.voice_state = None
         self.on_playback_started = on_playback_started
         self.on_playback_finished = on_playback_finished
         self.sample_dir = path.join(

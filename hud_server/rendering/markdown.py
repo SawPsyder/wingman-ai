@@ -35,6 +35,7 @@ try:
         MAX_TEXT_WRAP_CACHE_SIZE,
         MAX_TEXT_SIZE_CACHE_SIZE,
         MAX_BASE64_IMAGE_BYTES,
+        DEFAULT_BORDER_COLOR,
     )
 except ImportError:
     # Fallback defaults for standalone testing
@@ -43,6 +44,7 @@ except ImportError:
     MAX_TEXT_WRAP_CACHE_SIZE = 200
     MAX_TEXT_SIZE_CACHE_SIZE = 2000
     MAX_BASE64_IMAGE_BYTES = 8 * 1024 * 1024
+    DEFAULT_BORDER_COLOR = (55, 62, 74)
 
 # data:image/<type>;base64,<data> URIs
 _DATA_URI_RE = re.compile(r'^data:image/[a-zA-Z0-9.+-]+;base64,(.+)$', re.DOTALL)
@@ -451,9 +453,10 @@ class MarkdownRenderer:
         while i < len(text):
             start_pos = i
 
-            # Image ![alt](url)
+            # Image ![alt](url). The URL allows one level of balanced parens so local
+            # paths like .../Wingman (Beta)/icon.png aren't truncated at the first ).
             if text[i:i+2] == '![':
-                m = re.match(r'!\[([^]]*)]\(([^)]+)\)', text[i:])
+                m = re.match(r'!\[([^]]*)]\(((?:[^()]|\([^()]*\))+)\)', text[i:])
                 if m:
                     full_len = len(m.group(0))
                     # Content is "alt" which starts at i+2, ends before ]
@@ -1626,7 +1629,7 @@ class MarkdownRenderer:
                 if ci < num_cols - 1:
                     sep_x = cell_x + cell_w
                     draw.line([(sep_x, current_y + 4), (sep_x, current_y + row_h - 4)],
-                             fill=(55, 62, 74), width=1)
+                             fill=DEFAULT_BORDER_COLOR, width=1)
 
                 cell_x += cell_w
 
@@ -1635,7 +1638,7 @@ class MarkdownRenderer:
 
         # Outer border (only around visible portion)
         if visible_rows > 0:
-            draw.rounded_rectangle([x, y, x + table_w, last_visible_y], radius=8, outline=(55, 62, 74), width=1)
+            draw.rounded_rectangle([x, y, x + table_w, last_visible_y], radius=8, outline=DEFAULT_BORDER_COLOR, width=1)
 
         return last_visible_y + 10 if visible_rows > 0 else y
 
