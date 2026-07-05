@@ -1002,6 +1002,25 @@ class Wingman:
 
     # ───────────────── Config management ─────────────────────── #
 
+    def _propagate_config(self, config: WingmanConfig) -> None:
+        """Push a config object to everything that captured a reference at
+        creation time. Assignments rebind, so holders of the previous config
+        object won't see new values without this."""
+        self.command_executor.config = config
+        self.conversation._config = config
+        self.condenser._config = config
+        self.context_builder._config = config
+        self.tool_executor._config = config
+        self.metrics.config = config
+        self.mcp_manager.config = config
+        self.skill_manager.config = config
+        # Provider adapters (ProviderFactory) also capture the config object —
+        # rebind so setting changes saved without revalidation (e.g. a new TTS
+        # voice) apply to live playback immediately.
+        for provider in (self.stt, self.tts, self.llm):
+            if provider is not None and hasattr(provider, "_config"):
+                provider._config = config
+
     async def update_config(
         self, config: WingmanConfig, skip_config_validation: bool = True
     ) -> bool:
@@ -1010,16 +1029,7 @@ class Wingman:
                 old_config = deepcopy(self.config)
 
             self.config = config
-
-            # Propagate to all services that hold a config reference
-            self.command_executor.config = config
-            self.conversation._config = config
-            self.condenser._config = config
-            self.context_builder._config = config
-            self.tool_executor._config = config
-            self.metrics.config = config
-            self.mcp_manager.config = config
-            self.skill_manager.config = config
+            self._propagate_config(config)
 
             await self._update_skill_configs(config)
 
@@ -1031,16 +1041,10 @@ class Wingman:
                         error.error_type
                         != WingmanInitializationErrorType.MISSING_SECRET
                     ):
-                        # Roll back config on all services
+                        # Roll back config on all services (validate() already
+                        # recreated the providers, so rebind them too)
                         self.config = old_config
-                        self.command_executor.config = old_config
-                        self.conversation._config = old_config
-                        self.condenser._config = old_config
-                        self.context_builder._config = old_config
-                        self.tool_executor._config = old_config
-                        self.metrics.config = old_config
-                        self.mcp_manager.config = old_config
-                        self.skill_manager.config = old_config
+                        self._propagate_config(old_config)
                         return False
 
             return True
