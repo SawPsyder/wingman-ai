@@ -266,6 +266,17 @@ class VoiceService:
         )
         return voices
 
+    @staticmethod
+    async def _run_playback(playback):
+        """Run a playback coroutine in a worker thread with its own event loop.
+
+        Playback previews block their loop (audio pumping + drain), so running
+        them on the API event loop would freeze the server and make POST
+        /stop-playback unreachable until the preview ends. This mirrors how
+        wingmen play TTS via threaded_execution.
+        """
+        await asyncio.to_thread(asyncio.run, playback)
+
     # POST /play/openai
     async def play_openai_tts(
         self,
@@ -278,15 +289,17 @@ class VoiceService:
         stream: bool,
     ):
         openai = OpenAi(api_key=api_key)
-        await openai.play_audio(
-            text=text,
-            voice=voice,
-            model=model,
-            speed=speed,
-            sound_config=sound_config,
-            audio_player=self.audio_player,
-            wingman_name="system",
-            stream=stream,
+        await self._run_playback(
+            openai.play_audio(
+                text=text,
+                voice=voice,
+                model=model,
+                speed=speed,
+                sound_config=sound_config,
+                audio_player=self.audio_player,
+                wingman_name="system",
+                stream=stream,
+            )
         )
 
     # POST /play/openai-compatible
@@ -302,15 +315,17 @@ class VoiceService:
         stream: bool,
     ):
         openai = OpenAiCompatibleTts(api_key=api_key, base_url=base_url)
-        await openai.play_audio(
-            text=text,
-            voice=voice,
-            model=model,
-            speed=speed,
-            sound_config=sound_config,
-            audio_player=self.audio_player,
-            wingman_name="system",
-            stream=stream,
+        await self._run_playback(
+            openai.play_audio(
+                text=text,
+                voice=voice,
+                model=model,
+                speed=speed,
+                sound_config=sound_config,
+                audio_player=self.audio_player,
+                wingman_name="system",
+                stream=stream,
+            )
         )
 
     # POST /play/azure
@@ -318,13 +333,15 @@ class VoiceService:
         self, text: str, api_key: str, config: AzureTtsConfig, sound_config: SoundConfig
     ):
         azure = OpenAiAzure()
-        await azure.play_audio(
-            text=text,
-            api_key=api_key,
-            config=config,
-            sound_config=sound_config,
-            audio_player=self.audio_player,
-            wingman_name="system",
+        await self._run_playback(
+            azure.play_audio(
+                text=text,
+                api_key=api_key,
+                config=config,
+                sound_config=sound_config,
+                audio_player=self.audio_player,
+                wingman_name="system",
+            )
         )
 
     # POST /play/elevenlabs
@@ -336,13 +353,15 @@ class VoiceService:
         sound_config: SoundConfig,
     ):
         elevenlabs = ElevenLabs(api_key=api_key, wingman_name="")
-        await elevenlabs.play_audio(
-            text=text,
-            config=config,
-            sound_config=sound_config,
-            audio_player=self.audio_player,
-            wingman_name="system",
-            stream=False,
+        await self._run_playback(
+            elevenlabs.play_audio(
+                text=text,
+                config=config,
+                sound_config=sound_config,
+                audio_player=self.audio_player,
+                wingman_name="system",
+                stream=False,
+            )
         )
 
     # POST /play/edgetts
@@ -350,12 +369,14 @@ class VoiceService:
         self, text: str, config: EdgeTtsConfig, sound_config: SoundConfig
     ):
         edge = Edge()
-        await edge.play_audio(
-            text=text,
-            config=config,
-            sound_config=sound_config,
-            audio_player=self.audio_player,
-            wingman_name="system",
+        await self._run_playback(
+            edge.play_audio(
+                text=text,
+                config=config,
+                sound_config=sound_config,
+                audio_player=self.audio_player,
+                wingman_name="system",
+            )
         )
 
     # POST /play/hume
@@ -363,12 +384,14 @@ class VoiceService:
         self, text: str, api_key: str, config: HumeConfig, sound_config: SoundConfig
     ):
         hume = Hume(api_key=api_key, wingman_name="")
-        await hume.play_audio(
-            text=text,
-            config=config,
-            sound_config=sound_config,
-            audio_player=self.audio_player,
-            wingman_name="system",
+        await self._run_playback(
+            hume.play_audio(
+                text=text,
+                config=config,
+                sound_config=sound_config,
+                audio_player=self.audio_player,
+                wingman_name="system",
+            )
         )
 
     # POST /play/inworld
@@ -376,24 +399,28 @@ class VoiceService:
         self, text: str, api_key: str, config: InworldConfig, sound_config: SoundConfig
     ):
         inworld = Inworld(api_key=api_key, wingman_name="")
-        await inworld.play_audio(
-            text=text,
-            config=config,
-            sound_config=sound_config,
-            audio_player=self.audio_player,
-            wingman_name="system",
+        await self._run_playback(
+            inworld.play_audio(
+                text=text,
+                config=config,
+                sound_config=sound_config,
+                audio_player=self.audio_player,
+                wingman_name="system",
+            )
         )
 
     # POST /play/xvasynth
     async def play_xvasynth_tts(
         self, text: str, config: XVASynthTtsConfig, sound_config: SoundConfig
     ):
-        await self.xvasynth.play_audio(
-            text=text,
-            config=config,
-            sound_config=sound_config,
-            audio_player=self.audio_player,
-            wingman_name="system",
+        await self._run_playback(
+            self.xvasynth.play_audio(
+                text=text,
+                config=config,
+                sound_config=sound_config,
+                audio_player=self.audio_player,
+                wingman_name="system",
+            )
         )
 
     # GET /voices/pocket-tts
@@ -404,12 +431,14 @@ class VoiceService:
     async def play_pocket_tts(
         self, text: str, config: PocketTTSConfig, sound_config: SoundConfig
     ):
-        await self.pocket_tts.play_audio(
-            text=text,
-            config=config,
-            sound_config=sound_config,
-            audio_player=self.audio_player,
-            wingman_name="system",
+        await self._run_playback(
+            self.pocket_tts.play_audio(
+                text=text,
+                config=config,
+                sound_config=sound_config,
+                audio_player=self.audio_player,
+                wingman_name="system",
+            )
         )
 
     # POST /play/wingman-pro/azure
@@ -420,12 +449,14 @@ class VoiceService:
             wingman_name="system",
             settings=self.config_manager.settings_config.wingman_pro,
         )
-        await wingman_pro.generate_azure_speech(
-            text=text,
-            config=config,
-            sound_config=sound_config,
-            audio_player=self.audio_player,
-            wingman_name="system",
+        await self._run_playback(
+            wingman_pro.generate_azure_speech(
+                text=text,
+                config=config,
+                sound_config=sound_config,
+                audio_player=self.audio_player,
+                wingman_name="system",
+            )
         )
 
     # POST /play/wingman-pro/openai
@@ -436,14 +467,16 @@ class VoiceService:
             wingman_name="system",
             settings=self.config_manager.settings_config.wingman_pro,
         )
-        await wingman_pro.generate_openai_speech(
-            text=text,
-            voice=voice,
-            model=model,
-            speed=speed,
-            sound_config=sound_config,
-            audio_player=self.audio_player,
-            wingman_name="system",
+        await self._run_playback(
+            wingman_pro.generate_openai_speech(
+                text=text,
+                voice=voice,
+                model=model,
+                speed=speed,
+                sound_config=sound_config,
+                audio_player=self.audio_player,
+                wingman_name="system",
+            )
         )
 
     # POST /play/wingman-pro/inworld
@@ -457,10 +490,12 @@ class VoiceService:
             wingman_name="system",
             settings=self.config_manager.settings_config.wingman_pro,
         )
-        await wingman_pro.generate_inworld_speech(
-            text=text,
-            config=config,
-            sound_config=sound_config,
-            audio_player=self.audio_player,
-            wingman_name="system",
+        await self._run_playback(
+            wingman_pro.generate_inworld_speech(
+                text=text,
+                config=config,
+                sound_config=sound_config,
+                audio_player=self.audio_player,
+                wingman_name="system",
+            )
         )
