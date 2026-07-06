@@ -564,14 +564,8 @@ class ConfigService:
 
             # 4. Remove skill from ALL wingman configs across ALL config dirs
             for config_dir in self.config_manager.get_config_dirs():
-                if config_dir.is_deleted:
-                    continue
-
                 wingman_files = self.config_manager.get_wingmen_configs(config_dir)
                 for wingman_file in wingman_files:
-                    if wingman_file.is_deleted:
-                        continue
-
                     try:
                         wingman_config = self.config_manager.load_wingman_config(
                             config_dir=config_dir, wingman_file=wingman_file
@@ -1096,9 +1090,12 @@ class ConfigService:
     async def create_config(
         self, config_name: str, template: Optional[ConfigDirInfo] = None
     ):
-        new_dir = self.config_manager.create_config(
-            config_name=config_name, template=template
-        )
+        try:
+            new_dir = self.config_manager.create_config(
+                config_name=config_name, template=template
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
         await self.load_config(new_dir)
 
     # POST config/duplicate
@@ -1108,6 +1105,8 @@ class ConfigService:
                 source_config_dir=request.source_config_dir,
                 new_name=request.new_name,
             )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
         except FileNotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
         except FileExistsError as e:
@@ -1587,9 +1586,6 @@ class ConfigService:
         made_changes = False
 
         for wingman_config_file in wingman_config_files:
-            if wingman_config_file.is_deleted:
-                continue
-
             wingman_config = config.wingmen[wingman_config_file.name]
 
             if wingman_config_file.name == wingman_name:
