@@ -23,7 +23,7 @@ import re
 import tempfile
 from typing import TYPE_CHECKING, Optional
 
-from api.interface import SettingsConfig, SkillConfig, WingmanInitializationError
+from api.interface import SettingsConfig, SkillConfig
 from skills.skill_base import Skill
 from hud_server.http_client import HudHttpClient
 from hud_server.types import LayoutMode, PersistentProps, WindowType
@@ -58,9 +58,7 @@ class MicStatus(Skill):
         self._status: Optional["MicStatusResponse"] = None
         self._rendered_img: Optional[str] = None
         self._rec_img_cache: dict[str, str] = {}
-
-    async def validate(self) -> list[WingmanInitializationError]:
-        return await super().validate()
+        self._refresh_lock = asyncio.Lock()
 
     async def prepare(self) -> None:
         await super().prepare()
@@ -90,10 +88,6 @@ class MicStatus(Skill):
     def _get_prop(self, key: str, default):
         val = self.retrieve_custom_property_value(key, [])
         return val if val is not None else default
-
-    def _va_enabled(self) -> bool:
-        va = getattr(self.settings, "voice_activation", None)
-        return bool(getattr(va, "enabled", False))
 
     def _build_props(self) -> PersistentProps:
         common = dict(
@@ -138,6 +132,9 @@ class MicStatus(Skill):
         built = self._build_recording_image(name, avatar)
         img = built or self._mic_on_img
         if built:
+            # One cache entry per wingman: drop stale keys from older avatars.
+            for key in [k for k in self._rec_img_cache if k.startswith(f"{name}|")]:
+                del self._rec_img_cache[key]
             self._rec_img_cache[cache_key] = built
         return img
 
@@ -189,9 +186,23 @@ class MicStatus(Skill):
                 stamp = 0
             out = os.path.join(out_dir, f"{safe}_{stamp}_rec.png").replace("\\", "/")
             img.save(out)
+            self._prune_stale_images(out_dir, safe, keep=out)
             return out
         except Exception:
             return None
+
+    @staticmethod
+    def _prune_stale_images(out_dir: str, safe: str, keep: str) -> None:
+        """Delete older composites for the same wingman so %TEMP% doesn't accumulate."""
+        pattern = re.compile(rf"^{re.escape(safe)}_\d+_rec\.png$")
+        try:
+            for file in os.listdir(out_dir):
+                if pattern.match(file):
+                    file_path = os.path.join(out_dir, file).replace("\\", "/")
+                    if file_path != keep:
+                        os.remove(file_path)
+        except Exception:
+            pass
 
     # ---- run + render ----
 
@@ -228,21 +239,26 @@ class MicStatus(Skill):
         """Draw the icon for the current state. Recording wins; else listening AND not playing."""
         if not self._client:
             return
-        status = self._status
-        if status is not None and status.recording and status.recording_wingman:
-            img = self._recording_image_for(
-                status.recording_wingman, status.recording_wingman_avatar
-            )
-        else:
-            listening = status.listening if status is not None else self._va_enabled()
-            playing = status.playing if status is not None else False
-            img = self._mic_on_img if (listening and not playing) else self._mic_off_img
-        if img == self._rendered_img:
-            return
-        # Only remember the draw as done if the HUD actually accepted it, so a failed
-        # draw (HUD down/restarting) is retried on the next refresh instead of skipped.
-        if await self._draw(img):
-            self._rendered_img = img
+        # Serialize and re-read the status inside the lock: two rapid state changes spawn
+        # two refreshes, and without this the older draw could land on the HUD last.
+        async with self._refresh_lock:
+            status = self._status
+            if status is not None and status.recording and status.recording_wingman:
+                img = self._recording_image_for(
+                    status.recording_wingman, status.recording_wingman_avatar
+                )
+            else:
+                # No status yet: show muted - Core starts with the recognizer off
+                # until the user/client unmutes.
+                listening = status.listening if status is not None else False
+                playing = status.playing if status is not None else False
+                img = self._mic_on_img if (listening and not playing) else self._mic_off_img
+            if img == self._rendered_img:
+                return
+            # Only remember the draw as done if the HUD actually accepted it, so a failed
+            # draw (HUD down/restarting) is retried on the next refresh instead of skipped.
+            if await self._draw(img):
+                self._rendered_img = img
 
     async def _draw(self, img: str) -> bool:
         """Ensure the group exists with our props, then add the icon item; True only if
