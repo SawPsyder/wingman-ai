@@ -1899,9 +1899,8 @@ class WingmanCore(WebSocketUser):
                     else:
                         self.audio_recorder.stop_continuous_listening()
 
-            if not is_transient:
-                command = VoiceActivationMutedCommand(muted=mute)
-                self._run_on_main_loop(self._connection_manager.broadcast(command))
+            command = VoiceActivationMutedCommand(muted=not self.is_listening)
+            self._run_on_main_loop(self._connection_manager.broadcast(command))
             self._emit_voice_state()
 
     def set_mic_mute(self, mute: Optional[bool] = False):
