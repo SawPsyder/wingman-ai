@@ -379,17 +379,13 @@ class ElevenLabs:
                 # a superseding playback is detectable by identity (same contract as the
                 # direct path). onPlaybackEnd sets playback_complete on natural end.
                 audio_player.raw_stream = output_stream
-                started = False
+                # playback_complete is set by onPlaybackEnd, which fires on every real
+                # stream termination (natural end, CallbackStop, abort, stop). The
+                # raw_stream identity check exits if a newer playback supersedes us.
                 while (
                     not playback_complete.is_set()
                     and audio_player.raw_stream is output_stream
                 ):
-                    # Bail if the streamer thread died without firing onPlaybackEnd:
-                    # once the stream has run, exit as soon as it goes idle.
-                    if output_stream.active:
-                        started = True
-                    elif started:
-                        break
                     await asyncio.sleep(0.1)
             finally:
                 if audio_player.raw_stream is output_stream:
