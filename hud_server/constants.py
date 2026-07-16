@@ -52,6 +52,8 @@ DEFAULT_BG_COLOR = "#1e212b"
 DEFAULT_TEXT_COLOR = "#f0f0f0"
 DEFAULT_ACCENT_COLOR = "#00aaff"
 DEFAULT_LOADING_COLOR = "#00aaff"
+# Content-layer border/outline as an RGB tuple (alpha applied at draw time).
+DEFAULT_BORDER_COLOR = (55, 62, 74)
 
 # Visual Defaults
 DEFAULT_OPACITY = 0.85

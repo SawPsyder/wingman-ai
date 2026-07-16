@@ -88,6 +88,24 @@ class CoreStatusResponse(BaseModel):
     """0.0–1.0 progress for operations with known duration."""
 
 
+class MicStatusResponse(BaseModel):
+    """Current microphone / voice-activation state, published as the payload of the
+    AudioPlayer.voice_events "changed" event (skill facade: audio.mic_status)."""
+
+    listening: bool
+    """True when voice activation is on and the mic is not muted (nor paused for playback)."""
+    voice_activation_enabled: bool
+    """Whether voice activation (vs push-to-talk) is configured."""
+    playing: bool
+    """True while a wingman is currently playing back audio (the mic is paused then)."""
+    recording: bool
+    """True while a push-to-talk / mouse / joystick key is held or a GUI mic toggle is active."""
+    recording_wingman: Optional[str] = None
+    """Name of the wingman currently being recorded, or None when not recording."""
+    recording_wingman_avatar: Optional[str] = None
+    """Local file path to the recording wingman's avatar (PNG), or None when not recording."""
+
+
 class VoiceInfo(BaseModel):
     id: Optional[str] = None
     name: Optional[str] = None
