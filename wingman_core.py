@@ -1864,7 +1864,8 @@ class WingmanCore(WebSocketUser):
         is_transient: bool = False,
     ):
         # Transient calls (playback pause/resume) change only the recognizer, not the
-        # user's mute intent, and don't broadcast a mute change.
+        # user's mute intent (mic_intent). The resulting recognizer state is still
+        # broadcast and emitted below, same as for a non-transient call.
         with self._va_state_lock:
             target_listening = not mute
             if not is_transient:

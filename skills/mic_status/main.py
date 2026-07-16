@@ -227,6 +227,12 @@ class MicStatus(Skill):
             self._group, WindowType.PERSISTENT, props=self._build_props()
         )
 
+        # drop any leftover subscription before re-subscribing
+        if self._subscription is not None:
+            try:
+                self._subscription.unsubscribe()
+            except Exception:
+                pass
         self._subscription = self.wingman.audio.on_mic_status_changed(self._on_mic_status)
         self._status = self.wingman.audio.mic_status
         await self._refresh()

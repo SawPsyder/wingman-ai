@@ -208,8 +208,7 @@ class ElevenLabs:
                 # the meantime it now owns raw_stream / is_playing - don't clobber it.
                 if audio_player.raw_stream is my_stream:
                     audio_player.raw_stream = None
-                    on_playback_finished()  # trailing beeps may re-set is_playing,
-                    audio_player.is_playing = False  # so clear it last
+                    on_playback_finished()
 
         # await the blocking stream (on a worker thread) so callers serialize playback
         await asyncio.to_thread(stream_audio)
@@ -252,8 +251,23 @@ class ElevenLabs:
 
         # signals playback end (natural or interrupt) for the streaming await below
         playback_complete = Event()
+        # Set to the lib output stream in the lib path below. Used to detect when this
+        # playback has already been superseded before its (async) onPlaybackEnd fires.
+        lib_owned_stream = {"stream": None}
 
         def handle_playback_finished():
+            # lib path only: if a newer playback already took over the shared audio
+            # state, don't clear is_playing / notify Core for a playback that's gone -
+            # that would clobber the successor and resume VA mid-playback. Still release
+            # our own waiter. (The direct path leaves lib_owned_stream None and is
+            # guarded by its caller's raw_stream identity check instead.)
+            if (
+                lib_owned_stream["stream"] is not None
+                and audio_player.raw_stream is not lib_owned_stream["stream"]
+            ):
+                playback_complete.set()
+                return
+
             contains_high_end_radio = SoundEffect.HIGH_END_RADIO in sound_config.effects
             if contains_high_end_radio:
                 audio_player.play_wav_sample(
@@ -264,6 +278,8 @@ class ElevenLabs:
                 audio_player.play_wav_sample("beep.wav", sound_config.volume)
             elif sound_config.play_beep_apollo:
                 audio_player.play_wav_sample("Apollo_Beep.wav", sound_config.volume)
+
+            audio_player.is_playing = False
 
             WebSocketUser.ensure_async(
                 audio_player.notify_playback_finished(wingman_name)
@@ -379,6 +395,9 @@ class ElevenLabs:
                 # a superseding playback is detectable by identity (same contract as the
                 # direct path). onPlaybackEnd sets playback_complete on natural end.
                 audio_player.raw_stream = output_stream
+                # After raw_stream: a stray onPlaybackEnd in the gap then sees
+                # lib_owned_stream still None and finishes normally, never mis-guards.
+                lib_owned_stream["stream"] = output_stream
                 # playback_complete is set by onPlaybackEnd, which fires on every real
                 # stream termination (natural end, CallbackStop, abort, stop). The
                 # raw_stream identity check exits if a newer playback supersedes us.
