@@ -1,6 +1,7 @@
 import platform
 import subprocess
 import shutil
+import sys
 from typing import Optional
 from fastapi import APIRouter
 from api.enums import LogType
@@ -112,5 +113,6 @@ class SystemManager:
                 version=LOCAL_VERSION,
                 cuda_available=self.is_cuda_available(),
                 gpu_name=self.get_gpu_name(),
+                is_dev=not getattr(sys, "frozen", False),
             ),
         )

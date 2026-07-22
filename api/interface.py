@@ -63,6 +63,8 @@ class SystemCore(TypedDict):
     version: str
     cuda_available: bool
     gpu_name: Optional[str]
+    is_dev: bool
+    """True when Core runs from source (not a bundled/frozen build)."""
 
 
 class SystemInfo(BaseModel):
