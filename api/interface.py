@@ -83,6 +83,9 @@ class ChangelogEntry(BaseModel):
     """Link to the full entry on Canny."""
     html: str
     """Entry body as HTML, authored on Canny."""
+    unstable_only: bool = False
+    """True for entries titled with an "(unstable)" marker on Canny — dev-build
+    notes that clients only show to testers on the unstable update channel."""
 
 
 class WingmanInitializationError(BaseModel):

@@ -2783,13 +2783,20 @@ class WingmanCore(WebSocketUser):
                         )
                     except (TypeError, ValueError):
                         pass
+                # Entries titled with an "(unstable)" / "[unstable]" marker are
+                # dev-build notes meant only for testers on the unstable channel
+                title = item.findtext("title") or ""
+                version, marker_count = re.subn(
+                    r"\s*[\(\[]unstable[\)\]]", "", title, flags=re.IGNORECASE
+                )
                 entries.append(
                     ChangelogEntry(
-                        version=item.findtext("title") or "",
+                        version=version.strip(),
                         category=item.findtext("category"),
                         published_at=published_at,
                         url=item.findtext("link"),
                         html=item.findtext("description") or "",
+                        unstable_only=marker_count > 0,
                     )
                 )
             self._changelog_cache = (now, entries)
