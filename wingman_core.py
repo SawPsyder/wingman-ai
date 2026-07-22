@@ -1,10 +1,13 @@
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+from email.utils import parsedate_to_datetime
 import os
 import platform
 import re
 import threading
+import time
 from typing import Optional
+from xml.etree import ElementTree
 import pygame
 from google.genai import types
 from fastapi import APIRouter, Body, File, Form, HTTPException, UploadFile
@@ -34,6 +37,7 @@ from api.interface import (
     AudioDevice,
     AudioFile,
     AzureSttConfig,
+    ChangelogEntry,
     CommandJoystickConfig,
     Config,
     ConfigWithDirInfo,
@@ -115,6 +119,7 @@ class WingmanCore(WebSocketUser):
         self.is_client_logged_in: bool = False
         self.client_plan: str = "Free"
         self.client_account_name: str = ""
+        self._changelog_cache: Optional[tuple[float, list[ChangelogEntry]]] = None
 
         self.router = APIRouter()
         tags = ["core"]
@@ -123,6 +128,13 @@ class WingmanCore(WebSocketUser):
             path="/audio-devices",
             endpoint=self.get_audio_devices,
             response_model=list[AudioDevice],
+            tags=tags,
+        )
+        self.router.add_api_route(
+            methods=["GET"],
+            path="/changelog",
+            endpoint=self.get_changelog,
+            response_model=list[ChangelogEntry],
             tags=tags,
         )
         self.router.add_api_route(
@@ -2745,6 +2757,50 @@ class WingmanCore(WebSocketUser):
     # POST /open-filemanager/custom-skills
     def open_custom_skills_directory(self):
         show_in_file_manager(get_custom_skills_dir())
+
+    # GET /changelog
+    async def get_changelog(self) -> list[ChangelogEntry]:
+        """Proxy the public Canny changelog RSS feed (no API key required) so
+        clients can render entries inline without hitting CORS."""
+        now = time.time()
+        if self._changelog_cache and now - self._changelog_cache[0] < 1800:
+            return self._changelog_cache[1]
+        try:
+            response = requests.get(
+                url="https://wingman-ai.canny.io/api/changelog/feed.rss",
+                timeout=10,
+            )
+            response.raise_for_status()
+            root = ElementTree.fromstring(response.content)
+            entries: list[ChangelogEntry] = []
+            for item in root.iter("item"):
+                published_at = None
+                pub_date = item.findtext("pubDate")
+                if pub_date:
+                    try:
+                        published_at = (
+                            parsedate_to_datetime(pub_date).date().isoformat()
+                        )
+                    except (TypeError, ValueError):
+                        pass
+                entries.append(
+                    ChangelogEntry(
+                        version=item.findtext("title") or "",
+                        category=item.findtext("category"),
+                        published_at=published_at,
+                        url=item.findtext("link"),
+                        html=item.findtext("description") or "",
+                    )
+                )
+            self._changelog_cache = (now, entries)
+            return entries
+        except Exception as e:
+            self.printr.print(
+                f"Could not load changelog: {str(e)}",
+                color=LogType.WARNING,
+                server_only=True,
+            )
+            return []
 
     # GET /models/openrouter
     async def get_openrouter_models(self):
