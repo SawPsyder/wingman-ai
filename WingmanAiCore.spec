@@ -250,6 +250,13 @@ datas += onnx_asr_datas
 binaries += onnx_asr_binaries
 hiddenimports += onnx_asr_hidden
 
+# av (PyAV, pulled in transitively by faster_whisper): its modules import each
+# other at the C level, invisible to static analysis, so an incomplete bundle
+# only crashes at runtime ("No module named 'av.frame'"). The stock hook
+# downgrades a failed `import av` on the build machine to a log warning and
+# ships that incomplete bundle — enforce it as a hard build error instead.
+hiddenimports += collect_submodules('av', on_error='raise')
+
 # Collect all faster_whisper files (specifically assets like silero_vad_v6.onnx)
 try:
     fw_datas, fw_binaries, fw_hidden = collect_all('faster_whisper')
