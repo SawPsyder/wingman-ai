@@ -252,10 +252,31 @@ hiddenimports += onnx_asr_hidden
 
 # av (PyAV, pulled in transitively by faster_whisper): its modules import each
 # other at the C level, invisible to static analysis, so an incomplete bundle
-# only crashes at runtime ("No module named 'av.frame'"). The stock hook
-# downgrades a failed `import av` on the build machine to a log warning and
-# ships that incomplete bundle — enforce it as a hard build error instead.
-hiddenimports += collect_submodules('av', on_error='raise')
+# only crashes at runtime ("No module named 'av.frame'"). The stock hook (and
+# collect_submodules) must IMPORT av to enumerate it — impossible on GitHub
+# Windows runners, where av's bundled FFmpeg avdevice DLL needs AVICAP32.dll
+# that current Server images don't ship. Enumerate the package from the
+# filesystem instead (no import needed); the DLLs resolve fine on end-user
+# desktop Windows, as every av-16-based release has proven.
+av_hidden = set()
+av_pkg_dir = os.path.join(SITE_PACKAGES, 'av')
+for av_root, _dirs, av_files in os.walk(av_pkg_dir):
+    rel_pkg = os.path.relpath(av_root, os.path.dirname(av_pkg_dir))
+    for av_file in av_files:
+        if not av_file.endswith(('.py', '.pyd', '.so')):
+            continue
+        mod = av_file.split('.', 1)[0]
+        parts = rel_pkg.split(os.sep)
+        if mod != '__init__':
+            parts.append(mod)
+        av_hidden.add('.'.join(parts))
+if len(av_hidden) < 40 or 'av.frame' not in av_hidden:
+    raise SystemExit(
+        f"PyAV filesystem enumeration looks incomplete ({len(av_hidden)} modules, "
+        f"av.frame {'found' if 'av.frame' in av_hidden else 'MISSING'}) — "
+        "refusing to ship a bundle that would crash at runtime."
+    )
+hiddenimports += sorted(av_hidden)
 
 # Collect all faster_whisper files (specifically assets like silero_vad_v6.onnx)
 try:
