@@ -6,6 +6,15 @@ if TYPE_CHECKING:
     from skills.uexcorp.uexcorp.helper import Helper
 
 
+# A page under half the stored rows is refetched once, but only once the
+# table already has a real set. A cold import has nothing to compare with.
+ROUTE_SHORT_PAGE_MIN_STORED = 20
+
+
+def _route_page_is_short(fetched: int, stored: int) -> bool:
+    return stored >= ROUTE_SHORT_PAGE_MIN_STORED and fetched * 2 < stored
+
+
 def _route_prices_positive(data: dict) -> bool:
     """True unless a carried buy or sell price is missing or not above zero.
 
@@ -516,20 +525,24 @@ class ImportHandler:
             tradable_commodity_ids,
         )
 
-        from skills.uexcorp.uexcorp.log import warn
+        from skills.uexcorp.uexcorp.log import info, warn
 
         commodity_ids = tradable_commodity_ids(self.__helper.get_database())
         planet_ids = [
             planet.get_id()
             for planet in PlanetDataAccess().add_filter_by_is_available(True).load()
         ]
+        stored_counts = {
+            row["id_commodity"]: row["n"]
+            for row in self.__helper.get_database().execute_fetchall(
+                "SELECT id_commodity, COUNT(*) AS n FROM commodity_route GROUP BY id_commodity"
+            )
+        }
 
         def _fetch_route_page(query: dict):
             return self.__api.fetch(self.__api.COMMODITIES_ROUTES, query)
 
-        commodity_route_data = []
-        seen_route_ids = set()
-        for commodity_id in commodity_ids:
+        def _load_commodity_routes(commodity_id: int):
             # Off-planet stations that trade this commodity, not every orbit.
             page = collect_commodity_routes(
                 _fetch_route_page,
@@ -538,13 +551,41 @@ class ImportHandler:
                 off_planet_trade_orbit_ids(self.__helper.get_database(), commodity_id),
                 warn=warn,
             )
-            if not page.ok:
-                self.__helper.end_timer("import")
-                self.__helper.get_handler_debug().write(
-                    f"Commodity route import failed ({page.error or 'unknown'}). Previous routes kept and will be retried.",
-                    True,
+            if page.ok:
+                info(
+                    f"UEX route fetch commodity {commodity_id}: {len(page.data)} rows"
                 )
-                return self.IMPORT_FAILED
+            return page
+
+        def _keep_previous(message: str):
+            self.__helper.end_timer("import")
+            self.__helper.get_handler_debug().write(message, True)
+            return self.IMPORT_FAILED
+
+        commodity_route_data = []
+        seen_route_ids = set()
+        for commodity_id in commodity_ids:
+            page = _load_commodity_routes(commodity_id)
+            if not page.ok:
+                return _keep_previous(
+                    f"Commodity route import failed ({page.error or 'unknown'}). Previous routes kept and will be retried."
+                )
+            stored = int(stored_counts.get(commodity_id) or 0)
+            if _route_page_is_short(len(page.data), stored):
+                page = _load_commodity_routes(commodity_id)
+                if not page.ok:
+                    return _keep_previous(
+                        f"Commodity route import failed ({page.error or 'unknown'}). Previous routes kept and will be retried."
+                    )
+                if _route_page_is_short(len(page.data), stored):
+                    warn(
+                        f"UEX route fetch for commodity {commodity_id} returned {len(page.data)} rows "
+                        f"after a retry, under half of the {stored} stored rows. "
+                        "Previous routes kept and the cache was not stamped."
+                    )
+                    return _keep_previous(
+                        f"Commodity {commodity_id} route page stayed short ({len(page.data)} of {stored}). Previous routes kept."
+                    )
             for data in page.data:
                 route_id = data.get("id")
                 if route_id in seen_route_ids:

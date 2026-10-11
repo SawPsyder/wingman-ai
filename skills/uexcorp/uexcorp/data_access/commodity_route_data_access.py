@@ -127,6 +127,7 @@ class CommodityRouteDataAccess(DataAccess):
         # Float zero avoids the int-zero clause, which also keeps NULL.
         self.filter.where("price_origin", 0.0, ">")
         self.filter.where("price_destination", 0.0, ">")
+        self.filter.where("scu_origin", 0.0, ">")
         return self
 
     def add_filter_by_in_same_star_system(self) -> "CommodityRouteDataAccess":

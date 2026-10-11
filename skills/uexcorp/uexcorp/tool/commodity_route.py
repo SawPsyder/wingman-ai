@@ -8,6 +8,15 @@ def _no_routes(helper, note: str):
     return compression.dumps([]), ""
 
 
+def _quoted_price_positive(value) -> bool:
+    if value is None or isinstance(value, bool):
+        return False
+    try:
+        return float(value) > 0
+    except (TypeError, ValueError):
+        return False
+
+
 def _commodity_terminal_ids_at(location_names: str | list[str]) -> list[int]:
     """Ids of available commodity terminals whose location columns match.
 
@@ -300,6 +309,12 @@ class CommodityRoute(Tool):
         routes = commodity_route_data_access.load(debug=True) # TODO remove debug=True
 
         routes = [route.get_data_for_ai() for route in routes]
+        # The volume alias can still quote 0 when a listed stock is 0.
+        routes = [
+            route for route in routes
+            if _quoted_price_positive(route.get("buy_for"))
+            and _quoted_price_positive(route.get("sell_for"))
+        ]
         if not routes and blocked_ids:
             try:
                 from skills.uexcorp.uexcorp.location_blocklist import LocationBlocklist

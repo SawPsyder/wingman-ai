@@ -1306,6 +1306,43 @@ class LegalFilterAndPromptTest(_SqliteCase):
         self.assertNotIn("Iron", names)
         self.assertNotIn("Stanton Gateway", CommodityRoute().execute()[0])
 
+    def test_gold_with_no_origin_stock_is_not_offered(self) -> None:
+        from skills.uexcorp.uexcorp.tool.commodity_route import CommodityRoute
+
+        self._db.execute(
+            """
+            INSERT INTO commodity (id, name, is_illegal, is_blacklisted)
+            VALUES (33, 'Gold', 0, 0)
+            """
+        )
+        self._db.execute(
+            """
+            INSERT INTO commodity_route (
+                id, id_commodity, commodity_name, price_origin, price_destination,
+                scu_origin, scu_destination, score,
+                origin_terminal_name, destination_terminal_name
+            ) VALUES
+                (2716, 33, 'Gold', 27550, 31000, 0, 1030, 1,
+                    'Admin - Rod''s Fuel ''N Supplies', 'TDD Area 18'),
+                (2717, 33, 'Gold', 27550, 31000, NULL, 1030, 1,
+                    'No Stock Listed', 'TDD Area 18'),
+                (657, 33, 'Gold', 27550, 31000, 29, 1030, 9,
+                    'TDD Area 18', 'TDD New Babbage'),
+                (1, 33, 'Gold', 27550, 0, 10, 10, 1,
+                    'Zero Sell', 'TDD Area 18')
+            """
+        )
+        self._db.commit()
+        payload = CommodityRoute().execute()[0]
+        routes = _parse_routes(payload)
+        self.assertEqual([route["buy_at"] for route in routes], ["TDD Area 18"])
+        for route in routes:
+            self.assertGreater(route["buy_for"], 0)
+            self.assertGreater(route["sell_for"], 0)
+        self.assertNotIn("Rod's Fuel", payload)
+        self.assertNotIn("No Stock Listed", payload)
+        self.assertNotIn("Zero Sell", payload)
+
     def test_prompts_match_the_filters_and_mention_nyx(self) -> None:
         from skills.uexcorp.uexcorp.tool.commodity_route import CommodityRoute
         from skills.uexcorp.uexcorp.tool.location_information import LocationInformation
@@ -2049,6 +2086,153 @@ class CommodityBlacklistFileTest(_SqliteCase):
         self.assertTrue(host.ready)
         self.assertTrue(completion_warnings)
         self.assertIn("not rewritten", completion_warnings[0])
+
+
+class ShortRoutePageTest(_SqliteCase):
+    def _import_iron(self, stored: int, pages: list[int]):
+        from skills.uexcorp.uexcorp.handler.import_handler import ImportHandler
+        import skills.uexcorp.uexcorp.log as log_module
+
+        self._db.execute(
+            """
+            INSERT INTO imports (`table`, date_imported, dataset_count, time_taken, last_import_run_id)
+            VALUES
+                ('commodity', ?, 1, 0, 1),
+                ('commodity_price', ?, 1, 0, 1)
+            """,
+            (NOW, NOW),
+        )
+        self._db.execute(
+            """
+            INSERT INTO commodity_price (id, id_commodity, price_buy, price_sell)
+            VALUES (1, 44, 3000, 0), (2, 44, 0, 3400)
+            """
+        )
+        if stored:
+            values = ",".join(
+                f"({i}, 44, 3000, 3400, 4, 4, 'Iron', 1)"
+                for i in range(1, stored + 1)
+            )
+            self._db.execute(
+                "INSERT INTO commodity_route ("
+                "id, id_commodity, price_origin, price_destination, "
+                "scu_origin, scu_destination, commodity_name, last_import_run_id"
+                f") VALUES {values}"
+            )
+        self._db.commit()
+
+        class _Pages:
+            def __init__(self):
+                self.counts = list(pages)
+                self.urls: list[str] = []
+                self._next_id = 10000
+
+            def get(self, url, params=None, timeout=None, headers=None, stream=None):
+                self.urls.append(url)
+                count = self.counts.pop(0)
+                rows = []
+                for _ in range(count):
+                    self._next_id += 1
+                    rows.append(
+                        {
+                            "id": self._next_id,
+                            "id_commodity": 44,
+                            "price_origin": 3000,
+                            "price_destination": 3400,
+                            "scu_origin": 4,
+                            "scu_destination": 8,
+                            "commodity_name": "Iron",
+                        }
+                    )
+                return _Response(200, {"status": "ok", "data": rows})
+
+        session = _Pages()
+        handler = ImportHandler(self._helper)
+        self._helper.set_import_handler(handler)
+        clock = _Clock()
+        api = Uex(
+            self._helper,
+            sleeper=clock.sleep,
+            monotonic=clock.monotonic,
+            rng=lambda: 0.0,
+        )
+        api.session = session
+        handler._ImportHandler__api = api
+        notes: list[str] = []
+        warnings: list[str] = []
+        original_info = log_module.info
+        original_warn = log_module.warn
+        log_module.info = notes.append
+        log_module.warn = warnings.append
+        try:
+            imported = handler._ImportHandler__import_data_commodity_route()
+        finally:
+            log_module.info = original_info
+            log_module.warn = original_warn
+        return imported, handler, session, notes, warnings
+
+    def test_iron_short_page_twice_keeps_stored_rows(self) -> None:
+        imported, handler, session, notes, warnings = self._import_iron(475, [25, 25])
+        self.assertIs(imported, handler.IMPORT_FAILED)
+        self.assertEqual(self._route_ids(), list(range(1, 476)))
+        self.assertEqual(self._route_stamp(), [])
+        self.assertEqual(len(session.urls), 2)
+        self.assertEqual(
+            notes,
+            [
+                "UEX route fetch commodity 44: 25 rows",
+                "UEX route fetch commodity 44: 25 rows",
+            ],
+        )
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("475", warnings[0])
+        self.assertIn("not stamped", warnings[0])
+
+    def test_iron_short_page_then_full_page_is_accepted(self) -> None:
+        imported, _handler, session, notes, warnings = self._import_iron(475, [25, 475])
+        self.assertEqual(imported, 475)
+        self.assertEqual(len(self._route_ids()), 475)
+        self.assertNotIn(1, self._route_ids())
+        self.assertEqual(len(session.urls), 2)
+        self.assertEqual(
+            notes,
+            [
+                "UEX route fetch commodity 44: 25 rows",
+                "UEX route fetch commodity 44: 475 rows",
+            ],
+        )
+        self.assertEqual(warnings, [])
+        stamp = self._route_stamp()
+        self.assertEqual(len(stamp), 1)
+        self.assertEqual(stamp[0]["dataset_count"], 475)
+
+    def test_nineteen_stored_rows_accept_a_one_row_page(self) -> None:
+        imported, _handler, session, notes, warnings = self._import_iron(19, [1])
+        self.assertEqual(imported, 1)
+        self.assertEqual(self._route_ids(), [10001])
+        self.assertEqual(len(session.urls), 1)
+        self.assertEqual(notes, ["UEX route fetch commodity 44: 1 rows"])
+        self.assertEqual(warnings, [])
+        self.assertEqual(self._route_stamp()[0]["dataset_count"], 1)
+
+    def test_twenty_stored_rows_keep_old_when_the_retry_stays_short(self) -> None:
+        imported, handler, session, notes, warnings = self._import_iron(20, [9, 9])
+        self.assertIs(imported, handler.IMPORT_FAILED)
+        self.assertEqual(self._route_ids(), list(range(1, 21)))
+        self.assertEqual(self._route_stamp(), [])
+        self.assertEqual(len(session.urls), 2)
+        self.assertEqual(len(notes), 2)
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("20", warnings[0])
+
+    def test_cold_import_accepts_a_small_page(self) -> None:
+        imported, _handler, session, notes, warnings = self._import_iron(0, [5])
+        self.assertEqual(imported, 5)
+        self.assertEqual(len(self._route_ids()), 5)
+        self.assertEqual(len(session.urls), 1)
+        self.assertEqual(notes, ["UEX route fetch commodity 44: 5 rows"])
+        self.assertEqual(warnings, [])
+        self.assertEqual(self._route_stamp()[0]["dataset_count"], 5)
 
 
 class OffPlanetOrbitQueryTest(_SqliteCase):
