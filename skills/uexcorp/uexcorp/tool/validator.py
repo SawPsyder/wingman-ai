@@ -70,6 +70,24 @@ async def _closest_record(helper, query: str, records: list[dict]):
     return None, found.note
 
 
+def _price_sides(helper, commodity_id: int) -> tuple[bool, bool]:
+    rows = helper.get_database().execute_fetchall(
+        "SELECT price_buy, price_sell FROM commodity_price WHERE id_commodity = ?",
+        (commodity_id,),
+    )
+    buy = any((row["price_buy"] or 0) > 0 for row in rows)
+    sell = any((row["price_sell"] or 0) > 0 for row in rows)
+    return buy, sell
+
+
+def _untradable_sentence(name: str, buy: bool, sell: bool) -> str:
+    if sell and not buy:
+        return f"{name} is sell-only, so there are no trade routes"
+    if buy and not sell:
+        return f"{name} is buy-only, so there are no trade routes"
+    return f"{name} has no buy/sell prices, so there are no trade routes"
+
+
 def _raw_variant_names(commodities, query: str) -> list[str]:
     """Ore and raw names whose own word is the query.
 
@@ -112,6 +130,31 @@ def _commodity_miss_note(name: str, options: str | None, commodities) -> str:
         f"Invalid commodity name, no match found for '{name}': "
         f"Did you mean one of those?: {shown}"
     )
+
+
+def _tradable_miss_note(name: str, options: str | None, commodities, tradable_ids: set) -> str:
+    """Route misses name a raw twin that exists but is not tradable."""
+    note = _commodity_miss_note(name, options, [])
+    extras = []
+    for commodity in commodities:
+        label = str(commodity)
+        if "(Raw)" not in label and "(Ore)" not in label:
+            continue
+        if commodity.get_id() in tradable_ids:
+            continue
+        words = {
+            word
+            for word in label.casefold().replace("(", " ").replace(")", " ").split()
+            if word not in {"ore", "raw"}
+        }
+        if name.casefold().strip() not in words or label in extras:
+            continue
+        sentence = f"{label} exists but isn't tradable"
+        if sentence.casefold() not in note.casefold():
+            extras.append(sentence)
+    if not extras:
+        return note
+    return note + " " + " ".join(extras)
 
 
 class Validator:
@@ -333,6 +376,18 @@ class Validator:
         )
         if closest_match:
             return closest_match, None
+
+        if for_trading:
+            catalog = CommodityDataAccess().load()
+            catalog_match, _catalog_note = await _closest_record(
+                self.__helper, name, _commodity_records(catalog)
+            )
+            if catalog_match:
+                row = next(item for item in catalog if str(item) == catalog_match)
+                buy, sell = _price_sides(self.__helper, row.get_id())
+                return None, _untradable_sentence(catalog_match, buy, sell)
+            tradable_ids = set(ids) if ids else set()
+            return None, _tradable_miss_note(name, options, catalog, tradable_ids)
 
         return None, _commodity_miss_note(name, options, commodities)
 

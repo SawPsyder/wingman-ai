@@ -234,3 +234,63 @@ class RouteReproTest(_SqliteCase):
             )
             self.assertIn("not recognized", fuel)
             self.assertNotIn("is a shop", fuel)
+
+    def _seed_price_gaps(self) -> None:
+        self._seed_trade()
+        self._db.execute(
+            """
+            INSERT INTO commodity (
+                id, name, code, slug, is_raw, is_buyable, is_sellable, is_illegal, is_blacklisted
+            ) VALUES
+                (214, 'Caranite', 'CARA', 'caranite', 0, 0, 0, 0, 0),
+                (45, 'Iron (Ore)', 'IRONO', 'iron-ore', 1, 0, 1, 0, 0),
+                (101, 'Pressurized Ice', 'PICE', 'pressurized-ice', 0, 1, 1, 0, 0),
+                (125, 'Ice (Raw)', 'ICEW', 'ice-raw', 1, 0, 0, 0, 0)
+            """
+        )
+        self._db.execute(
+            """
+            INSERT INTO commodity_price (
+                id, id_commodity, id_terminal, price_buy, price_sell, commodity_name, terminal_name
+            ) VALUES
+                (20, 45, 80, 0, 1000, 'Iron (Ore)', 'Levski'),
+                (21, 101, 80, 4536, 0, 'Pressurized Ice', 'Levski'),
+                (22, 101, 83, 0, 5125, 'Pressurized Ice', 'Area18 TDD')
+            """
+        )
+        self._db.commit()
+
+    def test_untradable_codes_say_why_there_are_no_routes(self) -> None:
+        self._install_llm(None)
+        self._seed_price_gaps()
+        handler = self._handler()
+        cara, _instant = asyncio.run(
+            handler.execute_tool(
+                "uex_get_trade_routes",
+                {"filter_commodity_whitelist": ["CARA"]},
+            )
+        )
+        self.assertIn("Caranite has no buy/sell prices, so there are no trade routes", cara)
+        self.assertNotIn("too abstract", cara)
+
+        irono, _instant = asyncio.run(
+            handler.execute_tool(
+                "uex_get_trade_routes",
+                {"filter_commodity_whitelist": ["IRONO"]},
+            )
+        )
+        self.assertIn("Iron (Ore) is sell-only, so there are no trade routes", irono)
+        self.assertNotIn("too abstract", irono)
+
+    def test_ice_route_suggestions_name_the_raw_variant(self) -> None:
+        self._install_llm(None)
+        self._seed_price_gaps()
+        handler = self._handler()
+        text, _instant = asyncio.run(
+            handler.execute_tool(
+                "uex_get_trade_routes",
+                {"filter_commodity_whitelist": ["Ice"]},
+            )
+        )
+        self.assertIn("Ice (Raw) exists but isn't tradable", text)
+        self.assertNotIn("too abstract", text)
