@@ -1,9 +1,9 @@
-"""Offline regression for the shared name ranker.
+"""Offline regression for name matching.
 
 System One is off and the main model is stubbed, so every case is
-deterministic. ``name_ranker_baseline.json`` is the current result.
-The first commit of that file is the two-path ranker; a later diff is
-a case the single pipeline changed.
+deterministic. ``name_ranker_baseline.json`` started as the result on
+the head with the develop merge and the shop and confirm extras. Later
+edits to that file are the allowed misses plus case-only ambiguity.
 """
 
 from __future__ import annotations
@@ -472,3 +472,31 @@ def test_offline_name_ranker(case):
     got = asyncio.run(run_case(case))
     assert got["decide"] == 0
     assert {key: got[key] for key in ("match", "picked", "method", "candidates")} == expected[case["id"]]
+
+
+def test_names_that_differ_only_by_case_stay_candidates():
+    """Two spellings of one name are candidates. One spelling is an exact pick."""
+    llm, calls = _offline_llm()
+    both = ["Alpha", "alpha", "Beta"]
+    for query in ("Alpha", "alpha", "ALPHA"):
+        match, _note = asyncio.run(llm.find_closest_match(query, both))
+        found = asyncio.run(llm.find_closest_key(query, {name: name for name in both}))
+        assert match is None
+        assert found.key is None
+        assert {item["label"] for item in found.candidates} == {"Alpha", "alpha"}
+    lone, _note = asyncio.run(llm.find_closest_match("Alpha", ["Alpha", "Beta"]))
+    assert lone == "Alpha"
+    assert calls["decide"] == 0
+
+
+def test_hornet_stays_a_list_of_candidates():
+    """Several Hornet variants fit, so the ranker does not guess one of them."""
+    llm, _calls = _offline_llm()
+    match, _note = asyncio.run(llm.find_closest_match("Hornet", list(SHIPS)))
+    assert match is None
+    found = asyncio.run(llm.find_closest_key("Hornet", {name: name for name in SHIPS}))
+    assert found.key is None
+    names = [item["label"] for item in found.candidates]
+    assert any("Hornet" in name for name in names)
+    assert match != "Golem"
+    assert match != "Fortune"

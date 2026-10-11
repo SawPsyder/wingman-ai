@@ -632,11 +632,15 @@
     ]
   },
   "commodity:ice": {
-    "match": "Ice",
-    "picked": "Ice",
-    "method": "exact",
+    "match": null,
+    "picked": null,
+    "method": null,
     "candidates": [
-      "Ice"
+      "Ice",
+      "Iodine",
+      "Torite",
+      "Silicon",
+      "Pressurized Ice"
     ]
   },
   "commodity:Laranit": {
@@ -645,33 +649,47 @@
     "method": "dumb",
     "candidates": [
       "Laranite",
-      "Taranite",
       "Caranite",
-      "Carinite"
+      "Taranite",
+      "Carinite",
+      "Organics",
+      "Ouratite",
+      "Atacamite",
+      "Hephaestanite",
+      "Quartz",
+      "Torite"
     ]
   },
   "commodity:widow": {
-    "match": "WiDoW",
-    "picked": "WiDoW",
-    "method": "exact",
+    "match": null,
+    "picked": null,
+    "method": null,
     "candidates": [
       "WiDoW"
     ]
   },
   "commodity:gold": {
-    "match": "Gold",
-    "picked": "Gold",
-    "method": "exact",
+    "match": null,
+    "picked": null,
+    "method": null,
     "candidates": [
-      "Gold"
+      "Gold",
+      "Argon",
+      "Cobalt",
+      "Iodine",
+      "Golden Medmon"
     ]
   },
   "ship:Freelancer Max": {
     "match": "Freelancer MAX",
     "picked": "Freelancer MAX",
-    "method": "exact",
+    "method": "dumb",
     "candidates": [
-      "Freelancer MAX"
+      "Freelancer MAX",
+      "Freelancer MIS",
+      "Freelancer",
+      "Freelancer DUR",
+      "Reclaimer"
     ]
   },
   "ship:Freelancer MAX": {
@@ -699,15 +717,15 @@
     ]
   },
   "ship:Hornet": {
-    "match": "F7C Hornet",
-    "picked": "F7C Hornet",
-    "method": "dumb",
+    "match": null,
+    "picked": null,
+    "method": null,
     "candidates": [
       "F7C Hornet",
+      "Fortune",
       "F7C-M Super Hornet",
       "F7C-S Hornet Ghost",
-      "F7C-R Hornet Tracker",
-      "Fortune"
+      "F7C-R Hornet Tracker"
     ]
   },
   "ship:Cutlas Black": {
@@ -715,7 +733,8 @@
     "picked": "Cutlass Black",
     "method": "dumb",
     "candidates": [
-      "Cutlass Black"
+      "Cutlass Black",
+      "Carrack"
     ]
   },
   "ship:Carrack": {
@@ -743,9 +762,9 @@
     ]
   },
   "vehicle:ursa": {
-    "match": "Ursa",
-    "picked": "Ursa",
-    "method": "exact",
+    "match": null,
+    "picked": null,
+    "method": null,
     "candidates": [
       "Ursa"
     ]
@@ -759,10 +778,11 @@
     ]
   },
   "vehicle:roc-ds": {
-    "match": "ROC-DS",
-    "picked": "ROC-DS",
-    "method": "exact",
+    "match": null,
+    "picked": null,
+    "method": null,
     "candidates": [
+      "Ursa",
       "ROC-DS"
     ]
   },
@@ -794,9 +814,10 @@
   "item:attrition-3": {
     "match": "Attrition-3",
     "picked": "Attrition-3",
-    "method": "exact",
+    "method": "dumb",
     "candidates": [
-      "Attrition-3"
+      "Attrition-3",
+      "Attrition-4"
     ]
   },
   "attribute:Rate of Fire": {
@@ -810,9 +831,10 @@
   "attribute:rate of fire": {
     "match": "Rate of Fire",
     "picked": "Rate of Fire",
-    "method": "exact",
+    "method": "dumb",
     "candidates": [
-      "Rate of Fire"
+      "Rate of Fire",
+      "Magazine Size"
     ]
   },
   "attribute:DPS": {
@@ -860,7 +882,8 @@
     "picked": null,
     "method": null,
     "candidates": [
-      "Systems Quantum Drives"
+      "Systems Quantum Drives",
+      "Weapons Missiles"
     ]
   },
   "category:Armor": {

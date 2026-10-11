@@ -198,19 +198,18 @@ class Llm:
         llm, or dumb), ``candidates`` (key, label, score, description), and
         ``note``. An empty shortlist sets ``note`` and does not ask System One.
 
-        Every option is a record: ``key``, ``name``, ``aliases``, ``label``,
-        and optional ``scope``, ``parents``, and ``system_id``. Passing
-        ``records`` uses those rows. Otherwise each ``options`` entry becomes
-        a record with no scope, and its label is the name. Matching uses
-        names and aliases. Labels are display and disambiguation only.
+        Scoped ``records`` (places) rank names and aliases: a same-name orbit
+        collapses into the station, city, outpost, or planet, and scope words
+        such as "station" are stripped for scoring. Only an exact stored name
+        is method ``exact``. ``allow_llm`` and ``allow_dumb`` stay off for a
+        blocklist write; ``system_one_min_confidence`` is the write threshold.
 
-        Exact matching is case-insensitive and runs before any fuzzy score.
-        Two names that differ only by case stay candidates; neither is picked.
-        A same-name orbit collapses into the station, city, outpost, or
-        planet. Scope words such as "station" are stripped for scoring, but
-        only an exact stored name is method ``exact``. ``allow_llm`` and
-        ``allow_dumb`` stay off for a blocklist write;
-        ``system_one_min_confidence`` is the write threshold.
+        A name list with no scope keeps the previous shortlist, so commodity
+        codes and vehicle nicknames resolve as they did before. Two additions
+        sit on that shortlist. A query that differs from one all-caps name
+        only by case resolves to that name. When case-sensitive scores tie,
+        the name that also matches ignoring case wins. Two options that
+        differ only by case stay candidates; neither is picked.
 
         ``allow_llm=False`` skips the main model only. System One is still
         asked when ``ask_system_one`` is true (the default): a blocklist write
@@ -218,16 +217,159 @@ class Llm:
         again, via noul, and that check does not depend on ``allow_llm``.
         """
         search = strip_type_tag(search)
-        if records is None:
-            records = _records_from_options(options, descriptions)
-        return await self._match_records(
+        if records is not None and any(row.get("scope") for row in records):
+            return await self._match_records(
+                search,
+                records,
+                allow_llm=allow_llm,
+                allow_dumb=allow_dumb,
+                ask_system_one=ask_system_one,
+                system_one_min_confidence=system_one_min_confidence,
+            )
+        return await self._match_plain(
             search,
-            records,
+            options,
+            descriptions,
             allow_llm=allow_llm,
             allow_dumb=allow_dumb,
             ask_system_one=ask_system_one,
             system_one_min_confidence=system_one_min_confidence,
         )
+
+    async def _match_plain(
+        self,
+        search: str | None,
+        options: dict[str, str],
+        descriptions: dict[str, str] | None,
+        *,
+        allow_llm: bool,
+        allow_dumb: bool,
+        ask_system_one: bool,
+        system_one_min_confidence: float | None,
+    ):
+        """Name shortlist. Place boosts stay on scoped records only.
+
+        Commodity codes and vehicle nicknames were resolving to different
+        goods once those boosts applied to every name. This keeps the
+        previous shortlist and 0.8 cutoff, then allows the three known
+        misses: an all-caps name matches its other casing, and a tied
+        case-sensitive score prefers the name that also matches ignoring case.
+        """
+        result = _KeyMatch()
+        if not search or search == "None" or not options:
+            if search and search != "None":
+                result.note = "No approximate matches found, given name too abstract."
+            return result
+
+        by_label: dict[str, list[str]] = {}
+        for key, label in options.items():
+            by_label.setdefault(str(label), []).append(str(key))
+        labels = list(by_label.keys())
+
+        spellings = _spellings_for(labels, search)
+        if len(spellings) > 1:
+            result.candidates = [
+                _candidate(by_label[label][0], label, 1.0, descriptions)
+                for label in spellings
+            ]
+            result.note = ", ".join(spellings[:3])
+            return result
+
+        for key, label in options.items():
+            if search == label or search == key:
+                result.key = str(key)
+                result.keys = [str(key)]
+                result.score = 1.0
+                result.method = "exact"
+                result.candidates = [
+                    _candidate(str(key), str(label), 1.0, descriptions)
+                ]
+                return result
+
+        # "Mole" → "MOLE". "gold" does not, because the stored name is "Gold",
+        # not "GOLD". An all-caps code such as GOLD therefore stays unmatched.
+        if len(spellings) == 1 and _upper_name_case(search, spellings[0]):
+            label = spellings[0]
+            key = by_label[label][0]
+            result.key = key
+            result.keys = [key]
+            result.score = 1.0
+            result.method = "exact"
+            result.candidates = [_candidate(key, label, 1.0, descriptions)]
+            return result
+
+        close_labels = difflib.get_close_matches(search, labels, n=10, cutoff=0.4)
+        close_labels.extend(
+            label for label in labels
+            if search.lower() in label.lower() and label not in close_labels
+        )
+        self.__helper.get_handler_debug().write(
+            f"Creating a list of close matches for search term '{search}': {', '.join(close_labels)}"
+        )
+        if not close_labels:
+            self.__helper.get_handler_debug().write(
+                f"No close matches found for '{search}' in list. Returning None.", True
+            )
+            result.note = "No approximate matches found, given name too abstract."
+            return result
+
+        seen = set()
+        for label in close_labels:
+            ratio = difflib.SequenceMatcher(None, search, label).ratio()
+            for key in by_label.get(label, []):
+                if key in seen:
+                    continue
+                seen.add(key)
+                result.candidates.append(_candidate(key, label, ratio, descriptions))
+        result.candidates.sort(key=lambda item: (-item["score"], item["key"]))
+
+        if ask_system_one:
+            picked = await self.__system_one_match(
+                search, close_labels, min_confidence=system_one_min_confidence
+            )
+            if picked is not None:
+                key = by_label[picked][0]
+                result.key = key
+                result.keys = [key]
+                result.method = "system_one"
+                result.score = next(
+                    (item["score"] for item in result.candidates if item["key"] == key),
+                    None,
+                )
+                return result
+
+        if allow_llm:
+            answer = await self._llm_name(search, close_labels)
+            if answer is not None:
+                key = by_label[answer][0]
+                result.key = key
+                result.keys = [key]
+                result.method = "llm"
+                result.score = next(
+                    (item["score"] for item in result.candidates if item["key"] == key),
+                    None,
+                )
+                return result
+
+        if allow_dumb:
+            dumb_match = _plain_dumb_label(search, close_labels)
+            if dumb_match:
+                if allow_llm:
+                    self.__helper.get_handler_debug().write(
+                        f"LLM did not answer for '{search}'. Using dumb match '{dumb_match}'",
+                        True,
+                    )
+                key = by_label[dumb_match][0]
+                result.key = key
+                result.keys = [key]
+                result.method = "dumb"
+                result.score = next(
+                    (item["score"] for item in result.candidates if item["key"] == key),
+                    None,
+                )
+                return result
+        result.note = ", ".join(close_labels[:3])
+        return result
 
     async def _match_records(
         self,
@@ -371,10 +513,10 @@ class Llm:
     ) -> (str | None, list[str] | set[str]):
         """Name-list wrapper around :meth:`find_closest_key`.
 
-        The list becomes scope-less records and goes through the one ranker.
-        The empty-shortlist note and the System One length cap stay as they
-        were. Cache and context notes still apply only to a System One or
-        main-model pick.
+        The list has no place scope, so it uses the name shortlist rather
+        than place ranking. The empty-shortlist note and the System One
+        length cap stay as they were. Cache and context notes still apply
+        only to a System One or main-model pick.
         """
         search = strip_type_tag(search)
         if not search or search == "None":
@@ -410,31 +552,88 @@ class _KeyMatch:
         self.note = None
 
 
-def _records_from_options(options, descriptions) -> list[dict]:
-    """Scope-less records. A plain option is a name with no place scope."""
-    rows = []
-    if not options:
-        return rows
-    for key, label in options.items():
-        name = str(label)
-        item = {
-            "key": str(key),
-            "name": name,
-            "label": name,
-            "aliases": [],
-            "scope": None,
-            "id": None,
-            "parents": {},
-            "system_id": None,
-            "path": "",
-        }
-        if descriptions and key in descriptions:
-            item["description"] = descriptions[key]
-        rows.append(item)
-    return rows
+def _spellings_for(labels: list[str], query: str) -> list[str]:
+    """Labels that equal ``query`` ignoring case, in list order."""
+    folded = query.casefold()
+    seen = []
+    known = set()
+    for label in labels:
+        if label.casefold() != folded or label in known:
+            continue
+        known.add(label)
+        seen.append(label)
+    return seen
 
 
-# One ranker for places and for plain names. find_closest_key owns it.
+def _upper_name_case(query: str, stored: str) -> bool:
+    """True when ``stored`` is the all-caps form of a mixed or lower query.
+
+    ``Mole`` matches ``MOLE``. ``gold`` does not match ``Gold``, and an
+    all-caps code such as ``GOLD`` is not rewritten onto ``Gold``.
+    """
+    if not any(char.islower() for char in query):
+        return False
+    return stored.isalpha() and stored == query.upper() and stored != query
+
+
+def _plain_ratio(label: str, query: str) -> float:
+    # Same argument order as difflib.get_close_matches (possibility, word).
+    return difflib.SequenceMatcher(None, label, query).ratio()
+
+
+def _plain_casefold_ratio(label: str, query: str) -> float:
+    return difflib.SequenceMatcher(None, query.casefold(), label.casefold()).ratio()
+
+
+def _plain_dumb_label(search: str, close_labels: list[str]) -> str | None:
+    """The 0.8 dumb pick, with the two known case fixes applied on top.
+
+    A tie on the case-sensitive score prefers the label that also matches
+    ignoring case, so Freelancer Max beats Freelancer MIS. When nothing
+    clears 0.8, a manufacturer-prefixed name can still win if ignoring case
+    puts it clearly ahead (Freelancer Max → MISC Freelancer MAX) without
+    treating a pure case variant such as gold → Gold as that kind of hit.
+    """
+    base_list = difflib.get_close_matches(search, close_labels, n=1, cutoff=0.8)
+    base = base_list[0] if base_list else None
+    if not any(char.islower() for char in search):
+        return base
+    if base is not None:
+        best = base
+        best_cf = _plain_casefold_ratio(base, search)
+        for label in close_labels:
+            if _plain_ratio(label, search) < 0.8:
+                continue
+            casefold_ratio = _plain_casefold_ratio(label, search)
+            if casefold_ratio > best_cf + 1e-12:
+                best = label
+                best_cf = casefold_ratio
+        return best
+    # A single token such as a slug or a commodity code stays on the old
+    # cutoff. "Freelancer Max" is two words, which is what clears this.
+    if " " not in search:
+        return None
+    best = None
+    best_key = None
+    for label in close_labels:
+        case_ratio = _plain_ratio(label, search)
+        casefold_ratio = _plain_casefold_ratio(label, search)
+        if casefold_ratio >= 0.84 and case_ratio >= 0.72 and casefold_ratio < 0.999:
+            key = (casefold_ratio, case_ratio)
+            if best_key is None or key > best_key:
+                best_key = key
+                best = label
+    return best
+
+
+def _candidate(key: str, label: str, score: float, descriptions: dict | None) -> dict:
+    item = {"key": key, "label": label, "score": score}
+    if descriptions and key in descriptions:
+        item["description"] = descriptions[key]
+    return item
+
+
+# Place ranking. Scoped records go through this. Name lists do not.
 LISTING_MIN_SCORE = 0.6
 SHORTLIST_LIMIT = 5
 _PLACE_SCOPES = ("system", "planet", "moon", "city", "station", "outpost", "poi")
