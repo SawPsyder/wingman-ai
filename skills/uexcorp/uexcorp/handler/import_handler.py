@@ -78,6 +78,7 @@ class ImportHandler:
             return
 
         self.__common_data["last_import_run_id"] = self.__helper.get_timestamp()
+        self.__api.begin_run()
 
         self.__helper.get_handler_debug().write(
             "Importing UEX api data (may take a while) ..."
@@ -459,16 +460,20 @@ class ImportHandler:
         from skills.uexcorp.uexcorp.data_access.orbit_data_access import OrbitDataAccess
         from skills.uexcorp.uexcorp.data_access.planet_data_access import PlanetDataAccess
 
+        from skills.uexcorp.uexcorp.log import warn
+
         commodity_ids = self.__tradable_commodity_ids()
         planet_ids = [
             planet.get_id()
             for planet in PlanetDataAccess().add_filter_by_is_available(True).load()
         ]
-        available_orbits = OrbitDataAccess().add_filter_by_is_available(True).load()
-        lagrange_orbit_ids = [
-            orbit.get_id() for orbit in available_orbits if orbit.get_is_lagrange()
+        # Every available orbit. collect_commodity_routes skips orbits a complete
+        # planet page already covered, and still queries station orbits such as
+        # Levski and the Gateways.
+        all_orbit_ids = [
+            orbit.get_id()
+            for orbit in OrbitDataAccess().add_filter_by_is_available(True).load()
         ]
-        all_orbit_ids = [orbit.get_id() for orbit in available_orbits]
 
         def _fetch_route_page(query: dict):
             return self.__api.fetch(self.__api.COMMODITIES_ROUTES, query)
@@ -480,8 +485,8 @@ class ImportHandler:
                 _fetch_route_page,
                 commodity_id,
                 planet_ids,
-                lagrange_orbit_ids,
-                extra_orbit_ids=all_orbit_ids,
+                all_orbit_ids,
+                warn=warn,
             )
             if not page.ok:
                 self.__helper.end_timer("import")

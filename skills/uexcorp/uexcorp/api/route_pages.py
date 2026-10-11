@@ -11,17 +11,18 @@ def collect_commodity_routes(
     commodity_id: int,
     planet_ids: list[int],
     orbit_ids: list[int],
-    extra_orbit_ids: list[int] | None = None,
     cap: int = ROUTE_PAGE_CAP,
+    warn=None,
 ) -> FetchResult:
     """Load every route for one commodity.
 
-    A page shorter than ``cap`` is complete. A page of ``cap`` rows is truncated,
-    so it is discarded and replaced by one query per origin planet plus origin
-    orbits (Lagrange / station orbits, and every available orbit when a planet
-    page is itself capped). Rows are deduped by route id.
+    A page shorter than ``cap`` is complete. A page of ``cap`` rows is truncated.
+    Those rows are kept, then merged with one query per origin planet and every
+    available origin orbit that a complete planet page did not already cover
+    (station orbits such as Levski and the Gateways). Rows are deduped by route id.
+    An origin-orbit page that is itself capped is kept and reported; a finer
+    split is deferred.
     """
-    extra_orbit_ids = list(extra_orbit_ids or [])
     first = fetch_page({"id_commodity": commodity_id})
     if not first.ok:
         return first
@@ -29,37 +30,47 @@ def collect_commodity_routes(
     if len(rows) < cap:
         return FetchResult(True, rows)
 
-    if not planet_ids and not orbit_ids and not extra_orbit_ids:
+    if not planet_ids and not orbit_ids:
         return FetchResult(
             False,
             error="commodities_routes hit the row cap and could not be split",
         )
 
     merged: dict = {}
-    planet_capped = False
+    # The capped commodity page is a real subset. Union it; do not throw it away.
+    _absorb(merged, rows)
+
+    covered_orbits: set[int] = set()
     for planet_id in planet_ids:
         page = fetch_page({"id_commodity": commodity_id, "id_planet_origin": planet_id})
         if not page.ok:
             return page
         page_rows = _as_rows(page.data)
-        if len(page_rows) >= cap:
-            planet_capped = True
-            continue
         _absorb(merged, page_rows)
+        # A short planet page contains every route from that planet, so its
+        # origin orbits do not need their own query. A capped planet page does not.
+        if len(page_rows) >= cap:
+            continue
+        for row in page_rows:
+            if not isinstance(row, dict):
+                continue
+            orbit_id = row.get("id_orbit_origin")
+            if isinstance(orbit_id, int) and orbit_id > 0:
+                covered_orbits.add(orbit_id)
 
-    orbit_query_ids = list(orbit_ids)
-    if planet_capped:
-        seen = set(orbit_query_ids)
-        for orbit_id in extra_orbit_ids:
-            if orbit_id not in seen:
-                orbit_query_ids.append(orbit_id)
-                seen.add(orbit_id)
-
-    for orbit_id in orbit_query_ids:
+    for orbit_id in orbit_ids:
+        if orbit_id in covered_orbits:
+            continue
         page = fetch_page({"id_commodity": commodity_id, "id_orbit_origin": orbit_id})
         if not page.ok:
             return page
-        _absorb(merged, _as_rows(page.data))
+        page_rows = _as_rows(page.data)
+        if len(page_rows) >= cap and warn is not None:
+            warn(
+                f"UEX route page for commodity {commodity_id} origin orbit {orbit_id} "
+                f"hit the {cap}-row cap. Those rows are kept; a finer split is deferred."
+            )
+        _absorb(merged, page_rows)
 
     if not merged:
         return FetchResult(False, error="commodities_routes split returned no rows")

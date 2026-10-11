@@ -3,7 +3,7 @@
 
 [tool.pytest.ini_options]
 minversion = "8.0"
-testpaths = ["tests"]
+testpaths = ["tests", "skills/uexcorp/tests"]
 # Core's own packages (api, services, ...) import from the repository root.
 pythonpath = ["."]
 addopts = ["-ra", "--strict-markers", "--strict-config", "--import-mode=importlib"]

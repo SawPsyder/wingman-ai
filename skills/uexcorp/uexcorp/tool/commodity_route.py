@@ -3,6 +3,32 @@ from skills.uexcorp.uexcorp.tool.tool import Tool
 from skills.uexcorp.uexcorp.tool.validator import Validator
 
 
+def _note_hidden_illegal_commodities(helper, names: list[str]) -> None:
+    """Say why a named commodity disappeared while the illegal switch is off."""
+    from skills.uexcorp.uexcorp.data_access.commodity_data_access import CommodityDataAccess
+
+    requested = CommodityDataAccess().add_filter_by_name(names).load()
+    hidden = [
+        commodity.get_name()
+        for commodity in requested
+        if commodity.get_is_illegal() and not commodity.get_is_blacklisted()
+    ]
+    if not hidden:
+        return
+    if len(hidden) == 1:
+        helper.get_handler_tool().add_note(
+            f"{hidden[0]} is illegal and was left out. "
+            "Legal commodities are shown by default. "
+            "Set filter_allow_illegal_commodities to true to include it."
+        )
+        return
+    helper.get_handler_tool().add_note(
+        f"{', '.join(hidden)} are illegal and were left out. "
+        "Legal commodities are shown by default. "
+        "Set filter_allow_illegal_commodities to true to include them."
+    )
+
+
 class CommodityRoute(Tool):
     REQUIRES_AUTHENTICATION = False
     TOOL_NAME = "uex_get_trade_routes"
@@ -50,6 +76,8 @@ class CommodityRoute(Tool):
 
         if filter_commodity_whitelist:
             commodity_route_data_access.add_filter_by_commodity_name_whitelist(filter_commodity_whitelist)
+            if not filter_allow_illegal_commodities:
+                _note_hidden_illegal_commodities(helper, filter_commodity_whitelist)
 
         if filter_commodity_blacklist:
             commodity_route_data_access.add_filter_by_commodity_name_blacklist(filter_commodity_blacklist)

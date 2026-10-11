@@ -18,7 +18,8 @@ REQUESTS_PER_MINUTE = 90
 MAX_WORKERS = 4
 MAX_ATTEMPTS = 4
 MAX_BACKOFF_SECONDS = 60.0
-RATE_LIMIT_BACKOFF_BASE = 2.0
+# A limit response has to wait out the per-minute window, not a few seconds.
+RATE_LIMIT_WINDOW_SECONDS = 60.0
 OTHER_ERROR_BACKOFF_BASE = 0.5
 
 
@@ -93,6 +94,9 @@ class Uex:
         self._rng = rng or random.random
         self._rate_lock = threading.Lock()
         self._next_request_at = 0.0
+        self._pause_until = 0.0
+        self._blocked = False
+        self._blocked_error: str | None = None
         self._min_interval = 60.0 / REQUESTS_PER_MINUTE
 
     def _get_headers(self) -> dict[str, str]:
@@ -103,14 +107,61 @@ class Uex:
         }
         return headers
 
-    def _acquire_rate_limit(self) -> None:
+    def begin_run(self) -> None:
+        """Open the circuit for a new import run.
+
+        A blocked host stays blocked until this run ends. The next run tries again.
+        """
         with self._rate_lock:
-            now = self._monotonic()
-            delay = 0.0
-            if now < self._next_request_at:
-                delay = self._next_request_at - now
-            self._next_request_at = max(now, self._next_request_at) + self._min_interval
-        if delay > 0:
+            self._blocked = False
+            self._blocked_error = None
+            self._pause_until = 0.0
+
+    def _is_blocked(self) -> bool:
+        with self._rate_lock:
+            return self._blocked
+
+    def _trip_breaker(self, error: str) -> None:
+        with self._rate_lock:
+            already = self._blocked
+            self._blocked = True
+            if not self._blocked_error:
+                self._blocked_error = error
+        if not already:
+            from skills.uexcorp.uexcorp.log import warn
+
+            warn(
+                f"UEX requests stopped for this run ({error}). "
+                "Queued requests are skipped. Previous data is kept."
+            )
+
+    def _pause_everyone(self, delay: float) -> None:
+        """Hold every worker, not only the one that received the limit."""
+        if delay <= 0:
+            return
+        with self._rate_lock:
+            until = self._monotonic() + delay
+            if until > self._pause_until:
+                self._pause_until = until
+
+    def _acquire_rate_limit(self) -> bool:
+        """Wait for the shared pause and the spacing interval.
+
+        Returns False when the circuit breaker is open. The caller must not
+        send HTTP in that case.
+        """
+        while True:
+            with self._rate_lock:
+                if self._blocked:
+                    return False
+                now = self._monotonic()
+                if now < self._pause_until:
+                    delay = self._pause_until - now
+                elif now < self._next_request_at:
+                    delay = self._next_request_at - now
+                else:
+                    self._next_request_at = now + self._min_interval
+                    return True
             self._sleeper(delay)
 
     def fetch(
@@ -119,6 +170,9 @@ class Uex:
         get: Optional[dict[str, any]] = None,
         params: Optional[dict[str, any]] = None,
     ) -> FetchResult:
+        if self._is_blocked():
+            return FetchResult(False, error=self._blocked_error or "blocked")
+
         if get and any(isinstance(value, list) for value in get.values()):
             keys, values = zip(*((k, v if isinstance(v, list) else [v]) for k, v in get.items()))
             combinations = list(product(*values))
@@ -132,9 +186,15 @@ class Uex:
                     for combination in combinations
                 ]
                 for future in futures:
+                    if self._is_blocked() and future.cancel():
+                        continue
                     result = future.result()
                     if not result.ok:
                         errors.append(result.error or "request failed")
+                        if self._is_blocked():
+                            for pending in futures:
+                                pending.cancel()
+                            return FetchResult(False, error=self._blocked_error or errors[-1])
                         continue
                     if isinstance(result.data, list):
                         results.extend(result.data)
@@ -169,7 +229,8 @@ class Uex:
 
         last_error = "request failed"
         for attempt in range(1, MAX_ATTEMPTS + 1):
-            self._acquire_rate_limit()
+            if not self._acquire_rate_limit():
+                return FetchResult(False, error=self._blocked_error or "blocked")
             self.helper.get_handler_debug().write(f"Fetching data (request {attempt}/{MAX_ATTEMPTS}) from {url} ...")
             try:
                 response = self.session.get(
@@ -184,19 +245,14 @@ class Uex:
                 self.helper.get_handler_debug().write(f"Error while retrieving data from {url}: {e}", attempt == MAX_ATTEMPTS)
                 self.helper.get_handler_error().write("Api.fetch", [endpoint, params], e)
                 if attempt < MAX_ATTEMPTS:
-                    self._sleeper(self._backoff_seconds(attempt, rate_limited=False))
+                    self._sleeper(self._backoff_seconds(attempt))
                 continue
 
             response.encoding = "utf-8"
-            limited, reason = self._is_throttled_or_blocked(response)
-            if limited:
-                last_error = reason
-                self.helper.get_handler_debug().write(
-                    f"UEX request blocked ({reason}) from {url}.",
-                    attempt == MAX_ATTEMPTS,
-                )
-                if attempt < MAX_ATTEMPTS:
-                    self._sleeper(self._delay_for_response(response, attempt, rate_limited=True))
+            kind, reason = self._classify_response(response, None)
+            if kind == "block":
+                if self._give_up_or_retry(attempt, reason, url, pause_everyone=False, response=response):
+                    return FetchResult(False, error=self._blocked_error or reason)
                 continue
 
             if response.status_code >= 400:
@@ -206,7 +262,7 @@ class Uex:
                     attempt == MAX_ATTEMPTS,
                 )
                 if attempt < MAX_ATTEMPTS:
-                    self._sleeper(self._backoff_seconds(attempt, rate_limited=False))
+                    self._sleeper(self._backoff_seconds(attempt))
                 continue
 
             try:
@@ -216,18 +272,18 @@ class Uex:
                 self.helper.get_handler_debug().write(f"Error while retrieving data from {url}: {e}", attempt == MAX_ATTEMPTS)
                 self.helper.get_handler_error().write("Api.fetch", [endpoint, params], e)
                 if attempt < MAX_ATTEMPTS:
-                    self._sleeper(self._backoff_seconds(attempt, rate_limited=False))
+                    self._sleeper(self._backoff_seconds(attempt))
                 continue
 
             status = response_json.get("status") if isinstance(response_json, dict) else None
-            if status == "requests_limit_reached":
-                last_error = "requests_limit_reached"
-                self.helper.get_handler_debug().write(
-                    f"UEX requests_limit_reached from {url}.",
-                    attempt == MAX_ATTEMPTS,
-                )
-                if attempt < MAX_ATTEMPTS:
-                    self._sleeper(self._delay_for_response(response, attempt, rate_limited=True))
+            kind, reason = self._classify_response(response, status)
+            if kind == "limit":
+                if self._give_up_or_retry(attempt, reason, url, pause_everyone=True, response=response):
+                    return FetchResult(False, error=self._blocked_error or reason)
+                continue
+            if kind == "block":
+                if self._give_up_or_retry(attempt, reason, url, pause_everyone=False, response=response):
+                    return FetchResult(False, error=self._blocked_error or reason)
                 continue
             if status != "ok":
                 last_error = str(status or "status_not_ok")
@@ -236,7 +292,7 @@ class Uex:
                     attempt == MAX_ATTEMPTS,
                 )
                 if attempt < MAX_ATTEMPTS:
-                    self._sleeper(self._backoff_seconds(attempt, rate_limited=False))
+                    self._sleeper(self._backoff_seconds(attempt))
                 continue
 
             data = response_json.get("data", [])
@@ -246,30 +302,46 @@ class Uex:
 
         return FetchResult(False, error=last_error)
 
-    def _is_throttled_or_blocked(self, response) -> tuple[bool, str]:
-        if response.status_code == 429:
-            return True, "http_429"
+    def _give_up_or_retry(self, attempt: int, reason: str, url: str, pause_everyone: bool, response) -> bool:
+        """Pause or back off. Return True when the breaker is now open."""
+        self.helper.get_handler_debug().write(
+            f"UEX request stopped ({reason}) from {url}.",
+            attempt == MAX_ATTEMPTS,
+        )
+        if pause_everyone:
+            self._pause_everyone(self._limit_delay(response))
+        if attempt >= MAX_ATTEMPTS:
+            self._trip_breaker(reason)
+            return True
+        if not pause_everyone:
+            self._sleeper(self._backoff_seconds(attempt))
+        return False
+
+    def _classify_response(self, response, body_status) -> tuple[str | None, str]:
+        if response.status_code == 429 or body_status == "requests_limit_reached":
+            reason = "requests_limit_reached" if body_status == "requests_limit_reached" else "http_429"
+            return "limit", reason
         if response.status_code == 403:
-            return True, "http_403"
+            return "block", "http_403"
         mitigated = (response.headers.get("cf-mitigated") or "").lower()
         if "challenge" in mitigated:
-            return True, "cloudflare_challenge"
+            return "block", "cloudflare_challenge"
         content_type = (response.headers.get("content-type") or "").lower()
         if response.status_code != 200 and "html" in content_type:
-            return True, "cloudflare_challenge"
-        return False, ""
+            return "block", "cloudflare_challenge"
+        return None, ""
 
-    def _delay_for_response(self, response, attempt: int, rate_limited: bool) -> float:
+    def _limit_delay(self, response) -> float:
         retry_after = _parse_retry_after(response.headers.get("Retry-After"))
         if retry_after is not None and retry_after > 0:
             return min(MAX_BACKOFF_SECONDS, retry_after)
-        return self._backoff_seconds(attempt, rate_limited=rate_limited)
+        # Wait out the per-minute window. A fraction of a second of jitter
+        # keeps workers from retrying on the same instant. rng 0 stays at 60s.
+        return min(MAX_BACKOFF_SECONDS, RATE_LIMIT_WINDOW_SECONDS + self._rng())
 
-    def _backoff_seconds(self, attempt: int, rate_limited: bool) -> float:
-        base = RATE_LIMIT_BACKOFF_BASE if rate_limited else OTHER_ERROR_BACKOFF_BASE
-        delay = base * (2 ** max(attempt - 1, 0))
+    def _backoff_seconds(self, attempt: int) -> float:
+        delay = OTHER_ERROR_BACKOFF_BASE * (2 ** max(attempt - 1, 0))
         delay = min(MAX_BACKOFF_SECONDS, delay)
-        # Full jitter between half and the full delay so parallel workers do not retry together.
         factor = 0.5 + (0.5 * self._rng())
         return min(MAX_BACKOFF_SECONDS, delay * factor)
 

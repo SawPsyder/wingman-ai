@@ -95,6 +95,10 @@ def check_concurrent_access() -> None:
         pass
 
 
+def test_concurrent_database_access() -> None:
+    check_concurrent_access()
+
+
 def main() -> None:
     check_concurrent_access()
     print("ALL OK")

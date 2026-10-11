@@ -1,13 +1,34 @@
 import os
+from urllib.parse import urlparse
 import yaml
 from typing import TYPE_CHECKING
 from api.enums import WingmanInitializationErrorType
 from api.interface import WingmanInitializationError
 from services.file import get_writable_dir
+from skills.uexcorp.uexcorp.log import warn
 
 if TYPE_CHECKING:
     from wingmen.wingman_context import WingmanContext
     from skills.uexcorp.uexcorp.helper import Helper
+
+
+DEFAULT_API_URL = "https://api.uexcorp.uk/2.0"
+
+
+def normalize_api_url(value) -> tuple[str, str | None]:
+    """Trim a configured API URL. Invalid values fall back to the default.
+
+    The second item is a warning message, or None when the value is usable.
+    """
+    if value is None:
+        return DEFAULT_API_URL, None
+    text = str(value).strip()
+    if not text:
+        return DEFAULT_API_URL, f"Empty UEX API URL. Using {DEFAULT_API_URL}."
+    parsed = urlparse(text)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        return DEFAULT_API_URL, f"Invalid UEX API URL {text!r}. Using {DEFAULT_API_URL}."
+    return text.rstrip("/"), None
 
 
 def get_tools() -> tuple[list, bool]:
@@ -66,7 +87,8 @@ class ConfigHandler:
         self.__helper = helper
         self.__wingman: "WingmanContext | None" = None
         self.__fine_config_path: str = get_writable_dir(os.path.join(self.__helper.get_data_path(), "config"))
-        self.__api_url: str = "https://api.uexcorp.uk/2.0"
+        self.__api_url: str = DEFAULT_API_URL
+        self.__api_url_warned: str | None = None
         self.__api_use_key: bool = False
         self.__api_key: str | None = None
         self.__api_timeout: int = 10
@@ -108,7 +130,11 @@ class ConfigHandler:
 
             api_url = retrieve_custom_property_value("api_url", errors)
             if api_url:
-                self.set_api_url(str(api_url).rstrip("/"))
+                normalized, problem = normalize_api_url(api_url)
+                if problem:
+                    self.__api_url_warned = problem
+                    warn(problem)
+                self.set_api_url(normalized)
 
             if self.__behavior_enabled_tools_need_authentication:
                 api_key = await self.__helper.get_handler_secret().retrieve(
@@ -250,12 +276,17 @@ class ConfigHandler:
 
     def get_api_url(self) -> str:
         # Read just-in-time so a UI change is picked up without restarting the import client.
+        raw = self.__api_url
         if self.__property_retriever:
             errors = []
             value = self.__property_retriever("api_url", errors)
             if not errors and value:
-                return str(value).rstrip("/")
-        return self.__api_url.rstrip("/")
+                raw = value
+        url, problem = normalize_api_url(raw)
+        if problem and problem != self.__api_url_warned:
+            self.__api_url_warned = problem
+            warn(problem)
+        return url
 
     def set_api_url(self, api_url: str):
         self.__api_url = api_url
