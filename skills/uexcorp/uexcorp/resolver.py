@@ -7,6 +7,7 @@ key match back into a place.
 
 from __future__ import annotations
 
+from skills.uexcorp.uexcorp.api.llm import strip_type_tag
 from skills.uexcorp.uexcorp.location_blocklist import SCOPES, _SCOPE
 
 WRITE_SYSTEM_ONE_CONFIDENCE = 0.8
@@ -144,10 +145,13 @@ async def resolve_location(
     """Resolve ``name`` through :meth:`Llm.find_closest_key`.
 
     Blocklist tools use ``for_write=True`` (the default): no main model and
-    no 0.8 dumb match. A fuzzy winner is not a match unless System One picks
-    one key at ``WRITE_SYSTEM_ONE_CONFIDENCE``. Lookups pass ``for_write=False``.
+    no 0.8 dumb match. System One is still asked for the 0.8 pick
+    (``allow_llm=False`` does not turn that off). A fuzzy winner is not a
+    match unless that pick clears ``WRITE_SYSTEM_ONE_CONFIDENCE``. The
+    confirm step asks System One again with noul. Lookups pass
+    ``for_write=False``.
     """
-    text = (name or "").strip()
+    text = strip_type_tag((name or "").strip())
     if not text:
         return Resolution()
     pool = rows if rows is not None else collect_locations(
@@ -158,6 +162,9 @@ async def resolve_location(
     )
     if scope in _SCOPE and rows is not None:
         pool = [row for row in pool if row["scope"] == scope]
+    # allow_llm is false for a write: no main model and no dumb match.
+    # ask_system_one stays true, so the 0.8 pick still runs. Confirm's noul
+    # check is a second System One call and is not affected by allow_llm.
     found = await _llm(helper).find_closest_key(
         text,
         {row["key"]: row["name"] for row in pool},
@@ -194,7 +201,7 @@ async def resolve_location_name(helper, name: str, for_trading: bool = False):
     :meth:`Llm.find_closest_key` call that matches names and aliases.
     Display labels are not the match corpus.
     """
-    text = (name or "").strip()
+    text = strip_type_tag((name or "").strip())
     if not text or text == "None":
         return None, None
     rows = collect_locations(helper, for_trading=for_trading, available_only=True)

@@ -1598,6 +1598,35 @@ class LocationBlocklistTest(_SqliteCase):
             next(index for index, name in enumerate(names) if name.endswith("[fuel]")),
         )
 
+    def test_trailing_type_tag_is_stripped_before_matching(self) -> None:
+        from skills.uexcorp.uexcorp.api.llm import Llm
+        from skills.uexcorp.uexcorp.resolver import resolve_location_name
+
+        self._seed_trade()
+        self._db.execute(
+            """
+            INSERT INTO terminal (id, name, type, is_available, id_space_station, star_system_name, space_station_name)
+            VALUES (150, 'Admin - Everus Harbor', 'commodity', 1, 52, 'Stanton', 'Everus Harbor')
+            """
+        )
+        self._db.commit()
+        resolved, note = asyncio.run(
+            resolve_location_name(self._helper, "Admin - Everus Harbor [commodity]")
+        )
+        self.assertEqual(resolved, "Admin - Everus Harbor")
+        self.assertIsNone(note)
+        fuel_tag, _note = asyncio.run(
+            resolve_location_name(self._helper, "Admin - Everus Harbor [fuel]")
+        )
+        self.assertEqual(fuel_tag, "Admin - Everus Harbor")
+
+        llm = Llm(self._helper)
+        match, options = asyncio.run(
+            llm.find_closest_match("Carrack [commodity]", ["Carrack", "Cutlass Black"])
+        )
+        self.assertEqual(match, "Carrack")
+        self.assertIsNone(options)
+
 
 if __name__ == "__main__":
     unittest.main()

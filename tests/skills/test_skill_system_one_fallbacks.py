@@ -63,6 +63,49 @@ def test_uex_asks_nothing_when_there_is_no_shortlist():
     assert "No approximate matches" in note
 
 
+def test_uex_system_one_decide_error_is_no_pick():
+    """A failing decide() is a debug log and no pick, not an exception."""
+    sys.path.insert(0, path.join(REPO_ROOT, "skills", "uexcorp"))
+    from uexcorp.api.llm import Llm
+
+    logged = []
+
+    class _Debug:
+        def write(self, content, print_to_console=False):
+            logged.append(str(content))
+
+    class _SystemOne:
+        available = True
+
+        def choice(self, instructions, criteria, examples=None):
+            return {"criteria": criteria}
+
+        async def decide(self, state, questions):
+            raise RuntimeError("decide broke")
+
+    llm = Llm.__new__(Llm)
+    llm._Llm__helper = SimpleNamespace(
+        get_handler_debug=lambda: _Debug(),
+        get_handler_config=lambda: SimpleNamespace(
+            get_wingman=lambda: SimpleNamespace(system_one=_SystemOne())
+        ),
+        add_context=lambda *a: None,
+    )
+    llm._Llm__cache_search = {}
+    assert asyncio.run(llm._Llm__system_one_match("Hercules", ["A2 Hercules", "Gladius"])) is None
+    assert any("decide broke" in line for line in logged)
+    found = asyncio.run(
+        llm.find_closest_key(
+            "Herculess",
+            {"a": "Hercules"},
+            allow_llm=False,
+            allow_dumb=False,
+        )
+    )
+    assert found.key is None
+    assert found.method != "system_one"
+
+
 def test_uex_refuses_to_ask_about_an_unbounded_shortlist():
     """The substring pass after difflib has no limit; a choice takes 255, and
     a list that long is not a disambiguation anyway."""

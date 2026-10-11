@@ -1,9 +1,20 @@
 import difflib
 import json
+import re
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from skills.uexcorp.uexcorp.helper import Helper
+
+# Location listings append " [type]". That suffix is not part of the stored name.
+_TYPE_TAG = re.compile(r"\s*\[[^\[\]]+\]\s*$")
+
+
+def strip_type_tag(search: str | None) -> str | None:
+    """Drop a trailing location-info type tag, such as `` [commodity]``."""
+    if search is None:
+        return None
+    return _TYPE_TAG.sub("", search).strip()
 
 class Message:
 
@@ -116,8 +127,10 @@ class Llm:
 
         None covers every way this does not produce an answer: the user
         switched System One off, the plan has no access, the shortlist is too
-        long to ask about, the model was not sure enough, or it said none of
-        them fit. All of those fall through to the prompt below.
+        long to ask about, ``decide`` raises, the model was not sure enough,
+        or it said none of them fit. A ``decide`` error is logged on the debug
+        handler and falls through as no pick. All of those fall through to
+        the prompt below.
         """
         if len(close_matches) > self.SYSTEM_ONE_MAX_OPTIONS:
             return None
@@ -131,24 +144,31 @@ class Llm:
 
         criteria = {name: None for name in close_matches}
         criteria["none_of_these"] = "none of the names above is what was meant"
-        answers = await system_one.decide(
-            state={"heard": search, "context": "Star Citizen, spoken to a ship assistant"},
-            questions={
-                "match": system_one.choice(
-                    "Which name from the list did the speaker mean? It comes "
-                    "from speech recognition, so it may be misspelled, "
-                    "shortened, have words in a different order, or be a word "
-                    "that merely SOUNDS like part of the right name. Prefer a "
-                    "longer name whose extra part sounds like what was heard "
-                    "over a shorter name that is only a prefix of it.",
-                    criteria,
-                    examples=[
-                        "'Hercules A2' with A2/C2/M2 Hercules in the list -> A2 Hercules",
-                        "'Connie Taurus' -> Constellation Taurus",
-                    ],
-                )
-            },
-        )
+        try:
+            answers = await system_one.decide(
+                state={"heard": search, "context": "Star Citizen, spoken to a ship assistant"},
+                questions={
+                    "match": system_one.choice(
+                        "Which name from the list did the speaker mean? It comes "
+                        "from speech recognition, so it may be misspelled, "
+                        "shortened, have words in a different order, or be a word "
+                        "that merely SOUNDS like part of the right name. Prefer a "
+                        "longer name whose extra part sounds like what was heard "
+                        "over a shorter name that is only a prefix of it.",
+                        criteria,
+                        examples=[
+                            "'Hercules A2' with A2/C2/M2 Hercules in the list -> A2 Hercules",
+                            "'Connie Taurus' -> Constellation Taurus",
+                        ],
+                    )
+                },
+            )
+        except Exception as error:
+            self.__helper.get_handler_debug().write(
+                f"System One decide failed for '{search}': {error}",
+                True,
+            )
+            return None
         threshold = self.SYSTEM_ONE_MIN_CONFIDENCE if min_confidence is None else min_confidence
         picked = answers.choice("match", min_confidence=threshold)
         if picked is None or picked == "none_of_these":
@@ -186,7 +206,13 @@ class Llm:
         stripped for scoring, but only an exact stored name is method
         ``exact``. ``allow_llm`` and ``allow_dumb`` stay off for a blocklist
         write; ``system_one_min_confidence`` is the write threshold.
+
+        ``allow_llm=False`` skips the main model only. System One is still
+        asked when ``ask_system_one`` is true (the default): a blocklist write
+        uses that for the 0.8 pick. Confirming the preview asks System One
+        again, via noul, and that check does not depend on ``allow_llm``.
         """
+        search = strip_type_tag(search)
         if records is not None:
             return await self._match_records(
                 search,
@@ -475,6 +501,7 @@ class Llm:
         cap stay as they were. Cache and context notes still apply only to a
         System One or main-model pick.
         """
+        search = strip_type_tag(search)
         if not search or search == "None":
             return None, None
 

@@ -46,7 +46,12 @@ async def _confirm_or_preview(store, helper, needed: bool, confirm: bool, sig: s
 
 
 async def _user_declined(helper) -> bool:
-    """Confident System One 'no' on the last user line. Unavailable means confirm stands."""
+    """Confident System One 'no' on the last user line. Unavailable means confirm stands.
+
+    This noul check still runs when the write used ``allow_llm=False``.
+    That flag skips the main model only. The 0.8 place pick is a separate
+    System One call inside ``find_closest_key``.
+    """
     try:
         wingman = helper.get_handler_config().get_wingman()
         system_one = getattr(wingman, "system_one", None)
