@@ -279,9 +279,7 @@ class ImportFailureKeepsOldRoutesTest(_SqliteCase):
         self.assertEqual(self._route_stamp(), [])
         self.assertNotIn(99, _commodity_ids(self._session.urls))
         self.assertTrue(self._session.headers)
-        self.assertTrue(
-            self._session.headers[0]["User-Agent"].startswith("Wingman-AI UEX skill/")
-        )
+        self.assertEqual(self._session.headers[0]["User-Agent"], "Wingman-AI UEX skill")
 
         self._session.mode = "ok"
         self._session.urls.clear()
@@ -400,7 +398,7 @@ class UexClientTest(unittest.TestCase):
 
     def test_user_agent_is_the_skill_not_a_browser(self) -> None:
         agent = skill_user_agent()
-        self.assertTrue(agent.startswith("Wingman-AI UEX skill/"))
+        self.assertEqual(agent, "Wingman-AI UEX skill")
         self.assertNotIn("Chrome", agent)
 
     def test_requests_limit_reached_backs_off_then_returns_data(self) -> None:

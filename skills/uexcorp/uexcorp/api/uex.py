@@ -23,14 +23,8 @@ OTHER_ERROR_BACKOFF_BASE = 0.5
 
 
 def skill_user_agent() -> str:
-    version = "3.2.5"
-    try:
-        from services.system_manager import LOCAL_VERSION
-
-        version = LOCAL_VERSION
-    except Exception:
-        pass
-    return f"Wingman-AI UEX skill/{version}"
+    # The skill facade has no app version. Keep this a static client name.
+    return "Wingman-AI UEX skill"
 
 
 class FetchResult:
