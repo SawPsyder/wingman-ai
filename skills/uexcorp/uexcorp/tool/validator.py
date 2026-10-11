@@ -11,6 +11,88 @@ from skills.uexcorp.uexcorp.helper import Helper
 _NO_PLACE_MATCH = "No approximate matches found, given name too abstract."
 
 
+def _unique_coded_name(rows, query: str, *, prefer_refined: bool = False) -> str | None:
+    """The one row whose code or slug equals the query, ignoring case.
+
+    A shared code prefers the refined commodity over its ore or raw twin.
+    When only the raw row exists, that row is the match. Two refined rows
+    that share a code stay unresolved so ranking can list them.
+    """
+    folded = (query or "").strip().casefold()
+    if not folded:
+        return None
+    hits = []
+    for row in rows:
+        code = str(row.get_code() or "").casefold() if hasattr(row, "get_code") else ""
+        slug = str(row.get_slug() or "").casefold() if hasattr(row, "get_slug") else ""
+        if folded == code or folded == slug:
+            hits.append(row)
+    if not hits:
+        return None
+    chosen = hits
+    if prefer_refined:
+        refined = [
+            row
+            for row in hits
+            if not row.get_is_raw()
+            and "(Ore)" not in str(row)
+            and "(Raw)" not in str(row)
+        ]
+        chosen = refined or hits
+    names = []
+    for row in chosen:
+        name = str(row)
+        if name not in names:
+            names.append(name)
+    if len(names) == 1:
+        return names[0]
+    return None
+
+
+def _raw_variant_names(commodities, query: str) -> list[str]:
+    """Ore and raw names whose own word is the query.
+
+    ``Ice`` should still suggest ``Ice (Raw)`` when that name is past the
+    first few fuzzy hits. ``Ore`` and ``Raw`` are the twin markers, so they
+    do not pull in every ore in the catalog.
+    """
+    folded = (query or "").casefold().strip()
+    if not folded or folded in {"ore", "raw"}:
+        return []
+    labels = []
+    for commodity in commodities:
+        name = str(commodity)
+        if "(Raw)" not in name and "(Ore)" not in name:
+            continue
+        words = {
+            word
+            for word in name.casefold().replace("(", " ").replace(")", " ").split()
+            if word not in {"ore", "raw"}
+        }
+        if folded in words and name not in labels:
+            labels.append(name)
+    return labels
+
+
+def _commodity_miss_note(name: str, options: str | None, commodities) -> str:
+    shown = options or ""
+    folded_shown = shown.casefold()
+    missing = [
+        label
+        for label in _raw_variant_names(commodities, name)
+        if label.casefold() not in folded_shown
+    ]
+    if missing:
+        if not shown or shown == _NO_PLACE_MATCH:
+            shown = ", ".join(missing)
+        else:
+            shown = shown + ", " + ", ".join(missing)
+    return (
+        f"Invalid commodity name, no match found for '{name}': "
+        f"Did you mean one of those?: {shown}"
+    )
+
+
 def _query_names_a_listed_place(query: str, options: str | None) -> bool:
     """True when a listed place name actually starts with the query or contains it.
 
@@ -252,6 +334,10 @@ class Validator:
                 commodities = commodity_data_access.add_filter_by_id(ids).load()
         else:
             commodities = commodity_data_access.load()
+        coded = _unique_coded_name(commodities, name, prefer_refined=True)
+        if coded:
+            return coded, None
+
         commodity_names = []
         for commodity in commodities:
             commodity_names.append(str(commodity))
@@ -260,7 +346,7 @@ class Validator:
         if closest_match:
             return closest_match, None
 
-        return None, f"Invalid commodity name, no match found for '{name}': Did you mean one of those?: {options}"
+        return None, _commodity_miss_note(name, options, commodities)
 
     def __definition_commodity(self, **kwargs) -> dict[str, any]:
         return {"type": "string"}
@@ -354,6 +440,10 @@ class Validator:
     async def __validate_item(self, name: str) -> (str | None, str | None):
         item_data_access = ItemDataAccess()
         items = item_data_access.load()
+
+        coded = _unique_coded_name(items, name)
+        if coded:
+            return coded, None
 
         item_names = []
         for item in items:
