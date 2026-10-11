@@ -316,34 +316,34 @@ class LocationBlocklistTest(_SqliteCase):
 
         self._seed_trade()
         helper = self._helper
-        everus = resolve_location(helper, "EH")
+        everus = asyncio.run(resolve_location(helper, "EH"))
         self.assertEqual(everus.method, "alias")
         self.assertEqual(everus.match["name"], "Everus Harbor")
         self.assertEqual(everus.match["scope"], "station")
-        self.assertEqual(resolve_location(helper, "CAL").match["scope"], "moon")
-        self.assertEqual(resolve_location(helper, "PYR").match["scope"], "system")
-        self.assertEqual(resolve_location(helper, "Everus Harbor").method, "exact")
-        self.assertEqual(resolve_location(helper, "Everus Harbor").match["scope"], "station")
-        self.assertEqual(resolve_location(helper, "Calliope").match["scope"], "moon")
-        self.assertEqual(resolve_location(helper, "Calliope", "terminal").match["scope"], "terminal")
-        self.assertEqual(resolve_location(helper, "Hurston").match["scope"], "planet")
-        self.assertEqual(resolve_location(helper, "Hurston", "orbit").match["scope"], "orbit")
-        quiet = resolve_location(helper, "Quiet")
+        self.assertEqual(asyncio.run(resolve_location(helper, "CAL")).match["scope"], "moon")
+        self.assertEqual(asyncio.run(resolve_location(helper, "PYR")).match["scope"], "system")
+        self.assertEqual(asyncio.run(resolve_location(helper, "Everus Harbor")).method, "exact")
+        self.assertEqual(asyncio.run(resolve_location(helper, "Everus Harbor")).match["scope"], "station")
+        self.assertEqual(asyncio.run(resolve_location(helper, "Calliope")).match["scope"], "moon")
+        self.assertEqual(asyncio.run(resolve_location(helper, "Calliope", "terminal")).match["scope"], "terminal")
+        self.assertEqual(asyncio.run(resolve_location(helper, "Hurston")).match["scope"], "planet")
+        self.assertEqual(asyncio.run(resolve_location(helper, "Hurston", "orbit")).match["scope"], "orbit")
+        quiet = asyncio.run(resolve_location(helper, "Quiet"))
         self.assertIsNone(quiet.match)
         self.assertEqual(quiet.candidates[0]["name"], "Quiet Harbor")
         self.assertEqual(quiet.candidates[0]["scope"], "station")
-        unknown = resolve_location(helper, "Xyzzyqqq")
+        unknown = asyncio.run(resolve_location(helper, "Xyzzyqqq"))
         self.assertIsNone(unknown.match)
         self.assertEqual(unknown.candidates, [])
 
-        gateways = resolve_location(helper, "Pyro Gateway")
+        gateways = asyncio.run(resolve_location(helper, "Pyro Gateway"))
         self.assertIsNone(gateways.match)
         labels = {hit["label"] for hit in gateways.candidates}
         self.assertIn("Pyro Gateway (Stanton)", labels)
         self.assertIn("Pyro Gateway (Nyx)", labels)
         self.assertTrue(any(hit["id"] == 57 for hit in gateways.candidates))
         self.assertTrue(all(hit["scope"] != "orbit" for hit in gateways.candidates))
-        scoped = resolve_location(helper, "Pyro Gateway", "station")
+        scoped = asyncio.run(resolve_location(helper, "Pyro Gateway", "station"))
         self.assertEqual({hit["id"] for hit in scoped.candidates}, {50, 57})
         self.assertTrue(all(hit["scope"] == "station" for hit in scoped.candidates))
 
@@ -353,29 +353,29 @@ class LocationBlocklistTest(_SqliteCase):
                 (200 + index, f"Port Alpha {index}"),
             )
         self._db.commit()
-        message, _instant = BlockLocation().execute(name="Port Alpha")
+        message, _instant = asyncio.run(BlockLocation().execute(name="Port Alpha"))
         candidates = [line for line in message.splitlines() if "–" in line]
         self.assertIn("Nothing was saved", message)
         self.assertEqual(len(candidates), 5)
         self.assertEqual(self._entries(), [])
 
-        fuzzy, _instant = BlockLocation().execute(name="Quiet")
+        fuzzy, _instant = asyncio.run(BlockLocation().execute(name="Quiet"))
         self.assertIn("Nothing was saved", fuzzy)
         self.assertIn("Quiet Harbor", fuzzy)
         self.assertEqual(self._entries(), [])
 
-        alias, _instant = BlockLocation().execute(name="EH")
+        alias, _instant = asyncio.run(BlockLocation().execute(name="EH"))
         self.assertIn("Would block", alias)
         self.assertIn("Everus Harbor", alias)
         self.assertIn("station", alias)
         self.assertEqual(self._entries(), [])
-        alias_saved, _instant = BlockLocation().execute(name="EH", confirm=True)
+        alias_saved, _instant = asyncio.run(BlockLocation().execute(name="EH", confirm=True))
         self.assertIn("Blocked", alias_saved)
         self.assertEqual(self._entries()[0]["scope"], "station")
         self.assertEqual(self._entries()[0]["id"], 52)
 
         self._store().remove_keys([("station", 52)])
-        saved, _instant = BlockLocation().execute(name="Everus Harbor")
+        saved, _instant = asyncio.run(BlockLocation().execute(name="Everus Harbor"))
         self.assertIn("Blocked", saved)
         self.assertEqual(self._entries()[0]["scope"], "station")
         self.assertEqual(self._entries()[0]["id"], 52)
@@ -386,27 +386,27 @@ class LocationBlocklistTest(_SqliteCase):
         self._seed_trade()
         tool = BlockLocation()
 
-        early, _instant = tool.execute(name="Pyro", confirm=True)
+        early, _instant = asyncio.run(tool.execute(name="Pyro", confirm=True))
         self.assertIn("does not match", early)
         self.assertEqual(self._entries(), [])
 
-        preview, _instant = tool.execute(name="Pyro", reason="laggy", duration="1 week")
+        preview, _instant = asyncio.run(tool.execute(name="Pyro", reason="laggy", duration="1 week"))
         self.assertIn("Would block system Pyro", preview)
         self.assertIn("confirm=true", preview)
         self.assertEqual(self._entries(), [])
 
-        mismatched, _instant = tool.execute(name="Pyro", reason="pirates", duration="1 week", confirm=True)
+        mismatched, _instant = asyncio.run(tool.execute(name="Pyro", reason="pirates", duration="1 week", confirm=True))
         self.assertIn("does not match", mismatched)
         self.assertEqual(self._entries(), [])
 
         self._clock["now"] = NOW + CONFIRM_SECONDS + 1
-        expired, _instant = tool.execute(name="Pyro", reason="laggy", duration="1 week", confirm=True)
+        expired, _instant = asyncio.run(tool.execute(name="Pyro", reason="laggy", duration="1 week", confirm=True))
         self.assertIn("does not match", expired)
         self.assertEqual(self._entries(), [])
 
         self._clock["now"] = NOW
-        tool.execute(name="Pyro", reason="laggy", duration="1 week")
-        saved, _instant = tool.execute(name="Pyro", reason="laggy", duration="1 week", confirm=True)
+        asyncio.run(tool.execute(name="Pyro", reason="laggy", duration="1 week"))
+        saved, _instant = asyncio.run(tool.execute(name="Pyro", reason="laggy", duration="1 week", confirm=True))
         self.assertIn("Blocked", saved)
         self.assertEqual(self._entries()[0]["scope"], "system")
         self.assertEqual(self._entries()[0]["expires"], NOW + 7 * 86400)
@@ -427,43 +427,43 @@ class LocationBlocklistTest(_SqliteCase):
             "INSERT INTO terminal (id, name, type, id_space_station) VALUES (399, 'Crowded Fuel', 'fuel', 99)"
         )
         self._db.commit()
-        crowded, _instant = tool.execute(name="Crowded Harbor")
+        crowded, _instant = asyncio.run(tool.execute(name="Crowded Harbor"))
         self.assertIn("11 commodity terminals", crowded)
         self.assertIn("12 terminals total", crowded)
         self.assertNotIn("Crowded Harbor", [entry["name"] for entry in self._entries()])
-        tool.execute(name="Crowded Harbor", confirm=True)
+        asyncio.run(tool.execute(name="Crowded Harbor", confirm=True))
         crowded_entry = next(entry for entry in self._entries() if entry["name"] == "Crowded Harbor")
         self.assertIn(399, set(self._store().blocked_terminal_ids()))
         self.assertEqual(self._store().terminal_count(crowded_entry), 11)
 
-        quiet, _instant = tool.execute(name="Quiet Harbor")
+        quiet, _instant = asyncio.run(tool.execute(name="Quiet Harbor"))
         self.assertIn("Blocked", quiet)
         self.assertTrue(any(entry["name"] == "Quiet Harbor" for entry in self._entries()))
 
         self._store().add({"scope": "station", "id": 51, "name": "Pyro Gateway", "path": "Nyx"}, None, None)
         self._store().add({"scope": "station", "id": 50, "name": "Pyro Gateway", "path": "Stanton"}, None, None)
         unblock = UnblockLocation()
-        bulk, _instant = unblock.execute(name="Pyro Gateway")
+        bulk, _instant = asyncio.run(unblock.execute(name="Pyro Gateway"))
         self.assertIn("Would remove 2", bulk)
         self.assertEqual(
             len([entry for entry in self._entries() if entry["name"] == "Pyro Gateway"]),
             2,
         )
-        mismatch, _instant = unblock.execute(name="pyro gateway", confirm=True)
+        mismatch, _instant = asyncio.run(unblock.execute(name="pyro gateway", confirm=True))
         self.assertIn("does not match", mismatch)
-        removed, _instant = unblock.execute(name="Pyro Gateway", confirm=True)
+        removed, _instant = asyncio.run(unblock.execute(name="Pyro Gateway", confirm=True))
         self.assertIn("Removed 2", removed)
-        one, _instant = unblock.execute(name="station:53")
+        one, _instant = asyncio.run(unblock.execute(name="station:53"))
         self.assertIn("Removed 1", one)
 
         clear = ClearLocationBlocks()
-        pending, _instant = clear.execute()
+        pending, _instant = asyncio.run(clear.execute())
         self.assertIn("Would clear", pending)
         self.assertGreater(len(self._entries()), 0)
-        wrong, _instant = clear.execute(confirm=True, only_expired=True)
+        wrong, _instant = asyncio.run(clear.execute(confirm=True, only_expired=True))
         self.assertIn("does not match", wrong)
         self.assertGreater(len(self._entries()), 0)
-        done, _instant = clear.execute(confirm=True)
+        done, _instant = asyncio.run(clear.execute(confirm=True))
         self.assertIn("Cleared", done)
         self.assertEqual(self._entries(), [])
 
@@ -471,7 +471,7 @@ class LocationBlocklistTest(_SqliteCase):
         from skills.uexcorp.uexcorp.tool.location_blocks import BlockLocation
 
         self._seed_trade()
-        message, _instant = BlockLocation().execute(name="Everus Harbor", duration="forever")
+        message, _instant = asyncio.run(BlockLocation().execute(name="Everus Harbor", duration="forever"))
         self.assertIn("Unrecognised duration", message)
         self.assertEqual(self._entries(), [])
 
@@ -519,10 +519,10 @@ class LocationBlocklistTest(_SqliteCase):
         self.assertIn(52, store.blocked_terminal_ids())
         self.assertNotIn(80, store.blocked_terminal_ids())
 
-        hidden, _instant = ListLocationBlocks().execute()
+        hidden, _instant = asyncio.run(ListLocationBlocks().execute())
         self.assertIn("Quoted", hidden)
         self.assertNotIn("Levski", hidden)
-        shown, _instant = ListLocationBlocks().execute(include_expired=True)
+        shown, _instant = asyncio.run(ListLocationBlocks().execute(include_expired=True))
         self.assertIn("Levski", shown)
         self.assertIn("expired", shown)
 
@@ -594,7 +594,7 @@ class LocationBlocklistTest(_SqliteCase):
         self.assertTrue(rows["Twin"]["stale"])
         self.assertEqual(rows["Missing"]["id"], 997)
         self.assertTrue(rows["Missing"]["stale"])
-        listed, _instant = ListLocationBlocks().execute()
+        listed, _instant = asyncio.run(ListLocationBlocks().execute())
         self.assertIn("stale", listed)
         self.assertIn("Missing", listed)
 
@@ -602,7 +602,7 @@ class LocationBlocklistTest(_SqliteCase):
         from skills.uexcorp.uexcorp.tool.location_blocks import BlockLocation
 
         self._seed_trade()
-        BlockLocation().execute(name="Levski", reason="laggy", duration="1 week")
+        asyncio.run(BlockLocation().execute(name="Levski", reason="laggy", duration="1 week"))
         blocked, notes = self._routes(filter_commodity_whitelist=["Waste"], filter_start_location="Levski", limit=8)
         self.assertEqual(json.loads(blocked), [])
         text = " ".join(notes)
@@ -682,7 +682,7 @@ class LocationBlocklistTest(_SqliteCase):
         from skills.uexcorp.uexcorp.tool.location_information import LocationInformation
 
         self._seed_trade()
-        BlockLocation().execute(name="Levski", reason="laggy")
+        asyncio.run(BlockLocation().execute(name="Levski", reason="laggy"))
         self._helper.get_handler_tool().notes.clear()
         payload, _instant = CommodityInformation().execute(filter_commodities=["Waste"])
         self.assertNotIn("Levski", payload)
@@ -793,37 +793,37 @@ class LocationBlocklistTest(_SqliteCase):
             )
         self._db.commit()
 
-        ruin = resolve_location(self._helper, "Ruin")
+        ruin = asyncio.run(resolve_location(self._helper, "Ruin"))
         self.assertIsNone(ruin.match)
         self.assertEqual(ruin.candidates[0]["name"], "Ruin Station")
         self.assertTrue(all(hit["name"] != "Landing Services" for hit in ruin.candidates))
-        unsaved, _instant = BlockLocation().execute(name="Ruin")
+        unsaved, _instant = asyncio.run(BlockLocation().execute(name="Ruin"))
         self.assertIn("Nothing was saved", unsaved)
         self.assertEqual(self._entries(), [])
 
-        starlight = resolve_location(self._helper, "Starlight")
+        starlight = asyncio.run(resolve_location(self._helper, "Starlight"))
         self.assertEqual(starlight.method, "exact")
         self.assertEqual(starlight.match["name"], "Starlight")
         self.assertEqual(starlight.match["scope"], "station")
 
-        lorvil = resolve_location(self._helper, "Lorvil")
+        lorvil = asyncio.run(resolve_location(self._helper, "Lorvil"))
         self.assertEqual(lorvil.candidates[0]["name"], "Lorville")
-        covalex = resolve_location(self._helper, "Covalex")
+        covalex = asyncio.run(resolve_location(self._helper, "Covalex"))
         self.assertTrue(any(hit["name"] == "Covalex Hub" for hit in covalex.candidates))
-        baijni = resolve_location(self._helper, "Baijni")
+        baijni = asyncio.run(resolve_location(self._helper, "Baijni"))
         self.assertTrue(any(hit["name"] == "Baijini Point" for hit in baijni.candidates))
 
-        gateways, _instant = BlockLocation().execute(name="Pyro Gateway")
+        gateways, _instant = asyncio.run(BlockLocation().execute(name="Pyro Gateway"))
         self.assertIn("Pyro Gateway (Stanton)", gateways)
         self.assertIn("Pyro Gateway (Nyx)", gateways)
         self.assertNotIn("orbit", gateways)
         self.assertIn("Nothing was saved", gateways)
-        scoped, _instant = BlockLocation().execute(name="Pyro Gateway", scope="station")
+        scoped, _instant = asyncio.run(BlockLocation().execute(name="Pyro Gateway", scope="station"))
         self.assertIn("Pyro Gateway (Stanton)", scoped)
         self.assertIn("Pyro Gateway (Nyx)", scoped)
         self.assertNotIn("orbit", scoped)
 
-        houses, _instant = BlockLocation().execute(name="Gatehouse")
+        houses, _instant = asyncio.run(BlockLocation().execute(name="Gatehouse"))
         self.assertIn("Nothing was saved", houses)
         for index in range(6):
             self.assertIn(f"Gatehouse {index}", houses)
@@ -854,6 +854,7 @@ class LocationBlocklistTest(_SqliteCase):
                 self._pick = pick
                 self._confidence = confidence
                 self._agreed = agreed
+                self.seconds = 0.0
 
             def choice(self, key, min_confidence=0.0):
                 if self._pick is None or self._confidence < min_confidence:
@@ -885,8 +886,18 @@ class LocationBlocklistTest(_SqliteCase):
             def noul(self, instructions):
                 return {"noul": instructions}
 
-            def decide_sync(self, state, questions):
-                return _Answers(self.pick, self.confidence, self.agreed)
+            async def decide(self, state, questions):
+                criteria = {}
+                match = questions.get("match")
+                if isinstance(match, dict):
+                    criteria = match.get("criteria") or {}
+                pick = self.pick
+                if pick and criteria and pick not in criteria:
+                    for key in criteria:
+                        if key != "none_of_these" and "Ruin" in str(key):
+                            pick = key
+                            break
+                return _Answers(pick, self.confidence, self.agreed)
 
         system_one = _SystemOne()
         wingman = SimpleNamespace(
@@ -895,30 +906,30 @@ class LocationBlocklistTest(_SqliteCase):
         )
         self._helper.get_handler_config().get_wingman = lambda: wingman
 
-        low, _instant = BlockLocation().execute(name="Ruin")
+        low, _instant = asyncio.run(BlockLocation().execute(name="Ruin"))
         self.assertIn("Nothing was saved", low)
         self.assertEqual(self._entries(), [])
 
         system_one.available = True
         system_one.pick = "station:54"
         system_one.confidence = 0.4
-        unsure, _instant = BlockLocation().execute(name="Ruin")
+        unsure, _instant = asyncio.run(BlockLocation().execute(name="Ruin"))
         self.assertTrue(system_one.offered_none)
         self.assertIn("Nothing was saved", unsure)
         self.assertEqual(self._entries(), [])
 
         system_one.confidence = 0.91
-        preview, _instant = BlockLocation().execute(name="Ruin")
+        preview, _instant = asyncio.run(BlockLocation().execute(name="Ruin"))
         self.assertIn("Would block", preview)
         self.assertIn("Ruin Station", preview)
         self.assertIn("station", preview)
         self.assertEqual(self._entries(), [])
         system_one.agreed = False
-        declined, _instant = BlockLocation().execute(name="Ruin", confirm=True)
+        declined, _instant = asyncio.run(BlockLocation().execute(name="Ruin", confirm=True))
         self.assertIn("declined", declined)
         self.assertEqual(self._entries(), [])
         system_one.agreed = None
-        saved, _instant = BlockLocation().execute(name="Ruin", confirm=True)
+        saved, _instant = asyncio.run(BlockLocation().execute(name="Ruin", confirm=True))
         self.assertIn("Blocked", saved)
         self.assertEqual(self._entries()[0]["id"], 54)
 
@@ -963,10 +974,10 @@ class LocationBlocklistTest(_SqliteCase):
         store.sync_after_import()
         store.add({"scope": "terminal", "id": 1, "name": "Other", "path": ""}, None, None)
         self.assertTrue(any(entry["name"] == "Lorville" for entry in store.read()))
-        removed, _instant = UnblockLocation().execute(name="Lorville")
+        removed, _instant = asyncio.run(UnblockLocation().execute(name="Lorville"))
         self.assertIn("Removed", removed)
         self.assertFalse(any(entry["name"] == "Lorville" for entry in store.read()))
-        removed_ref, _instant = UnblockLocation().execute(name="city:Lorville")
+        removed_ref, _instant = asyncio.run(UnblockLocation().execute(name="city:Lorville"))
         self.assertIn("No block matches", removed_ref)
         self.assertTrue(any(entry["scope"] == "galaxy" for entry in store.read()))
 
@@ -1026,7 +1037,7 @@ class LocationBlocklistTest(_SqliteCase):
             """
         )
         self._db.commit()
-        preview, _instant = BlockLocation().execute(name="Hurston")
+        preview, _instant = asyncio.run(BlockLocation().execute(name="Hurston"))
         self.assertIn("Includes Lagrange stations: ARC-L1.", preview)
         self.assertIn("Excludes Lagrange stations: ARC-L2.", preview)
         self.assertNotIn("Empty-L3", preview)
@@ -1037,9 +1048,9 @@ class LocationBlocklistTest(_SqliteCase):
         from skills.uexcorp.uexcorp.tool.location_blocks import BlockLocation, UnblockLocation
 
         self._seed_trade()
-        BlockLocation().execute(name="Hurston")
-        BlockLocation().execute(name="Hurston", confirm=True)
-        message, _instant = UnblockLocation().execute(name="Everus Harbor")
+        asyncio.run(BlockLocation().execute(name="Hurston"))
+        asyncio.run(BlockLocation().execute(name="Hurston", confirm=True))
+        message, _instant = asyncio.run(UnblockLocation().execute(name="Everus Harbor"))
         self.assertIn("covered by the planet block Hurston", message)
         self.assertTrue(any(entry["name"] == "Hurston" for entry in self._entries()))
 
@@ -1066,7 +1077,7 @@ class LocationBlocklistTest(_SqliteCase):
         self.assertTrue(os.path.exists(store._legacy))
         with open(store.path, encoding="utf-8") as handle:
             self.assertIn("migrated_terminal_blacklist:", handle.read())
-        removed, _instant = UnblockLocation().execute(name="Kept")
+        removed, _instant = asyncio.run(UnblockLocation().execute(name="Kept"))
         self.assertIn("Removed", removed)
         store.migrate()
         self.assertFalse(any(entry["name"] == "Kept" for entry in store.read()))
@@ -1087,8 +1098,14 @@ class LocationBlocklistTest(_SqliteCase):
         from skills.uexcorp.uexcorp.tool.location_blocks import BlockLocation
 
         self._seed_trade()
-        saved, _instant = BlockLocation().execute(name="Everus Harbor", duration="2h")
-        self.assertIn("UTC", saved)
+        from datetime import datetime
+
+        saved, _instant = asyncio.run(BlockLocation().execute(name="Everus Harbor", duration="2h"))
+        moment = datetime.fromtimestamp(self._clock["now"] + 2 * 3600).astimezone()
+        self.assertIn(moment.strftime("%H:%M"), saved)
+        zone = moment.tzname() or ""
+        if zone:
+            self.assertIn(zone, saved)
         self.assertIn("Blocked", saved)
 
     def test_blocked_shop_is_marked_and_location_lookup_finds_it(self) -> None:
@@ -1126,10 +1143,10 @@ class LocationBlocklistTest(_SqliteCase):
             """
         )
         self._db.commit()
-        shop = resolve_location(self._helper, "Clothing Shop - ARC-L2")
+        shop = asyncio.run(resolve_location(self._helper, "Clothing Shop - ARC-L2"))
         self.assertEqual(shop.match["scope"], "terminal")
         self.assertEqual(shop.match["id"], 120)
-        saved, _instant = BlockLocation().execute(name="Clothing Shop - ARC-L2", reason="laggy")
+        saved, _instant = asyncio.run(BlockLocation().execute(name="Clothing Shop - ARC-L2", reason="laggy"))
         self.assertIn("Blocked", saved)
 
         offers = " ".join(Item(1, load=True).get_data_for_ai()["offers"])
@@ -1171,6 +1188,415 @@ class LocationBlocklistTest(_SqliteCase):
         empty = asyncio.run(llm.find_closest_key("Millennium Falcon", {"a": "Carrack", "b": "Gladius"}))
         self.assertIsNone(empty.key)
         self.assertIn("No approximate matches", empty.note)
+
+    def test_parent_orbit_collapses_into_the_station(self) -> None:
+        from skills.uexcorp.uexcorp.api.llm import Llm
+        from skills.uexcorp.uexcorp.resolver import collect_locations, resolve_location
+
+        self._seed_trade()
+        self._db.execute(
+            """
+            INSERT INTO orbit (id, name, id_star_system, star_system_name, is_available) VALUES
+                (360, 'Pyro Gateway', 1, 'Stanton', 1),
+                (396, 'Pyro Gateway', 2, 'Nyx', 1)
+            """
+        )
+        self._db.execute(
+            """
+            INSERT INTO space_station (id, name, id_star_system, id_orbit, star_system_name, is_available)
+            VALUES (24, 'Pyro Gateway', 1, 360, 'Stanton', 1)
+            """
+        )
+        self._db.execute("UPDATE space_station SET id_orbit = 396 WHERE id = 57")
+        self._db.execute(
+            """
+            INSERT INTO space_station (id, name, id_star_system, star_system_name, is_available)
+            VALUES (55, 'Nyx Gateway', 2, 'Nyx', 1)
+            """
+        )
+        self._db.commit()
+
+        resolved = asyncio.run(resolve_location(self._helper, "Pyro Gateway"))
+        station_ids = {hit["id"] for hit in resolved.candidates if hit["scope"] == "station"}
+        self.assertIn(24, station_ids)
+        self.assertIn(57, station_ids)
+        self.assertTrue(
+            all(not (hit["scope"] == "orbit" and hit["name"] == "Pyro Gateway") for hit in resolved.candidates)
+        )
+        self.assertTrue(all(hit["name"] != "Nyx Gateway" for hit in resolved.candidates))
+        self.assertIsNone(resolved.match)
+
+        rows = collect_locations(self._helper, available_only=False)
+        llm = Llm(self._helper)
+        found = asyncio.run(
+            llm.find_closest_key(
+                "Pyro Gateway",
+                {row["key"]: row["name"] for row in rows},
+                records=rows,
+                allow_llm=False,
+                allow_dumb=False,
+            )
+        )
+        keys = {item["key"] for item in found.candidates}
+        self.assertIn("station:24", keys)
+        self.assertIn("station:57", keys)
+        self.assertNotIn("orbit:360", keys)
+        self.assertNotIn("orbit:396", keys)
+        self.assertIsNone(found.key)
+
+    def test_scope_words_and_contained_tokens_shortlist(self) -> None:
+        from skills.uexcorp.uexcorp.resolver import resolve_location, resolve_location_name
+        from skills.uexcorp.uexcorp.tool.location_blocks import BlockLocation
+
+        self._seed_trade()
+        self._db.execute(
+            """
+            INSERT INTO space_station (id, name, id_star_system, star_system_name, is_available, is_available_live)
+            VALUES
+                (210, 'Port Olisar', 1, 'Stanton', 1, 1),
+                (211, 'Orion', 1, 'Stanton', 1, 1),
+                (212, 'Yulin', 1, 'Stanton', 1, 1),
+                (213, 'Olisar Point', 1, 'Stanton', 1, 1)
+            """
+        )
+        self._db.execute("UPDATE planet SET is_available_live = 1 WHERE id = 10")
+        self._db.execute("UPDATE terminal SET is_available_live = 1 WHERE id = 80")
+        self._db.commit()
+
+        olisar = asyncio.run(resolve_location(self._helper, "Olisar"))
+        self.assertEqual(olisar.candidates[0]["name"], "Port Olisar")
+        names = [hit["name"] for hit in olisar.candidates]
+        self.assertNotIn("Orion", names)
+        self.assertNotIn("Yulin", names)
+
+        levski = asyncio.run(resolve_location(self._helper, "Levski Station"))
+        self.assertIsNone(levski.match)
+        self.assertEqual(levski.candidates[0]["name"], "Levski")
+        hurston = asyncio.run(resolve_location(self._helper, "Hurston Planet"))
+        self.assertIsNone(hurston.match)
+        self.assertEqual(hurston.candidates[0]["name"], "Hurston")
+        self.assertEqual(hurston.candidates[0]["scope"], "planet")
+
+        unsaved, _instant = asyncio.run(BlockLocation().execute(name="Levski Station"))
+        self.assertIn("Nothing was saved", unsaved)
+        self.assertIn("Levski", unsaved)
+        self.assertEqual(self._entries(), [])
+
+        self.assertEqual(
+            asyncio.run(resolve_location_name(self._helper, "Levski Station"))[0],
+            "Levski",
+        )
+        self.assertEqual(
+            asyncio.run(resolve_location_name(self._helper, "Hurston Planet", for_trading=True))[0],
+            "Hurston",
+        )
+        self.assertEqual(
+            asyncio.run(resolve_location_name(self._helper, "Olisar", for_trading=False))[0],
+            "Port Olisar",
+        )
+
+    def test_only_an_exact_name_saves_without_confirm(self) -> None:
+        from skills.uexcorp.uexcorp.tool.location_blocks import BlockLocation
+
+        self._seed_trade()
+        exact, _instant = asyncio.run(BlockLocation().execute(name="Everus Harbor"))
+        self.assertIn("Blocked", exact)
+        self.assertEqual(self._entries()[0]["id"], 52)
+        self._store().remove_keys([("station", 52)])
+
+        alias, _instant = asyncio.run(BlockLocation().execute(name="EH"))
+        self.assertIn("Would block", alias)
+        self.assertEqual(self._entries(), [])
+        saved, _instant = asyncio.run(BlockLocation().execute(name="EH", confirm=True))
+        self.assertIn("Blocked", saved)
+
+        fuzzy, _instant = asyncio.run(BlockLocation().execute(name="Quiet"))
+        self.assertIn("Nothing was saved", fuzzy)
+        self.assertFalse(any(entry["name"] == "Quiet Harbor" for entry in self._entries()))
+
+    def test_route_typos_match_names_and_shops_stay_out(self) -> None:
+        from skills.uexcorp.uexcorp.api.llm import Llm
+        from skills.uexcorp.uexcorp.resolver import collect_locations, resolve_location_name
+
+        self._seed_trade()
+        self._db.execute(
+            """
+            UPDATE city SET is_available_live = 1, has_trade_terminal = 1 WHERE id = 40
+            """
+        )
+        self._db.execute(
+            """
+            INSERT INTO city (
+                id, name, id_star_system, star_system_name, is_available, is_available_live, has_trade_terminal
+            ) VALUES (41, 'Area18', 1, 'Stanton', 1, 1, 1)
+            """
+        )
+        self._db.execute(
+            """
+            INSERT INTO space_station (
+                id, name, id_star_system, star_system_name, is_available, is_available_live, has_trade_terminal
+            ) VALUES (59, 'Port Tressler', 1, 'Stanton', 1, 1, 1)
+            """
+        )
+        self._db.execute(
+            """
+            INSERT INTO terminal (id, name, type, is_available, id_star_system, star_system_name) VALUES
+                (130, 'Casaba Outlet', 'clothing', 1, 1, 'Stanton'),
+                (131, 'Teach''s', 'clothing', 1, 1, 'Stanton'),
+                (132, 'Cubby Blast', 'item', 1, 1, 'Stanton')
+            """
+        )
+        self._db.commit()
+
+        rows = collect_locations(self._helper, for_trading=True, available_only=True)
+        names = [row["name"] for row in rows]
+        self.assertNotIn("Casaba Outlet", names)
+        self.assertIn("Lorville", names)
+        self.assertIn("Area18", names)
+        self.assertIn("Port Tressler", names)
+        self.assertIn("Levski", names)
+
+        llm = Llm(self._helper)
+        expected = {
+            "Lorvil": "Lorville",
+            "Area18": "Area18",
+            "Port Tresler": "Port Tressler",
+            "Levsky": "Levski",
+            "Casaba Outlet": None,
+            "Teach's": None,
+            "Cubby Blast": None,
+        }
+        for query, want in expected.items():
+            resolved, _note = asyncio.run(
+                resolve_location_name(self._helper, query, for_trading=True)
+            )
+            listed, _options = asyncio.run(llm.find_closest_match(query, names))
+            self.assertEqual(resolved, want, query)
+            self.assertEqual(listed, want, query)
+
+    def test_expired_block_stops_applying_when_the_clock_moves(self) -> None:
+        from skills.uexcorp.uexcorp.tool.location_blocks import BlockLocation
+
+        self._seed_trade()
+        asyncio.run(BlockLocation().execute(name="Levski", reason="laggy", duration="2h"))
+        self.assertIn(80, self._store().blocked_terminal_ids())
+        blocked, _notes = self._routes(filter_commodity_whitelist=["Waste"], limit=8)
+        self.assertNotIn("Levski", blocked)
+
+        self._clock["now"] = NOW + 3 * 3600
+        self.assertNotIn(80, self._store().blocked_terminal_ids())
+        opened, _notes = self._routes(filter_commodity_whitelist=["Waste"], limit=8)
+        self.assertIn("Levski", opened)
+
+    def test_failed_write_is_reported(self) -> None:
+        from skills.uexcorp.uexcorp.tool.location_blocks import BlockLocation
+
+        self._seed_trade()
+        self._store().add({"scope": "terminal", "id": 1, "name": "Kept", "path": ""}, "lag", None)
+        real_replace = os.replace
+
+        def boom(src, dst):
+            if str(dst).endswith("location_blocklist.yaml"):
+                raise OSError("disk full")
+            return real_replace(src, dst)
+
+        with mock.patch("skills.uexcorp.uexcorp.location_blocklist.os.replace", boom):
+            message, _instant = asyncio.run(BlockLocation().execute(name="Everus Harbor"))
+        self.assertIn("could not be saved", message)
+        self.assertEqual([entry["name"] for entry in self._entries()], ["Kept"])
+
+    def test_newer_legacy_file_is_merged_without_clobbering_migrated(self) -> None:
+        import skills.uexcorp.uexcorp.location_blocklist as blocklist
+
+        store = self._store()
+        self._write(store._legacy, self._legacy_text())
+        self._db.execute("INSERT INTO terminal (id, name) VALUES (1, 'Placeholder')")
+        self._db.commit()
+        store.migrate()
+        retired = store._legacy + ".migrated"
+        with open(retired, encoding="utf-8") as handle:
+            original = handle.read()
+        self._write(
+            store._legacy,
+            "- id: 99\n  is_blacklisted: true\n  terminal: Newer\n  system: Stanton\n",
+        )
+        warnings = []
+        original_warn = blocklist.warn
+        blocklist.warn = warnings.append
+        try:
+            store.migrate()
+        finally:
+            blocklist.warn = original_warn
+        with open(retired, encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), original)
+        self.assertFalse(os.path.exists(store._legacy))
+        renamed = [
+            name
+            for name in os.listdir(os.path.dirname(store._legacy))
+            if name.startswith("terminal_blacklist.yaml.migrated-")
+        ]
+        self.assertEqual(len(renamed), 1)
+        self.assertTrue(any(entry["id"] == 99 for entry in store.read()))
+        self.assertTrue(warnings)
+
+    def test_scope_id_unblock_does_not_fuzzy_match(self) -> None:
+        from skills.uexcorp.uexcorp.tool.location_blocks import BlockLocation, UnblockLocation
+
+        self._seed_trade()
+        asyncio.run(BlockLocation().execute(name="Stanton"))
+        asyncio.run(BlockLocation().execute(name="Stanton", confirm=True))
+        message, _instant = asyncio.run(UnblockLocation().execute(name="station:52"))
+        self.assertIn("No block matches", message)
+        self.assertTrue(any(entry["name"] == "Stanton" for entry in self._entries()))
+
+    def test_agreement_counts_in_any_language(self) -> None:
+        from types import SimpleNamespace
+
+        from skills.uexcorp.uexcorp.tool.location_blocks import BlockLocation
+
+        self._seed_trade()
+
+        class _Answers:
+            def __init__(self, agreed):
+                self._agreed = agreed
+
+            def noul(self, key):
+                if self._agreed is None:
+                    return None
+                return 0.95 if self._agreed else 0.05
+
+            def choice(self, key, min_confidence=0.0):
+                return None
+
+            def confidence(self, key):
+                return 0.0
+
+        class _SystemOne:
+            def __init__(self):
+                self.available = True
+                self.question = ""
+
+            def choice(self, instructions, criteria, examples=None):
+                return {"criteria": criteria}
+
+            def noul(self, instructions):
+                self.question = instructions
+                return {"question": instructions}
+
+            async def decide(self, state, questions):
+                spec = questions.get("agreed") or {}
+                question = spec.get("question") if isinstance(spec, dict) else ""
+                message = str(state.get("message") or "").casefold().strip()
+                words = ("ja", "jo", "passt", "mach")
+                if not all(word in str(question).casefold() for word in words):
+                    agreed = False
+                elif message in words or message in {"yes", "ok"}:
+                    agreed = True
+                elif message in {"no", "nein"}:
+                    agreed = False
+                else:
+                    agreed = None
+                return _Answers(agreed)
+
+        system_one = _SystemOne()
+        history = {"text": "ja"}
+        wingman = SimpleNamespace(
+            system_one=system_one,
+            conversation=SimpleNamespace(history=lambda: [{"role": "user", "content": history["text"]}]),
+        )
+        self._helper.get_handler_config().get_wingman = lambda: wingman
+
+        for word in ("ja", "jo", "passt", "mach"):
+            self._store().remove_keys([("station", 52)])
+            history["text"] = word
+            preview, _instant = asyncio.run(BlockLocation().execute(name="EH"))
+            self.assertIn("Would block", preview)
+            saved, _instant = asyncio.run(BlockLocation().execute(name="EH", confirm=True))
+            self.assertIn("Blocked", saved, word)
+            self.assertTrue(self._entries())
+        for word in ("ja", "jo", "passt", "mach"):
+            self.assertIn(word, system_one.question)
+
+        self._store().remove_keys([("station", 52)])
+        history["text"] = "no"
+        asyncio.run(BlockLocation().execute(name="EH"))
+        declined, _instant = asyncio.run(BlockLocation().execute(name="EH", confirm=True))
+        self.assertIn("declined", declined)
+        self.assertEqual(self._entries(), [])
+
+    def test_confirm_check_does_not_block_the_event_loop(self) -> None:
+        import time
+        from types import SimpleNamespace
+
+        from skills.uexcorp.uexcorp.tool.location_blocks import BlockLocation
+
+        self._seed_trade()
+
+        class _Answers:
+            def noul(self, key):
+                return 0.95
+
+            def choice(self, key, min_confidence=0.0):
+                return None
+
+            def confidence(self, key):
+                return 0.0
+
+        class _SystemOne:
+            available = True
+
+            def noul(self, instructions):
+                return {"question": instructions}
+
+            def choice(self, instructions, criteria, examples=None):
+                return {}
+
+            async def decide(self, state, questions):
+                await asyncio.sleep(0.25)
+                return _Answers()
+
+        wingman = SimpleNamespace(
+            system_one=_SystemOne(),
+            conversation=SimpleNamespace(history=lambda: [{"role": "user", "content": "ja"}]),
+        )
+        self._helper.get_handler_config().get_wingman = lambda: wingman
+
+        async def main():
+            await BlockLocation().execute(name="EH")
+            start = time.monotonic()
+            ticks = []
+
+            async def ticker():
+                await asyncio.sleep(0.05)
+                ticks.append(time.monotonic() - start)
+
+            await asyncio.gather(ticker(), BlockLocation().execute(name="EH", confirm=True))
+            return ticks
+
+        ticks = asyncio.run(main())
+        self.assertTrue(ticks)
+        self.assertLess(ticks[0], 0.18)
+
+    def test_terminal_lists_put_commodity_first_and_label_type(self) -> None:
+        from skills.uexcorp.uexcorp.model.city import City
+
+        self._seed_trade()
+        self._db.execute(
+            """
+            INSERT INTO terminal (id, name, type, id_city) VALUES
+                (140, 'Lorville Fuel', 'fuel', 40),
+                (141, 'Lorville Clothes', 'clothing', 40)
+            """
+        )
+        self._db.commit()
+        terminals = City(40, load=True).get_data_for_ai()["terminals"]
+        names = [terminal["name"] for terminal in terminals]
+        self.assertTrue(names[0].endswith("[commodity]"))
+        self.assertTrue(any(name.endswith("[fuel]") for name in names))
+        self.assertLess(
+            next(index for index, name in enumerate(names) if name.endswith("[commodity]")),
+            next(index for index, name in enumerate(names) if name.endswith("[fuel]")),
+        )
 
 
 if __name__ == "__main__":

@@ -205,7 +205,7 @@ class Terminal(DataModel):
         faction = Faction(self.get_id_faction(), load=True) if self.get_id_faction() else None
 
         information = {
-            "name": self.get_name(),
+            "name": self.listing_label(),
             "location_type": "Terminal",
             "terminal_types": self.get_types(),
             "terminal_extras": self.get_extras(),
@@ -252,7 +252,7 @@ class Terminal(DataModel):
         # data, so location type / parent / star system are already known from
         # the surrounding context and are omitted per entry.
         information = {
-            "name": self.get_nickname(),
+            "name": self.listing_label(),
             "terminal_types": self.get_types(),
             "terminal_extras": self.get_extras(),
             "company_name": self.get_company_name(),
@@ -437,8 +437,38 @@ class Terminal(DataModel):
     def set_is_blacklisted(self, is_blacklisted: int):
         self.data["is_blacklisted"] = is_blacklisted
 
+    def listing_label(self) -> str:
+        """Name plus type, commodity when the type column is empty."""
+        name = self.get_name() or self.get_nickname() or ""
+        kind = (self.get_type() or "").strip() or "commodity"
+        return f"{name} [{kind}]"
+
     def __str__(self):
         return str(self.data["name"])
+
+
+def commodity_terminal(terminal) -> bool:
+    kind = (terminal.get_type() or "").strip().casefold()
+    return kind in ("", "commodity")
+
+
+def sort_terminals(terminals):
+    """Commodity terminals first, then the rest by name."""
+    return sorted(
+        list(terminals),
+        key=lambda terminal: (
+            0 if commodity_terminal(terminal) else 1,
+            (terminal.get_name() or "").casefold(),
+            terminal.get_id(),
+        ),
+    )
+
+
+def terminal_entries(terminals, *, as_text: bool = False):
+    ordered = sort_terminals(terminals)
+    if as_text:
+        return [terminal.listing_label() for terminal in ordered]
+    return [terminal.get_data_for_ai_minimal(embedded=True) for terminal in ordered]
 
 
 def offer_terminal_label(terminal_id, fallback: str | None = None) -> str:

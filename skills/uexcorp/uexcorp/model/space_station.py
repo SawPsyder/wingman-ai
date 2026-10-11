@@ -163,6 +163,7 @@ class SpaceStation(DataModel):
         from skills.uexcorp.uexcorp.model.jurisdiction import Jurisdiction
         from skills.uexcorp.uexcorp.model.orbit import Orbit
         from skills.uexcorp.uexcorp.data_access.terminal_data_access import TerminalDataAccess
+        from skills.uexcorp.uexcorp.model.terminal import terminal_entries
 
         terminals = TerminalDataAccess().add_filter_by_id_space_station(self.get_id()).load()
         faction = Faction(self.get_id_faction(), load=True) if self.get_id_faction() else None
@@ -175,7 +176,7 @@ class SpaceStation(DataModel):
             "orbit": orbit.get_data_for_ai_minimal() if orbit else None,
             "faction": faction.get_data_for_ai_minimal() if faction else None,
             "jurisdiction": jurisdiction.get_data_for_ai_minimal() if jurisdiction else None,
-            "terminals": [terminal.get_data_for_ai_minimal(embedded=True) for terminal in terminals],
+            "terminals": terminal_entries(terminals),
             "pad_types": self.get_pad_types(),
             "properties": self.get_properties(),
             "offerings": self.get_offerings(),
@@ -196,6 +197,7 @@ class SpaceStation(DataModel):
     def get_data_for_ai_minimal(self) -> dict:
         from skills.uexcorp.uexcorp.data_access.terminal_data_access import TerminalDataAccess
         from skills.uexcorp.uexcorp.model.moon import Moon
+        from skills.uexcorp.uexcorp.model.terminal import terminal_entries
 
         terminals = TerminalDataAccess().add_filter_by_id_space_station(self.get_id()).load()
 
@@ -205,7 +207,7 @@ class SpaceStation(DataModel):
             "orbit": self.get_orbit_name(),
             "faction": self.get_faction_name(),
             "jurisdiction": self.get_jurisdiction_name(),
-            "terminals": [str(terminal) for terminal in terminals],
+            "terminals": terminal_entries(terminals, as_text=True),
         }
 
         if self.get_id_moon():

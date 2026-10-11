@@ -1,36 +1,17 @@
-"""One place-name resolver for the location validator and the blocklist.
+"""Shared place list for the location validator and the blocklist.
 
-Pipeline: exact name, then nickname or code, then a score-ranked shortlist.
-Blocklist writes accept only an exact name, an alias, or a System One pick
-at confidence 0.8 where "none of these" was offered. Lookups can still fall
-through to :meth:`Llm.find_closest_key` (System One, then the main model).
+Ranking, the orbit-into-station collapse, and System One live in
+:meth:`Llm.find_closest_key`. This module only collects rows and turns a
+key match back into a place.
 """
 
 from __future__ import annotations
 
-import difflib
-
 from skills.uexcorp.uexcorp.location_blocklist import SCOPES, _SCOPE
 
-LISTING_MIN_SCORE = 0.6
 WRITE_SYSTEM_ONE_CONFIDENCE = 0.8
-SHORTLIST_LIMIT = 5
-# Places outrank an orbit row that merely shares their name.
-_PLACE_SCOPES = ("system", "planet", "moon", "city", "station", "outpost", "poi")
-_PLACE_RANK = {
-    "system": 0,
-    "planet": 1,
-    "moon": 2,
-    "city": 3,
-    "station": 4,
-    "outpost": 5,
-    "poi": 6,
-    "orbit": 7,
-    "terminal": 8,
-}
 # Validator availability. Orbits and terminals stay unfiltered, matching the
-# previous location validator. Terminal type is never restricted: shops are
-# blockable and findable.
+# previous location validator. Blocklist writes pass available_only=False.
 _AVAILABLE_SQL = {
     "system": "is_available = 1",
     "planet": "is_available_live = 1",
@@ -68,6 +49,8 @@ def collect_locations(
 
     ``available_only`` keeps the validator's availability filters. The
     blocklist passes False so a shop or an offline pad can still be blocked.
+    ``for_trading`` keeps commodity terminals only (``type`` empty or
+    ``commodity``) plus places that have a trade terminal.
     """
     scopes = (scope,) if scope in _SCOPE else SCOPES
     database = helper.get_database()
@@ -86,6 +69,8 @@ def collect_locations(
             where.append(_AVAILABLE_SQL[item_scope])
         if for_trading and _TRADE_SQL.get(item_scope):
             where.append(_TRADE_SQL[item_scope])
+        if for_trading and item_scope == "terminal":
+            where.append("(type IS NULL OR type = 'commodity')")
         sql = f"SELECT {', '.join(columns)} FROM {table}"
         if where:
             sql += " WHERE " + " AND ".join(where)
@@ -131,7 +116,22 @@ def collect_locations(
     return rows
 
 
-def resolve_location(
+def _llm(helper):
+    """The helper's matcher, or a fresh one when the helper has no LLM yet."""
+    from skills.uexcorp.uexcorp.api.llm import Llm
+
+    getter = getattr(helper, "get_llm", None)
+    if callable(getter):
+        try:
+            found = getter()
+            if found is not None:
+                return found
+        except Exception:
+            pass
+    return Llm(helper)
+
+
+async def resolve_location(
     helper,
     name: str,
     scope: str | None = None,
@@ -141,11 +141,11 @@ def resolve_location(
     available_only: bool = False,
     rows: list[dict] | None = None,
 ) -> Resolution:
-    """Resolve ``name`` without calling the main model.
+    """Resolve ``name`` through :meth:`Llm.find_closest_key`.
 
-    Blocklist tools use ``for_write=True`` (the default): a fuzzy winner is
-    not a match unless System One picks one key at
-    ``WRITE_SYSTEM_ONE_CONFIDENCE``. Lookups pass ``for_write=False``.
+    Blocklist tools use ``for_write=True`` (the default): no main model and
+    no 0.8 dumb match. A fuzzy winner is not a match unless System One picks
+    one key at ``WRITE_SYSTEM_ONE_CONFIDENCE``. Lookups pass ``for_write=False``.
     """
     text = (name or "").strip()
     if not text:
@@ -158,16 +158,41 @@ def resolve_location(
     )
     if scope in _SCOPE and rows is not None:
         pool = [row for row in pool if row["scope"] == scope]
-    hits = _rank(pool, text)
-    return _resolution(hits, text, for_write, helper)
+    found = await _llm(helper).find_closest_key(
+        text,
+        {row["key"]: row["name"] for row in pool},
+        {row["key"]: row["label"] for row in pool},
+        records=pool,
+        allow_llm=not for_write,
+        allow_dumb=not for_write,
+        ask_system_one=True,
+        system_one_min_confidence=WRITE_SYSTEM_ONE_CONFIDENCE if for_write else None,
+    )
+    by_key = {row["key"]: row for row in pool}
+    candidates = []
+    for item in found.candidates:
+        row = by_key.get(item.get("key"))
+        if row is None:
+            continue
+        merged = dict(row)
+        merged["score"] = item.get("score")
+        candidates.append(merged)
+    match = by_key.get(found.key) if found.key else None
+    return Resolution(
+        match=match,
+        method=found.method if match is not None else None,
+        candidates=candidates,
+        note=found.note,
+    )
 
 
 async def resolve_location_name(helper, name: str, for_trading: bool = False):
     """Validator entry. Returns ``(canonical name, note)``.
 
     An exact name, including two places that share it, returns that name
-    before any model call. Anything fuzzier goes through
-    :meth:`Llm.find_closest_key`.
+    before any model call. Anything fuzzier goes through one
+    :meth:`Llm.find_closest_key` call that matches names and aliases.
+    Display labels are not the match corpus.
     """
     text = (name or "").strip()
     if not text or text == "None":
@@ -175,33 +200,21 @@ async def resolve_location_name(helper, name: str, for_trading: bool = False):
     rows = collect_locations(helper, for_trading=for_trading, available_only=True)
     if any(row["name"] == text for row in rows):
         return text, None
-    resolved = resolve_location(
-        helper,
+    found = await _llm(helper).find_closest_key(
         text,
-        for_write=False,
-        for_trading=for_trading,
-        available_only=True,
-        rows=rows,
+        {row["key"]: row["name"] for row in rows},
+        {row["key"]: row["label"] for row in rows},
+        records=rows,
+        allow_llm=True,
+        allow_dumb=True,
+        ask_system_one=True,
     )
-    if resolved.match is not None and resolved.method in ("exact", "alias"):
-        return resolved.match["name"], None
-    if not rows:
-        return None, "No approximate matches found, given name too abstract."
-    options = {}
-    used = set()
-    descriptions = {}
-    for row in rows:
-        label = row["label"]
-        if label in used:
-            label = f"{row['label']} [{row['key']}]"
-        used.add(label)
-        options[row["key"]] = label
-        descriptions[row["key"]] = f"{row['name']} – {row['scope']}, {row['path'] or row['system_name']}"
-    found = await helper.get_llm().find_closest_key(text, options, descriptions)
     if found.key:
         match = next((row for row in rows if row["key"] == found.key), None)
         if match:
             return match["name"], None
+    if not found.note:
+        return None, "No approximate matches found, given name too abstract."
     return None, found.note
 
 
@@ -221,176 +234,3 @@ def _label(row: dict) -> str:
     if system and system.casefold() not in name.casefold():
         return f"{name} ({system})"
     return name
-
-
-def _score(query: str, name: str) -> float:
-    left = query.casefold()
-    right = name.casefold()
-    if not left or not right:
-        return 0.0
-    ratio = difflib.SequenceMatcher(None, left, right).ratio()
-    if right.startswith(left):
-        # "ruin" vs "ruin station" is 0.5 raw, which would miss the place.
-        ratio = max(ratio, 0.6 + 0.35 * (len(left) / len(right)))
-    elif left in right:
-        ratio = max(ratio, 0.6 + 0.2 * (len(left) / len(right)))
-    return ratio
-
-
-def _rank(rows: list[dict], query: str) -> list[dict]:
-    folded = query.casefold()
-    exact = []
-    alias = []
-    fuzzy = []
-    for row in rows:
-        item = dict(row)
-        if item["name"].casefold() == folded:
-            item["via"] = "exact"
-            item["score"] = 1.0
-            exact.append(item)
-            continue
-        if folded in item["aliases"]:
-            item["via"] = "alias"
-            item["score"] = 0.95
-            alias.append(item)
-            continue
-        score = _score(query, item["name"])
-        for alias_name in item["aliases"]:
-            score = max(score, _score(query, alias_name))
-        prefix_station = item["scope"] == "station" and item["name"].casefold().startswith(folded)
-        if score >= LISTING_MIN_SCORE or prefix_station:
-            item["via"] = "fuzzy"
-            item["score"] = max(score, LISTING_MIN_SCORE if prefix_station else score)
-            fuzzy.append(item)
-    if exact:
-        chosen = exact
-    elif alias and all(hit["scope"] == "terminal" for hit in alias):
-        # A landing-pad nickname must not hide the station it sits on.
-        chosen = alias + [hit for hit in fuzzy if hit["scope"] != "terminal"]
-    elif alias:
-        chosen = alias
-    else:
-        chosen = fuzzy
-    chosen = _demote_terminal_nicknames(chosen, query)
-    chosen = _collapse(chosen)
-    chosen.sort(key=_sort_key)
-    return chosen
-
-
-def _demote_terminal_nicknames(hits: list[dict], query: str) -> list[dict]:
-    folded = query.casefold()
-    parents = {(hit["scope"], hit["id"]) for hit in hits}
-    kept = []
-    for hit in hits:
-        if hit["scope"] == "terminal" and hit["name"].casefold() != folded:
-            if any((scope, parent_id) in parents for scope, parent_id in hit["parents"].items()):
-                continue
-        kept.append(hit)
-    return kept
-
-
-def _collapse(hits: list[dict]) -> list[dict]:
-    kept = []
-    for hit in hits:
-        if any(_contains(other, hit) for other in hits if other is not hit):
-            continue
-        kept.append(hit)
-    return kept
-
-
-def _contains(outer: dict, inner: dict) -> bool:
-    if inner["parents"].get(outer["scope"]) == outer["id"]:
-        return True
-    if inner["scope"] == "orbit" and outer["scope"] in _PLACE_SCOPES:
-        same_name = outer["name"].casefold() == inner["name"].casefold()
-        same_system = (
-            inner.get("system_id") is not None
-            and inner.get("system_id") == outer.get("system_id")
-        )
-        return bool(same_name and same_system)
-    return False
-
-
-def _sort_key(hit: dict):
-    return (
-        -float(hit.get("score") or 0),
-        _PLACE_RANK.get(hit["scope"], 9),
-        len(hit["name"]),
-        hit["id"],
-    )
-
-
-def _shortlist(hits: list[dict], query: str, limit: int = SHORTLIST_LIMIT) -> list[dict]:
-    """Keep every station whose name starts with the query, then fill to ``limit``."""
-    folded = query.casefold()
-    reserved = [
-        hit
-        for hit in hits
-        if hit["scope"] == "station" and folded and hit["name"].casefold().startswith(folded)
-    ]
-    reserved.sort(key=_sort_key)
-    reserved_ids = {(hit["scope"], hit["id"]) for hit in reserved}
-    rest = [hit for hit in hits if (hit["scope"], hit["id"]) not in reserved_ids]
-    rest.sort(key=_sort_key)
-    if len(reserved) >= limit:
-        return reserved
-    chosen = list(reserved)
-    for hit in rest:
-        chosen.append(hit)
-        if len(chosen) >= limit:
-            break
-    return chosen
-
-
-def _resolution(hits: list[dict], query: str, for_write: bool, helper) -> Resolution:
-    if not hits:
-        return Resolution()
-    shown = _shortlist(hits, query)
-    exacts = [hit for hit in hits if hit["via"] == "exact"]
-    if len(exacts) == 1 and len(hits) == 1:
-        return Resolution(match=exacts[0], method="exact", candidates=shown)
-    if exacts:
-        return Resolution(candidates=_shortlist(exacts, query))
-    if len(hits) == 1 and hits[0]["via"] == "alias":
-        return Resolution(match=hits[0], method="alias", candidates=shown)
-    if for_write:
-        picked = _system_one_write(helper, query, shown)
-        if picked:
-            match = next((hit for hit in hits if hit["key"] == picked), None)
-            if match is not None:
-                return Resolution(match=match, method="system_one", candidates=shown)
-        return Resolution(candidates=shown)
-    if len(hits) == 1:
-        return Resolution(match=hits[0], method=hits[0]["via"], candidates=shown)
-    return Resolution(candidates=shown)
-
-
-def _system_one_write(helper, search: str, shortlist: list[dict]) -> str | None:
-    """One scope:id, or None. Never calls the main model."""
-    if not shortlist or len(shortlist) > 60:
-        return None
-    try:
-        wingman = helper.get_handler_config().get_wingman()
-        system_one = getattr(wingman, "system_one", None)
-        if not system_one or not system_one.available:
-            return None
-        criteria = {hit["key"]: hit.get("label") or hit["name"] for hit in shortlist}
-        criteria["none_of_these"] = "none of the names above is what was meant"
-        answers = system_one.decide_sync(
-            {"heard": search, "context": "Star Citizen, spoken to a ship assistant"},
-            {
-                "match": system_one.choice(
-                    "Which place did the speaker mean? It comes from speech "
-                    "recognition, so it may be misspelled or shortened. "
-                    "Prefer a station, city, outpost, or planet over an orbit "
-                    "row or a shop nickname.",
-                    criteria,
-                )
-            },
-        )
-        picked = answers.choice("match", min_confidence=WRITE_SYSTEM_ONE_CONFIDENCE)
-        if not picked or picked == "none_of_these" or picked not in criteria:
-            return None
-        return picked
-    except Exception:
-        return None

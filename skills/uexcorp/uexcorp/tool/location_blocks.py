@@ -7,6 +7,7 @@ from skills.uexcorp.uexcorp.location_blocklist import (
     LocationBlocklist,
     _expiry_value,
     _ids_equal,
+    _parse_block_ref,
     coverage_phrase,
     format_expiry,
     parse_duration,
@@ -19,11 +20,20 @@ def _store(helper) -> LocationBlocklist:
     return LocationBlocklist(helper)
 
 
-def _confirm_or_preview(store, helper, needed: bool, confirm: bool, sig: str, preview: str):
+# Agreement counts in any language. The words are in the question so a small
+# model treats ja/jo/passt/mach the same as yes.
+_AGREEMENT_QUESTION = (
+    "Did the user agree to the pending location-block preview? "
+    "Count agreement in any language. These are agreement: yes, ok, ja, jo, passt, mach. "
+    "A refusal in any language is not agreement."
+)
+
+
+async def _confirm_or_preview(store, helper, needed: bool, confirm: bool, sig: str, preview: str):
     if not needed:
         return None
     if confirm:
-        if _user_declined(helper):
+        if await _user_declined(helper):
             return "The last reply declined that preview. Nothing was saved.", ""
         if store.accept_confirm(sig):
             return None
@@ -35,7 +45,7 @@ def _confirm_or_preview(store, helper, needed: bool, confirm: bool, sig: str, pr
     return preview, ""
 
 
-def _user_declined(helper) -> bool:
+async def _user_declined(helper) -> bool:
     """Confident System One 'no' on the last user line. Unavailable means confirm stands."""
     try:
         wingman = helper.get_handler_config().get_wingman()
@@ -53,13 +63,9 @@ def _user_declined(helper) -> bool:
                 break
         if not str(last).strip():
             return False
-        answers = system_one.decide_sync(
+        answers = await system_one.decide(
             {"message": last},
-            {
-                "agreed": system_one.noul(
-                    "Did the user agree to the pending location-block preview?"
-                )
-            },
+            {"agreed": system_one.noul(_AGREEMENT_QUESTION)},
         )
         probability = answers.noul("agreed")
         if probability is not None and probability <= 0.2:
@@ -97,7 +103,7 @@ def _covering_parent(store, candidate):
 class ListLocationBlocks(Tool):
     TOOL_NAME = "uex_list_location_blocks"
 
-    def execute(self, include_expired: bool | None = None) -> tuple[str, str]:
+    async def execute(self, include_expired: bool | None = None) -> tuple[str, str]:
         store = _store(self._helper)
         now = store.now()
         shown = []
@@ -159,7 +165,7 @@ class ListLocationBlocks(Tool):
 class BlockLocation(Tool):
     TOOL_NAME = "uex_block_location"
 
-    def execute(
+    async def execute(
         self,
         name: str,
         scope: str | None = None,
@@ -172,7 +178,7 @@ class BlockLocation(Tool):
             expires = parse_duration(duration, helper.get_timestamp())
         except ValueError as error:
             return str(error), ""
-        resolved = resolve_location(helper, name, scope, for_write=True, available_only=False)
+        resolved = await resolve_location(helper, name, scope, for_write=True, available_only=False)
         if resolved.match is None and not resolved.candidates:
             return f"No location matches {name}. Nothing was saved.", ""
         if resolved.match is None:
@@ -204,10 +210,12 @@ class BlockLocation(Tool):
             f"Ask the user, then call again with the same arguments and confirm=true "
             f"within {CONFIRM_SECONDS // 60} minutes."
         )
-        held = _confirm_or_preview(store, helper, needed, bool(confirm), sig, preview)
+        held = await _confirm_or_preview(store, helper, needed, bool(confirm), sig, preview)
         if held:
             return held
         entry = store.add(place, reason, expires)
+        if entry is None:
+            return "The location blocklist could not be saved.", ""
         when = format_expiry(entry.get("expires"), now=store.now())
         spoken = f"Blocked {entry['name']} ({entry['scope']})"
         if entry.get("path"):
@@ -264,13 +272,17 @@ class BlockLocation(Tool):
 class UnblockLocation(Tool):
     TOOL_NAME = "uex_unblock_location"
 
-    def execute(self, name: str, confirm: bool | None = None) -> tuple[str, str]:
+    async def execute(self, name: str, confirm: bool | None = None) -> tuple[str, str]:
         helper = self._helper
         store = _store(helper)
         matches = store.matching_blocks(name)
         non_exact = False
-        if not matches:
-            resolved = resolve_location(helper, name, None, for_write=True, available_only=False)
+        # scope:id is exact. A missing station:52 must not fuzzy-match Stanton.
+        if _parse_block_ref(name) is not None:
+            if not matches:
+                return f"No block matches {name}.", ""
+        elif not matches:
+            resolved = await resolve_location(helper, name, None, for_write=True, available_only=False)
             if resolved.match is None and resolved.candidates:
                 return _candidate_reply(resolved)
             if resolved.match is not None:
@@ -298,7 +310,7 @@ class UnblockLocation(Tool):
             f"Would remove {len(matches)} blocks ({names}). "
             "Ask the user, then call again with the same name and confirm=true within 2 minutes."
         )
-        held = _confirm_or_preview(store, helper, needed, bool(confirm), sig, preview)
+        held = await _confirm_or_preview(store, helper, needed, bool(confirm), sig, preview)
         if held:
             return held
         removed = store.remove_keys([(entry["scope"], entry["id"]) for entry in matches])
@@ -330,7 +342,7 @@ class UnblockLocation(Tool):
 class ClearLocationBlocks(Tool):
     TOOL_NAME = "uex_clear_location_blocks"
 
-    def execute(self, confirm: bool | None = None, only_expired: bool | None = None) -> tuple[str, str]:
+    async def execute(self, confirm: bool | None = None, only_expired: bool | None = None) -> tuple[str, str]:
         store = _store(self._helper)
         only = bool(only_expired)
         entries = store.read()
@@ -348,7 +360,7 @@ class ClearLocationBlocks(Tool):
             f"Would clear {len(targets)} location block(s). "
             "Ask the user, then call again with the same arguments and confirm=true within 2 minutes."
         )
-        held = _confirm_or_preview(store, self._helper, True, bool(confirm), sig, preview)
+        held = await _confirm_or_preview(store, self._helper, True, bool(confirm), sig, preview)
         if held:
             return held
         removed = store.clear(only_expired=only)

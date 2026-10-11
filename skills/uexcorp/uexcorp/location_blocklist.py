@@ -335,7 +335,8 @@ class LocationBlocklist:
                 "stale": False,
             }
             entries.append(entry)
-            self._write(entries)
+            if not self._write(entries):
+                return None
             return _normalise_entry(entry)
 
     def remove_keys(self, keys: list[tuple]) -> int:
@@ -411,10 +412,46 @@ class LocationBlocklist:
 
     def _migrate_body(self) -> None:
         if self._has_marker():
+            if not os.path.exists(self._legacy):
+                return
+            # Retire failed earlier: the original file is still here and
+            # .migrated does not. Retry the rename only, so an unblock is
+            # not undone by copying the same rows again.
+            if not os.path.exists(self._legacy + ".migrated"):
+                self._retire_legacy()
+                return
+            added = self._copy_legacy_rows()
+            if added is None:
+                return
+            if added:
+                warn(
+                    "UEX terminal blacklist had newer blocked terminals after migration. "
+                    f"{added} were merged. The previous .migrated file was left in place."
+                )
+            else:
+                warn(
+                    "UEX terminal blacklist appeared again after migration. "
+                    "No new rows were merged. The previous .migrated file was left in place."
+                )
             self._retire_legacy()
             return
         if not os.path.exists(self._legacy):
             return
+        added = self._copy_legacy_rows()
+        if added is None:
+            return
+        if not self._has_marker():
+            current = self._read_file() if os.path.exists(self.path) else []
+            if not self._write(current, migrated=True):
+                warn("UEX terminal blacklist was not migrated. The previous files were kept.")
+                return
+        self._retire_legacy()
+
+    def _copy_legacy_rows(self) -> int | None:
+        """Append blacklisted legacy rows that are not already stored.
+
+        Returns how many were added, or None when the file could not be read.
+        """
         try:
             with open(self._legacy, "r", encoding="utf-8") as handle:
                 loaded = yaml.safe_load(handle)
@@ -422,10 +459,11 @@ class LocationBlocklist:
             if self._legacy not in _LEGACY_WARNED:
                 _LEGACY_WARNED.add(self._legacy)
                 warn(f"UEX terminal blacklist was not migrated ({error}). The file was left in place.")
-            return
+            return None
         rows = loaded if isinstance(loaded, list) else []
         entries = self._read_file() if os.path.exists(self.path) else []
         existing = {(entry.get("scope"), _id_token(entry.get("id"))) for entry in entries}
+        added = 0
         for row in rows:
             if not isinstance(row, dict):
                 continue
@@ -451,19 +489,31 @@ class LocationBlocklist:
                 }
             )
             existing.add(("terminal", terminal_id))
-        if not self._write(entries, migrated=True):
+            added += 1
+        if added and not self._write(entries, migrated=True):
             warn("UEX terminal blacklist was not migrated. The previous files were kept.")
-            return
-        self._retire_legacy()
+            return None
+        return added
 
     def _retire_legacy(self) -> None:
         if not os.path.exists(self._legacy):
             return
         retired = self._legacy + ".migrated"
+        if os.path.exists(retired):
+            retired = self._unique_retired_name()
         try:
             os.replace(self._legacy, retired)
         except OSError as error:
             warn(f"UEX terminal blacklist was migrated but could not be retired ({error}).")
+
+    def _unique_retired_name(self) -> str:
+        stamp = self.now()
+        candidate = f"{self._legacy}.migrated-{stamp}"
+        counter = 0
+        while os.path.exists(candidate):
+            counter += 1
+            candidate = f"{self._legacy}.migrated-{stamp}-{counter}"
+        return candidate
 
     def _has_marker(self) -> bool:
         if not os.path.exists(self.path):
@@ -620,8 +670,21 @@ def signature(action: str, fields: dict) -> str:
     return json.dumps(body, sort_keys=True, default=str)
 
 
+def _entry_is_active(entry: dict, now: int) -> bool:
+    if entry.get("stale") or entry.get("invalid"):
+        return False
+    expires = _expiry_value(entry.get("expires"))
+    if expires and expires <= now:
+        return False
+    return True
+
+
 def cached_active_entries(helper) -> list[dict]:
-    """Active block rows for this file mtime. Terminal ids are expanded per call."""
+    """Parsed rows cached by file mtime. Expiry is applied on every read.
+
+    Terminal ids are expanded by the caller, not stored here, so a new
+    terminal under a blocked parent is covered without a rewrite.
+    """
     try:
         if helper is None or not hasattr(helper, "get_data_path"):
             return []
@@ -632,18 +695,21 @@ def cached_active_entries(helper) -> list[dict]:
             mtime = os.path.getmtime(path) if os.path.exists(path) else None
         except OSError:
             mtime = None
+        rows = None
         if isinstance(cached, dict) and cached.get("path") == path and cached.get("mtime") == mtime:
-            return cached.get("entries") or []
-        entries = store.active()
-        try:
-            mtime = os.path.getmtime(path) if os.path.exists(path) else None
-        except OSError:
-            mtime = None
-        try:
-            helper._uex_block_snapshot = {"path": path, "mtime": mtime, "entries": entries}
-        except Exception:
-            pass
-        return entries
+            rows = cached.get("entries")
+        if not isinstance(rows, list):
+            rows = store.read()
+            try:
+                mtime = os.path.getmtime(path) if os.path.exists(path) else None
+            except OSError:
+                mtime = None
+            try:
+                helper._uex_block_snapshot = {"path": path, "mtime": mtime, "entries": rows}
+            except Exception:
+                pass
+        now = int(helper.get_timestamp())
+        return [entry for entry in rows if _entry_is_active(entry, now)]
     except Exception:
         return []
 
@@ -739,13 +805,15 @@ def _file_bytes(path: str) -> bytes | None:
 
 
 def format_expiry(expires, now=None) -> str:
-    """Date, plus a UTC time when the block has less than two days left."""
+    """Date, plus the local time and zone when less than two days are left."""
     stamp = _expiry_value(expires)
     if not stamp:
         return ""
-    moment = datetime.fromtimestamp(stamp, tz=timezone.utc)
+    moment = datetime.fromtimestamp(stamp).astimezone()
     if now is not None and stamp - int(now) < 2 * 86400:
-        return moment.strftime("%d %b %H:%M UTC").lstrip("0")
+        zone = moment.tzname() or ""
+        clock = moment.strftime("%d %b %H:%M").lstrip("0")
+        return f"{clock} {zone}".strip()
     return moment.strftime("%d %b").lstrip("0")
 
 

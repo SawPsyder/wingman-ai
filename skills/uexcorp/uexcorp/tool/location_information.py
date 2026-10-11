@@ -186,7 +186,9 @@ class LocationInformation(Tool):
         elif self.__filter_locations and self.LOCATION_TYPE_TERMINAL in self.__filter_location_types:
             terminal_data_access.add_filter_by_location_name_whitelist(self.__filter_locations)
 
-        return terminal_data_access.load()
+        from skills.uexcorp.uexcorp.model.terminal import sort_terminals
+
+        return sort_terminals(terminal_data_access.load())
 
     def get_mandatory_fields(self) -> dict[str, Validator]:
         return {}
