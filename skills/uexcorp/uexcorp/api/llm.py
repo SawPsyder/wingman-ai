@@ -356,6 +356,18 @@ class Llm:
                 result.method = "alias"
                 return result
 
+            # Read filters only. A blocklist write leaves allow_dumb off, so
+            # a non-exact station still previews instead of being saved.
+            if allow_dumb:
+                winner = _single_whole_word_place(text, shown)
+                if winner is not None:
+                    use(shown)
+                    result.key = winner["key"]
+                    result.keys = [winner["key"]]
+                    result.method = "prefix"
+                    result.score = winner.get("score")
+                    return result
+
             if ask_system_one and shown:
                 by_label = _choice_labels(shown)
                 picked = await self.__system_one_match(
@@ -757,6 +769,27 @@ def _decide_exact(records: list[dict], search: str | None, descriptions: dict | 
             return _exact_result(alias_hits[0], descriptions, "alias")
         return _unpicked_result(alias_hits, descriptions)
     return None
+
+
+def _single_whole_word_place(query: str, hits: list[dict]) -> dict | None:
+    """The one place whose name uses the query as a word, among fuzzy hits.
+
+    ``Ruin`` lists Ruin Station ahead of Corin and Crion. Those others are
+    only fuzzy, so the station is the read-filter pick. Two such places, or
+    a terminal alias that is still on the list, stay unresolved.
+    """
+    strong = [hit for hit in hits if _whole_word_name(query, str(hit.get("name") or ""))]
+    if len(strong) != 1:
+        return None
+    winner = strong[0]
+    for hit in hits:
+        if hit is winner or hit.get("key") == winner.get("key"):
+            continue
+        if hit.get("via") in ("exact", "case", "alias"):
+            return None
+        if _whole_word_name(query, str(hit.get("name") or "")):
+            return None
+    return winner
 
 
 def _spellings_for(labels: list[str], query: str) -> list[str]:

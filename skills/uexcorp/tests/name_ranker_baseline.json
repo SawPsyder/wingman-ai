@@ -1018,9 +1018,9 @@
     ]
   },
   "place:Ruin": {
-    "match": null,
-    "picked": null,
-    "method": null,
+    "match": "Ruin Station",
+    "picked": "Ruin Station",
+    "method": "prefix",
     "candidates": [
       "station:54|Ruin Station"
     ]
