@@ -107,9 +107,9 @@ class Llm:
 
         return answer
 
-    # difflib hands over ten, but the substring pass after it is unbounded: a
-    # short search term can pull in hundreds. A choice takes 255 options, and
-    # a list that long is not a disambiguation anyway.
+    # The shared shortlist is five names. A prefix-station reservation can
+    # run longer, and a caller can still pass a raw list here. A choice takes
+    # 255 options, and a list that long is not a disambiguation anyway.
     SYSTEM_ONE_MAX_OPTIONS = 60
 
     # Below this the answer is a guess between near-equals. The prompt this
@@ -198,14 +198,19 @@ class Llm:
         llm, or dumb), ``candidates`` (key, label, score, description), and
         ``note``. An empty shortlist sets ``note`` and does not ask System One.
 
-        ``records`` switches on place ranking. Each record has ``key``,
-        ``name``, ``aliases``, ``scope``, ``id``, ``parents``, ``system_id``,
-        ``label``, and ``path``. Matching uses names and aliases. Labels are
-        display and disambiguation only. A same-name orbit collapses into the
-        station, city, outpost, or planet. Scope words such as "station" are
-        stripped for scoring, but only an exact stored name is method
-        ``exact``. ``allow_llm`` and ``allow_dumb`` stay off for a blocklist
-        write; ``system_one_min_confidence`` is the write threshold.
+        Every option is a record: ``key``, ``name``, ``aliases``, ``label``,
+        and optional ``scope``, ``parents``, and ``system_id``. Passing
+        ``records`` uses those rows. Otherwise each ``options`` entry becomes
+        a record with no scope, and its label is the name. Matching uses
+        names and aliases. Labels are display and disambiguation only.
+
+        Exact matching is case-insensitive and runs before any fuzzy score.
+        Two names that differ only by case stay candidates; neither is picked.
+        A same-name orbit collapses into the station, city, outpost, or
+        planet. Scope words such as "station" are stripped for scoring, but
+        only an exact stored name is method ``exact``. ``allow_llm`` and
+        ``allow_dumb`` stay off for a blocklist write;
+        ``system_one_min_confidence`` is the write threshold.
 
         ``allow_llm=False`` skips the main model only. System One is still
         asked when ``ask_system_one`` is true (the default): a blocklist write
@@ -213,153 +218,16 @@ class Llm:
         again, via noul, and that check does not depend on ``allow_llm``.
         """
         search = strip_type_tag(search)
-        if records is not None:
-            return await self._match_records(
-                search,
-                records,
-                allow_llm=allow_llm,
-                allow_dumb=allow_dumb,
-                ask_system_one=ask_system_one,
-                system_one_min_confidence=system_one_min_confidence,
-            )
-        result = _KeyMatch()
-        if not search or search == "None" or not options:
-            if search and search != "None":
-                result.note = "No approximate matches found, given name too abstract."
-            return result
-
-        by_label: dict[str, list[str]] = {}
-        for key, label in options.items():
-            by_label.setdefault(str(label), []).append(str(key))
-
-        for key, label in options.items():
-            if search == label or search == key:
-                result.key = str(key)
-                result.keys = [str(key)]
-                result.score = 1.0
-                result.method = "exact"
-                result.candidates = [
-                    _candidate(str(key), str(label), 1.0, descriptions)
-                ]
-                return result
-
-        labels = list(by_label.keys())
-        close_labels = difflib.get_close_matches(search, labels, n=10, cutoff=0.4)
-        close_labels.extend(
-            label for label in labels if search.lower() in label.lower() and label not in close_labels
+        if records is None:
+            records = _records_from_options(options, descriptions)
+        return await self._match_records(
+            search,
+            records,
+            allow_llm=allow_llm,
+            allow_dumb=allow_dumb,
+            ask_system_one=ask_system_one,
+            system_one_min_confidence=system_one_min_confidence,
         )
-        self.__helper.get_handler_debug().write(
-            f"Creating a list of close matches for search term '{search}': {', '.join(close_labels)}"
-        )
-        if not close_labels:
-            self.__helper.get_handler_debug().write(
-                f"No close matches found for '{search}' in list. Returning None.", True
-            )
-            result.note = "No approximate matches found, given name too abstract."
-            return result
-
-        seen = set()
-        for label in close_labels:
-            ratio = difflib.SequenceMatcher(None, search, label).ratio()
-            for key in by_label.get(label, []):
-                if key in seen:
-                    continue
-                seen.add(key)
-                result.candidates.append(_candidate(key, label, ratio, descriptions))
-        result.candidates.sort(key=lambda item: (-item["score"], item["key"]))
-
-        if ask_system_one:
-            picked = await self.__system_one_match(
-                search, close_labels, min_confidence=system_one_min_confidence
-            )
-            if picked is not None:
-                key = by_label[picked][0]
-                result.key = key
-                result.keys = [key]
-                result.method = "system_one"
-                result.score = next(
-                    (item["score"] for item in result.candidates if item["key"] == key),
-                    None,
-                )
-                return result
-
-        if allow_llm:
-            messages = MessageHistory()
-            messages.add_direct(
-                f"""
-                I'll give you just a string value.
-                You will figure out, what value in this list represents this value best: {', '.join(close_labels)}
-                Keep in mind that the given string value can be misspelled or has missing words as it has its origin in a speech to text process.
-                You must only return the value of the closest match to the given value from the defined list, nothing else.
-                For example if "Hercules A2" is given and the list contains of "A2, C2, M2", you will return "A2" as string.
-                Or if "C2" is given and the list contains of "A2 Hercules Star Lifter, C2 Monster Truck, M2 Extreme cool ship", you will return "C2 Monster Truck" as string.
-                On longer search terms, prefer the exact match, if it is in the list.
-                If more than one match is very likely, prefer not to match at all.
-                The response must not contain anything else, than the exact value of the closest match from the list.
-                If you can't find a match, return 'None'. Do never return the given search value.
-            """,
-                Message.ROLE_SYSTEM,
-            )
-            messages.add_direct(search, Message.ROLE_USER)
-            answer = await self.call(messages)
-            if not answer:
-                if not allow_dumb:
-                    result.note = ", ".join(close_labels[:3])
-                    return result
-                dumb_match = difflib.get_close_matches(search, close_labels, n=1, cutoff=0.8)
-                if dumb_match:
-                    self.__helper.get_handler_debug().write(
-                        f"LLM did not answer for '{search}'. Using dumb match '{dumb_match}'",
-                        True,
-                    )
-                    key = by_label[dumb_match[0]][0]
-                    result.key = key
-                    result.keys = [key]
-                    result.method = "dumb"
-                    result.score = next(
-                        (item["score"] for item in result.candidates if item["key"] == key),
-                        None,
-                    )
-                    return result
-                self.__helper.get_handler_debug().write(
-                    f"LLM did not answer for '{search}' and dumb match to inaccurate.",
-                    True,
-                )
-                result.note = ", ".join(close_labels[:3])
-                return result
-            if answer == "None" or answer not in close_labels:
-                self.__helper.get_handler_debug().write(
-                    f"LLM said no match possible for '{search}' in list.", False
-                )
-                result.note = ", ".join(close_labels[:3])
-                return result
-            self.__helper.get_handler_debug().write(
-                f"LLM said '{answer}' is closest match to '{search}' in list."
-            )
-            key = by_label[answer][0]
-            result.key = key
-            result.keys = [key]
-            result.method = "llm"
-            result.score = next(
-                (item["score"] for item in result.candidates if item["key"] == key),
-                None,
-            )
-            return result
-
-        if allow_dumb:
-            dumb_match = difflib.get_close_matches(search, close_labels, n=1, cutoff=0.8)
-            if dumb_match:
-                key = by_label[dumb_match[0]][0]
-                result.key = key
-                result.keys = [key]
-                result.method = "dumb"
-                result.score = next(
-                    (item["score"] for item in result.candidates if item["key"] == key),
-                    None,
-                )
-                return result
-        result.note = ", ".join(close_labels[:3])
-        return result
 
     async def _match_records(
         self,
@@ -371,7 +239,7 @@ class Llm:
         ask_system_one: bool,
         system_one_min_confidence: float | None,
     ):
-        """Place ranking owned by :meth:`find_closest_key`."""
+        """The one ranking pipeline for every name type."""
         result = _KeyMatch()
         text = (search or "").strip()
         if not text or text == "None" or not records:
@@ -401,7 +269,13 @@ class Llm:
             result.method = "exact"
             return result
         if exacts:
-            use(shortlist_places(exacts, text))
+            # Two spellings that differ only by case, or two places that share
+            # a name, stay candidates. Do not ask a model to pick one.
+            exact_shown = shortlist_places(exacts, text)
+            use(exact_shown)
+            result.note = ", ".join(
+                (hit.get("label") or hit["name"]) for hit in exact_shown[:3]
+            )
             return result
         if len(ranked) == 1 and ranked[0].get("via") == "alias":
             use(shown)
@@ -497,9 +371,10 @@ class Llm:
     ) -> (str | None, list[str] | set[str]):
         """Name-list wrapper around :meth:`find_closest_key`.
 
-        Exact membership, the empty-shortlist note, and the System One length
-        cap stay as they were. Cache and context notes still apply only to a
-        System One or main-model pick.
+        The list becomes scope-less records and goes through the one ranker.
+        The empty-shortlist note and the System One length cap stay as they
+        were. Cache and context notes still apply only to a System One or
+        main-model pick.
         """
         search = strip_type_tag(search)
         if not search or search == "None":
@@ -512,10 +387,6 @@ class Llm:
             match = self.__cache_search[checksum]
             self.__helper.get_handler_debug().write(f"Found closest match for '{search}' in cache: '{match}'")
             return match, None
-
-        if search in lst:
-            self.__helper.get_handler_debug().write(f"Found exact match for '{search}' in list.")
-            return search, None
 
         options = {str(item): str(item) for item in lst}
         found = await self.find_closest_key(search, options)
@@ -539,14 +410,31 @@ class _KeyMatch:
         self.note = None
 
 
-def _candidate(key: str, label: str, score: float, descriptions: dict | None) -> dict:
-    item = {"key": key, "label": label, "score": score}
-    if descriptions and key in descriptions:
-        item["description"] = descriptions[key]
-    return item
+def _records_from_options(options, descriptions) -> list[dict]:
+    """Scope-less records. A plain option is a name with no place scope."""
+    rows = []
+    if not options:
+        return rows
+    for key, label in options.items():
+        name = str(label)
+        item = {
+            "key": str(key),
+            "name": name,
+            "label": name,
+            "aliases": [],
+            "scope": None,
+            "id": None,
+            "parents": {},
+            "system_id": None,
+            "path": "",
+        }
+        if descriptions and key in descriptions:
+            item["description"] = descriptions[key]
+        rows.append(item)
+    return rows
 
 
-# Place ranking. find_closest_key owns this so every caller shares one matcher.
+# One ranker for places and for plain names. find_closest_key owns it.
 LISTING_MIN_SCORE = 0.6
 SHORTLIST_LIMIT = 5
 _PLACE_SCOPES = ("system", "planet", "moon", "city", "station", "outpost", "poi")
@@ -611,7 +499,15 @@ def rank_places(records: list[dict], query: str) -> list[dict]:
     for row in records:
         item = dict(row)
         name = str(item.get("name") or "")
-        if name.casefold() == folded:
+        key_text = str(item.get("key") or "")
+        # A plain option can be asked for by its key. A place key such as
+        # station:52 is not a name, so only scope-less records match that way.
+        plain_key = (
+            not item.get("scope")
+            and key_text.casefold() == folded
+            and key_text.casefold() != name.casefold()
+        )
+        if name.casefold() == folded or plain_key:
             item["via"] = "exact"
             item["score"] = 1.0
             exact.append(item)
@@ -637,6 +533,8 @@ def rank_places(records: list[dict], query: str) -> list[dict]:
             item["via"] = "fuzzy"
             item["score"] = max(score, LISTING_MIN_SCORE if prefix_station else score)
             fuzzy.append(item)
+    # Exact wins outright, so "Ice" never falls through to "Pressurized Ice".
+    # A longer name that only contains the query stays in the fuzzy list.
     if exact:
         chosen = exact
     elif alias and all(hit.get("scope") == "terminal" for hit in alias):
@@ -715,8 +613,25 @@ def _place_contains(outer: dict, inner: dict) -> bool:
         return bool(same_name and (same_system or parent_orbit))
     if outer.get("scope") == "orbit":
         return False
+    # A plain name has no scope and no id. ``None == None`` must not make
+    # every option look like a parent of every other option.
+    outer_scope = outer.get("scope")
+    outer_id = outer.get("id")
+    if not outer_scope or outer_id is None:
+        return False
     parents = inner.get("parents") or {}
-    return parents.get(outer.get("scope")) == outer.get("id")
+    return parents.get(outer_scope) == outer_id
+
+
+def _hit_identity(hit: dict):
+    """Place identity is scope plus id. A plain name is its key.
+
+    Every scope-less option has id None, so scope+id would treat them as
+    one row and the shortlist would keep only the first.
+    """
+    if hit.get("scope") and hit.get("id") is not None:
+        return (hit.get("scope"), hit.get("id"))
+    return ("key", hit.get("key"))
 
 
 def shortlist_places(hits: list[dict], query: str, limit: int = SHORTLIST_LIMIT) -> list[dict]:
@@ -734,8 +649,8 @@ def shortlist_places(hits: list[dict], query: str, limit: int = SHORTLIST_LIMIT)
 
     reserved = [hit for hit in hits if reserved_station(hit)]
     reserved.sort(key=_place_sort_key)
-    reserved_ids = {(hit.get("scope"), hit.get("id")) for hit in reserved}
-    rest = [hit for hit in hits if (hit.get("scope"), hit.get("id")) not in reserved_ids]
+    reserved_ids = {_hit_identity(hit) for hit in reserved}
+    rest = [hit for hit in hits if _hit_identity(hit) not in reserved_ids]
     rest.sort(key=_place_sort_key)
     if len(reserved) >= limit:
         return reserved
@@ -760,6 +675,8 @@ def _place_candidate(hit: dict) -> dict:
         "id": hit.get("id"),
         "path": hit.get("path") or "",
     }
+    if hit.get("description") is not None:
+        item["description"] = hit["description"]
     return item
 
 

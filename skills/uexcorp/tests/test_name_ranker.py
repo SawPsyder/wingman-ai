@@ -1,8 +1,9 @@
 """Offline regression for the shared name ranker.
 
 System One is off and the main model is stubbed, so every case is
-deterministic. The expected file is the result on the head where this
-test was added. A later change to the ranker shows up as a diff here.
+deterministic. ``name_ranker_baseline.json`` is the current result.
+The first commit of that file is the two-path ranker; a later diff is
+a case the single pipeline changed.
 """
 
 from __future__ import annotations

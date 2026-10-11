@@ -220,6 +220,24 @@ def _parent_place(row: dict) -> str | None:
     return None
 
 
+def _casefold_spellings(rows: list[dict], text: str) -> list[str]:
+    """Stored names equal to ``text`` ignoring case, in first-seen order.
+
+    One spelling is an exact name. Two spellings that differ only by case
+    are a collision: the caller must not pick one of them.
+    """
+    folded = text.casefold()
+    seen: list[str] = []
+    known: set[str] = set()
+    for row in rows:
+        name = str(row.get("name") or "")
+        if name.casefold() != folded or name in known:
+            continue
+        known.add(name)
+        seen.append(name)
+    return seen
+
+
 def shop_sentence(name: str, parent: str | None) -> str:
     """``Casaba Outlet is a shop, not a trade terminal. Try Everus Harbor.``"""
     text = f"{name} is a shop, not a trade terminal"
@@ -283,7 +301,10 @@ async def shop_trade_note(helper, name: str) -> str | None:
     shops = _shop_records(helper)
     if not shops:
         return None
-    exact = [row for row in shops if row["name"] == text]
+    spellings = _casefold_spellings(shops, text)
+    if len(spellings) > 1:
+        return None
+    exact = [row for row in shops if row["name"] == spellings[0]] if spellings else []
     if exact:
         parents = {row.get("parent_name") for row in exact}
         parent = next(iter(parents)) if len(parents) == 1 else None
@@ -321,17 +342,19 @@ def place_by_key(helper, key: str | None) -> dict | None:
 async def resolve_location_name(helper, name: str, for_trading: bool = False):
     """Validator entry. Returns ``(canonical name, note)``.
 
-    An exact name, including two places that share it, returns that name
-    before any model call. Anything fuzzier goes through one
-    :meth:`Llm.find_closest_key` call that matches names and aliases.
-    Display labels are not the match corpus.
+    One stored spelling, ignoring case, returns that spelling before any
+    model call. Two places that share the spelling still return it. Two
+    spellings that differ only by case are not a pick. Anything fuzzier
+    goes through one :meth:`Llm.find_closest_key` call that matches names
+    and aliases. Display labels are not the match corpus.
     """
     text = strip_type_tag((name or "").strip())
     if not text or text == "None":
         return None, None
     rows = collect_locations(helper, for_trading=for_trading, available_only=True)
-    if any(row["name"] == text for row in rows):
-        return text, None
+    spellings = _casefold_spellings(rows, text)
+    if len(spellings) == 1:
+        return spellings[0], None
     found = await _llm(helper).find_closest_key(
         text,
         {row["key"]: row["name"] for row in rows},

@@ -632,15 +632,11 @@
     ]
   },
   "commodity:ice": {
-    "match": null,
-    "picked": null,
-    "method": null,
+    "match": "Ice",
+    "picked": "Ice",
+    "method": "exact",
     "candidates": [
-      "Ice",
-      "Iodine",
-      "Torite",
-      "Silicon",
-      "Pressurized Ice"
+      "Ice"
     ]
   },
   "commodity:Laranit": {
@@ -649,47 +645,33 @@
     "method": "dumb",
     "candidates": [
       "Laranite",
-      "Caranite",
       "Taranite",
-      "Carinite",
-      "Organics",
-      "Ouratite",
-      "Atacamite",
-      "Hephaestanite",
-      "Quartz",
-      "Torite"
+      "Caranite",
+      "Carinite"
     ]
   },
   "commodity:widow": {
-    "match": null,
-    "picked": null,
-    "method": null,
+    "match": "WiDoW",
+    "picked": "WiDoW",
+    "method": "exact",
     "candidates": [
       "WiDoW"
     ]
   },
   "commodity:gold": {
-    "match": null,
-    "picked": null,
-    "method": null,
+    "match": "Gold",
+    "picked": "Gold",
+    "method": "exact",
     "candidates": [
-      "Gold",
-      "Argon",
-      "Cobalt",
-      "Iodine",
-      "Golden Medmon"
+      "Gold"
     ]
   },
   "ship:Freelancer Max": {
-    "match": "Freelancer MIS",
-    "picked": "Freelancer MIS",
-    "method": "dumb",
+    "match": "Freelancer MAX",
+    "picked": "Freelancer MAX",
+    "method": "exact",
     "candidates": [
-      "Freelancer MAX",
-      "Freelancer MIS",
-      "Freelancer",
-      "Freelancer DUR",
-      "Reclaimer"
+      "Freelancer MAX"
     ]
   },
   "ship:Freelancer MAX": {
@@ -701,11 +683,10 @@
     ]
   },
   "ship:Mole": {
-    "match": null,
-    "picked": null,
-    "method": null,
+    "match": "MOLE",
+    "picked": "MOLE",
+    "method": "exact",
     "candidates": [
-      "Golem",
       "MOLE"
     ]
   },
@@ -718,15 +699,15 @@
     ]
   },
   "ship:Hornet": {
-    "match": null,
-    "picked": null,
-    "method": null,
+    "match": "F7C Hornet",
+    "picked": "F7C Hornet",
+    "method": "dumb",
     "candidates": [
       "F7C Hornet",
-      "Fortune",
       "F7C-M Super Hornet",
       "F7C-S Hornet Ghost",
-      "F7C-R Hornet Tracker"
+      "F7C-R Hornet Tracker",
+      "Fortune"
     ]
   },
   "ship:Cutlas Black": {
@@ -734,8 +715,7 @@
     "picked": "Cutlass Black",
     "method": "dumb",
     "candidates": [
-      "Cutlass Black",
-      "Carrack"
+      "Cutlass Black"
     ]
   },
   "ship:Carrack": {
@@ -763,9 +743,9 @@
     ]
   },
   "vehicle:ursa": {
-    "match": null,
-    "picked": null,
-    "method": null,
+    "match": "Ursa",
+    "picked": "Ursa",
+    "method": "exact",
     "candidates": [
       "Ursa"
     ]
@@ -779,11 +759,10 @@
     ]
   },
   "vehicle:roc-ds": {
-    "match": null,
-    "picked": null,
-    "method": null,
+    "match": "ROC-DS",
+    "picked": "ROC-DS",
+    "method": "exact",
     "candidates": [
-      "Ursa",
       "ROC-DS"
     ]
   },
@@ -815,10 +794,9 @@
   "item:attrition-3": {
     "match": "Attrition-3",
     "picked": "Attrition-3",
-    "method": "dumb",
+    "method": "exact",
     "candidates": [
-      "Attrition-3",
-      "Attrition-4"
+      "Attrition-3"
     ]
   },
   "attribute:Rate of Fire": {
@@ -832,10 +810,9 @@
   "attribute:rate of fire": {
     "match": "Rate of Fire",
     "picked": "Rate of Fire",
-    "method": "dumb",
+    "method": "exact",
     "candidates": [
-      "Rate of Fire",
-      "Magazine Size"
+      "Rate of Fire"
     ]
   },
   "attribute:DPS": {
@@ -883,8 +860,7 @@
     "picked": null,
     "method": null,
     "candidates": [
-      "Systems Quantum Drives",
-      "Weapons Missiles"
+      "Systems Quantum Drives"
     ]
   },
   "category:Armor": {
@@ -937,18 +913,20 @@
     ]
   },
   "case:Alpha": {
-    "match": "Alpha",
-    "picked": "Alpha",
-    "method": "exact",
+    "match": null,
+    "picked": null,
+    "method": null,
     "candidates": [
-      "Alpha"
+      "Alpha",
+      "alpha"
     ]
   },
   "case:alpha": {
-    "match": "alpha",
-    "picked": "alpha",
-    "method": "exact",
+    "match": null,
+    "picked": null,
+    "method": null,
     "candidates": [
+      "Alpha",
       "alpha"
     ]
   },
