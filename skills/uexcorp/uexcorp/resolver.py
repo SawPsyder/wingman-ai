@@ -386,9 +386,40 @@ async def resolve_location_name(helper, name: str, for_trading: bool = False):
         match = next((row for row in rows if row["key"] == found.key), None)
         if match:
             return match["name"], None
+    # Route filters only. A blocklist write does not come through here, so a
+    # non-exact station still previews instead of saving.
+    place = _outranking_place(found, text)
+    if place is not None:
+        return place["name"], None
     if not found.note:
         return None, "No approximate matches found, given name too abstract."
     return None, found.note
+
+
+def _outranking_place(found, query: str):
+    """The one station or place that ranks above shop and terminal aliases.
+
+    ``Ruin`` lists Ruin Station first and leaves the key empty, because the
+    landing-pad nickname is a shop. Route filters should use that station.
+    The place name has to start with the query, or contain it as a word.
+    A longer phrase that only resembles a planet (``Hurston Fuel``) stays
+    unresolved. Two places, or a terminal that still ranks first, do too.
+    """
+    candidates = list(getattr(found, "candidates", None) or [])
+    places = [
+        hit for hit in candidates
+        if hit.get("scope") not in (None, "", "terminal")
+    ]
+    if len(places) != 1:
+        return None
+    place = places[0]
+    if not candidates or candidates[0].get("key") != place.get("key"):
+        return None
+    folded = (query or "").casefold().strip()
+    name = str(place.get("name") or "").casefold()
+    if not folded or not (name.startswith(folded) or folded in name.split()):
+        return None
+    return place
 
 
 def format_candidates(hits: list[dict]) -> str:

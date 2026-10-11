@@ -1741,6 +1741,79 @@ class LocationBlocklistTest(_SqliteCase):
         self.assertEqual(match, "Carrack")
         self.assertIsNone(options)
 
+    def test_route_filters_prefer_a_station_over_its_shop_alias(self) -> None:
+        from skills.uexcorp.uexcorp.handler.tool_handler import ToolHandler
+        from skills.uexcorp.uexcorp.resolver import resolve_location, resolve_location_name
+        from skills.uexcorp.uexcorp.tool.location_blocks import BlockLocation
+
+        self._seed_trade()
+        self._db.execute(
+            """
+            INSERT INTO space_station (
+                id, name, nickname, id_star_system, star_system_name,
+                is_available, is_available_live, has_trade_terminal
+            ) VALUES
+                (45, 'Ruin Station', 'Ruin Station', 1, 'Stanton', 1, 1, 1),
+                (33, 'Starlight Service Station', 'Starlight Service', 1, 'Stanton', 1, 1, 1)
+            """
+        )
+        self._db.execute(
+            """
+            INSERT INTO terminal (
+                id, name, nickname, type, is_available, id_space_station,
+                star_system_name, space_station_name
+            ) VALUES
+                (92, 'Landing Services', 'Ruin', 'item', 1, 45, 'Stanton', 'Ruin Station'),
+                (93, 'Landing Services', 'Starlight', 'item', 1, 33, 'Stanton', 'Starlight Service Station'),
+                (94, 'Ruin Trade', NULL, 'commodity', 1, 45, 'Stanton', 'Ruin Station'),
+                (95, 'Starlight Trade', NULL, 'commodity', 1, 33, 'Stanton', 'Starlight Service Station')
+            """
+        )
+        self._db.execute(
+            """
+            INSERT INTO commodity_route (
+                id, id_commodity, commodity_name,
+                id_terminal_origin, id_terminal_destination,
+                origin_terminal_name, destination_terminal_name,
+                price_origin, price_destination, scu_origin, scu_destination, score
+            ) VALUES
+                (9, 1, 'Waste', 94, 95, 'Ruin Trade', 'Starlight Trade', 5, 9, 10, 10, 1),
+                (10, 1, 'Waste', 95, 94, 'Starlight Trade', 'Ruin Trade', 5, 9, 10, 10, 1)
+            """
+        )
+        self._db.commit()
+
+        ruin_name, _note = asyncio.run(
+            resolve_location_name(self._helper, "Ruin", for_trading=True)
+        )
+        self.assertEqual(ruin_name, "Ruin Station")
+        star_name, _note = asyncio.run(
+            resolve_location_name(self._helper, "Starlight", for_trading=True)
+        )
+        self.assertEqual(star_name, "Starlight Service Station")
+
+        handler = ToolHandler(self._helper)
+        for field, query, shown in (
+            ("filter_start_location", "Ruin", "Ruin Trade"),
+            ("filter_destination_location", "Ruin", "Ruin Trade"),
+            ("filter_start_location", "Starlight", "Starlight Trade"),
+            ("filter_destination_location", "Starlight", "Starlight Trade"),
+        ):
+            text, _instant = asyncio.run(
+                handler.execute_tool("uex_get_trade_routes", {field: query})
+            )
+            self.assertNotIn("is a shop", text, query)
+            self.assertNotIn("not recognized", text, query)
+            self.assertIn(shown, text, query)
+
+        for query in ("Ruin", "Starlight"):
+            resolved = asyncio.run(resolve_location(self._helper, query, for_write=True))
+            self.assertIsNone(resolved.match, query)
+            blocked, _instant = asyncio.run(BlockLocation().execute(name=query))
+            self.assertIn("Nothing was saved", blocked, query)
+            self.assertNotIn("Blocked", blocked, query)
+            self.assertEqual(self._entries(), [])
+
     def test_route_filter_names_a_shop_instead_of_not_recognized(self) -> None:
         from skills.uexcorp.uexcorp.handler.tool_handler import ToolHandler
 

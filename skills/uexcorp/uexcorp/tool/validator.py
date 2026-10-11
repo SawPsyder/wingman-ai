@@ -8,6 +8,27 @@ from skills.uexcorp.uexcorp.data_access.item_data_acceess import ItemDataAccess
 from skills.uexcorp.uexcorp.data_access.item_attribute_data_access import ItemAttributeDataAccess
 from skills.uexcorp.uexcorp.helper import Helper
 
+_NO_PLACE_MATCH = "No approximate matches found, given name too abstract."
+
+
+def _query_names_a_listed_place(query: str, options: str | None) -> bool:
+    """True when a listed place name actually starts with the query or contains it.
+
+    A fuzzy stranger such as Teach's -> Teasa does not count, so the shop
+    hint can still explain that terminal. Ruin -> Ruin Station does count.
+    """
+    if not options or options == _NO_PLACE_MATCH:
+        return False
+    folded = (query or "").casefold().strip()
+    if not folded:
+        return False
+    for part in options.split(","):
+        label = part.strip()
+        name = label.split(" (")[0].casefold()
+        if name.startswith(folded) or folded in name.split():
+            return True
+    return False
+
 
 class Validator:
 
@@ -255,11 +276,13 @@ class Validator:
 
         # Route start, destination, and location blacklist pass for_trading.
         # A shop is a real terminal, so say that instead of "not recognized".
+        # Keep a listed station when the query names it. A fuzzy stranger
+        # does not hide the shop hint.
         if for_trading:
             from skills.uexcorp.uexcorp.resolver import shop_trade_note
 
             shop = await shop_trade_note(self.__helper, name)
-            if shop:
+            if shop and not _query_names_a_listed_place(name, options):
                 return None, shop
 
         return None, f"Invalid location name, no match found for '{name}': Did you mean one of those?: {options}"
