@@ -327,6 +327,7 @@ def _cases():
         ("commodity:Laranit", "Laranit", "commodities"),
         ("commodity:widow", "widow", "commodities"),
         ("commodity:gold", "gold", "commodities"),
+        ("commodity:iron", "iron", "commodities"),
         ("ship:Freelancer Max", "Freelancer Max", "ships"),
         ("ship:Freelancer MAX", "Freelancer MAX", "ships"),
         ("ship:Mole", "Mole", "ships"),
@@ -475,15 +476,20 @@ def test_offline_name_ranker(case):
 
 
 def test_names_that_differ_only_by_case_stay_candidates():
-    """Two spellings of one name are candidates. One spelling is an exact pick."""
+    """A typed spelling is that spelling. Any other casing lists both."""
     llm, calls = _offline_llm()
     both = ["Alpha", "alpha", "Beta"]
-    for query in ("Alpha", "alpha", "ALPHA"):
+    for query in ("Alpha", "alpha"):
         match, _note = asyncio.run(llm.find_closest_match(query, both))
         found = asyncio.run(llm.find_closest_key(query, {name: name for name in both}))
-        assert match is None
-        assert found.key is None
-        assert {item["label"] for item in found.candidates} == {"Alpha", "alpha"}
+        assert match == query
+        assert found.key == query
+        assert found.method == "exact"
+    collision, _note = asyncio.run(llm.find_closest_match("ALPHA", both))
+    found = asyncio.run(llm.find_closest_key("ALPHA", {name: name for name in both}))
+    assert collision is None
+    assert found.key is None
+    assert {item["label"] for item in found.candidates} == {"Alpha", "alpha"}
     lone, _note = asyncio.run(llm.find_closest_match("Alpha", ["Alpha", "Beta"]))
     assert lone == "Alpha"
     assert calls["decide"] == 0
@@ -500,3 +506,103 @@ def test_hornet_stays_a_list_of_candidates():
     assert any("Hornet" in name for name in names)
     assert match != "Golem"
     assert match != "Fortune"
+
+
+# Short codes share letters with a different commodity. The pick may be the
+# real commodity, a candidate list, or nothing. It must not be the lookalike.
+_CODE_PINS = (
+    ("LARA", {"Laranite", "Laranite (Raw)"}, "Lycara"),
+    ("CARA", {"Caranite", "Caranite (Raw)"}, "Lycara"),
+    ("TRIT", {"Tritium"}, "Torite"),
+    ("POTA", {"Potassium"}, "Prota"),
+    ("IRONO", {"Iron (Ore)"}, "Iron"),
+)
+
+
+def _commodity_options():
+    corpus = json.loads(Path(__file__).with_name("name_corpus.json").read_text(encoding="utf-8"))
+    names = corpus["commodities"]
+    return {name: name for name in names}
+
+
+def _assert_pin(found, allowed, forbidden):
+    assert found.key != forbidden
+    assert found.key is None or found.key in allowed
+
+
+def test_short_codes_do_not_resolve_to_lookalike_commodities():
+    """System One off. LARA/CARA/TRIT/POTA/IRONO stay off the lookalike names."""
+    options = _commodity_options()
+    llm, calls = _offline_llm()
+    for query, allowed, forbidden in _CODE_PINS:
+        found = asyncio.run(llm.find_closest_key(query, options))
+        _assert_pin(found, allowed, forbidden)
+    assert calls["decide"] == 0
+
+
+def test_system_one_cannot_force_a_lookalike_commodity():
+    """A confident wrong System One label is dropped before it becomes the pick.
+
+    The shortlist still has to contain the label, and the label has to equal
+    the query, start with it, be one of its words, or already score 0.8.
+    Lycara does not start with CARA, and the case-sensitive score stays under
+    0.8, so the stub's pick is ignored.
+    """
+    from skills.uexcorp.uexcorp.api.llm import _plain_model_pick_ok
+
+    options = _commodity_options()
+    rejected = (
+        ("CARA", "Lycara", "Caranite"),
+        ("LARA", "Lycara", "Laranite"),
+        ("TRIT", "Torite", "Tritium"),
+        ("POTA", "Prota", "Potassium"),
+        ("IRONO", "Iron", "Iron (Ore)"),
+    )
+    for query, forbidden, allowed_name in rejected:
+        assert _plain_model_pick_ok(query, forbidden) is False
+        assert _plain_model_pick_ok(query, allowed_name) is (query != "IRONO")
+
+    for query, allowed, forbidden in _CODE_PINS:
+        calls = {"decide": 0}
+
+        class _Answers:
+            seconds = 0.0
+
+            def choice(self, key, min_confidence=0.0):
+                if 0.99 < min_confidence:
+                    return None
+                return forbidden
+
+            def confidence(self, key):
+                return 0.99
+
+        class _SystemOne:
+            available = True
+
+            def choice(self, *args, **kwargs):
+                return {"criteria": {}}
+
+            def noul(self, *args, **kwargs):
+                return {}
+
+            async def decide(self, *args, **kwargs):
+                calls["decide"] += 1
+                return _Answers()
+
+        helper = SimpleNamespace(
+            get_handler_debug=lambda: SimpleNamespace(write=lambda *a, **k: None),
+            get_handler_error=lambda: SimpleNamespace(write=lambda *a, **k: None),
+            get_handler_config=lambda: SimpleNamespace(
+                get_wingman=lambda: SimpleNamespace(system_one=_SystemOne(), ai=SimpleNamespace())
+            ),
+            add_context=lambda *a, **k: None,
+        )
+        llm = Llm(helper)
+
+        async def _no_model(*args, **kwargs):
+            return None
+
+        llm.call = _no_model
+        found = asyncio.run(llm.find_closest_key(query, options))
+        _assert_pin(found, allowed, forbidden)
+        assert found.method != "system_one"

@@ -41,6 +41,7 @@ async def _confirm_or_preview(
         return None
     if confirm:
         if await _user_declined(helper):
+            store.drop_preview()
             return "The last reply declined that preview. Nothing was saved.", ""
         if store.accept_confirm(sig):
             return None

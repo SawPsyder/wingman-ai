@@ -929,6 +929,11 @@ class LocationBlocklistTest(_SqliteCase):
         self.assertIn("declined", declined)
         self.assertEqual(self._entries(), [])
         system_one.agreed = None
+        later, _instant = asyncio.run(BlockLocation().execute(name="Ruin", confirm=True))
+        self.assertNotIn("Blocked", later)
+        self.assertEqual(self._entries(), [])
+        fresh, _instant = asyncio.run(BlockLocation().execute(name="Ruin"))
+        self.assertIn("Would block", fresh)
         saved, _instant = asyncio.run(BlockLocation().execute(name="Ruin", confirm=True))
         self.assertIn("Blocked", saved)
         self.assertEqual(self._entries()[0]["id"], 54)
@@ -1438,6 +1443,115 @@ class LocationBlocklistTest(_SqliteCase):
         self.assertEqual(len(renamed), 1)
         self.assertTrue(any(entry["id"] == 99 for entry in store.read()))
         self.assertTrue(warnings)
+
+    def test_datacenter_case_collision_blocks_by_spelling_or_scope_id(self) -> None:
+        from skills.uexcorp.uexcorp.resolver import resolve_location
+        from skills.uexcorp.uexcorp.tool.location_blocks import BlockLocation
+
+        self._seed_trade()
+        self._db.execute(
+            """
+            INSERT INTO poi (
+                id, name, id_star_system, star_system_name, is_available, is_available_live
+            ) VALUES
+                (13, 'MT DataCenter D79-ECG-R', 1, 'Stanton', 1, 1),
+                (169, 'MT Datacenter D79-ECG-R', 1, 'Stanton', 1, 1)
+            """
+        )
+        self._db.commit()
+
+        upper, _instant = asyncio.run(
+            BlockLocation().execute(name="MT DataCenter D79-ECG-R")
+        )
+        self.assertIn("Blocked", upper)
+        self.assertNotIn("Would block", upper)
+        self.assertEqual(self._entries()[0]["id"], 13)
+        self.assertEqual(self._entries()[0]["scope"], "poi")
+        self._store().remove_keys([("poi", 13)])
+
+        lower, _instant = asyncio.run(
+            BlockLocation().execute(name="MT Datacenter D79-ECG-R")
+        )
+        self.assertIn("Blocked", lower)
+        self.assertEqual(self._entries()[0]["id"], 169)
+        self._store().remove_keys([("poi", 169)])
+
+        mixed, _instant = asyncio.run(
+            BlockLocation().execute(name="mt datacenter d79-ecg-r")
+        )
+        self.assertIn("Nothing was saved", mixed)
+        self.assertIn("MT DataCenter D79-ECG-R", mixed)
+        self.assertIn("MT Datacenter D79-ECG-R", mixed)
+        self.assertEqual(self._entries(), [])
+
+        shouted = asyncio.run(resolve_location(self._helper, "MT DATACENTER D79-ECG-R"))
+        self.assertIsNone(shouted.match)
+        self.assertEqual(
+            {row["id"] for row in shouted.candidates},
+            {13, 169},
+        )
+
+        by_upper, _instant = asyncio.run(BlockLocation().execute(name="poi:13"))
+        self.assertIn("Blocked", by_upper)
+        self.assertEqual(self._entries()[0]["id"], 13)
+        by_lower, _instant = asyncio.run(BlockLocation().execute(name="poi:169"))
+        self.assertIn("Blocked", by_lower)
+        self.assertEqual([entry["id"] for entry in self._entries()], [13, 169])
+
+    def test_declined_confirm_drops_the_preview(self) -> None:
+        from types import SimpleNamespace
+
+        from skills.uexcorp.uexcorp.tool.location_blocks import BlockLocation
+
+        self._seed_trade()
+
+        class _Answers:
+            def __init__(self, agreed):
+                self._agreed = agreed
+
+            def choice(self, key, min_confidence=0.0):
+                return None
+
+            def confidence(self, key):
+                return 0.0
+
+            def noul(self, key):
+                if self._agreed is None:
+                    return None
+                return 0.05 if self._agreed is False else 0.95
+
+        class _SystemOne:
+            def __init__(self):
+                self.available = True
+                self.agreed = False
+
+            def choice(self, *args, **kwargs):
+                return {}
+
+            def noul(self, *args, **kwargs):
+                return {}
+
+            async def decide(self, *args, **kwargs):
+                return _Answers(self.agreed)
+
+        system_one = _SystemOne()
+        wingman = SimpleNamespace(
+            system_one=system_one,
+            conversation=SimpleNamespace(history=lambda: [{"role": "user", "content": "no"}]),
+        )
+        self._helper.get_handler_config().get_wingman = lambda: wingman
+
+        preview, _instant = asyncio.run(BlockLocation().execute(name="Stanton"))
+        self.assertIn("Would block", preview)
+        self.assertEqual(self._entries(), [])
+        declined, _instant = asyncio.run(BlockLocation().execute(name="Stanton", confirm=True))
+        self.assertIn("declined", declined)
+        self.assertEqual(self._entries(), [])
+        system_one.agreed = None
+        later, _instant = asyncio.run(BlockLocation().execute(name="Stanton", confirm=True))
+        self.assertNotIn("Blocked", later)
+        self.assertIn("does not match the pending preview", later)
+        self.assertEqual(self._entries(), [])
 
     def test_scope_id_unblock_does_not_fuzzy_match(self) -> None:
         from skills.uexcorp.uexcorp.tool.location_blocks import BlockLocation, UnblockLocation

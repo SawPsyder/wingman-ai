@@ -8,7 +8,12 @@ key match back into a place.
 from __future__ import annotations
 
 from skills.uexcorp.uexcorp.api.llm import strip_type_tag
-from skills.uexcorp.uexcorp.location_blocklist import SCOPES, _SCOPE
+from skills.uexcorp.uexcorp.location_blocklist import (
+    SCOPES,
+    _SCOPE,
+    _ids_equal,
+    _parse_block_ref,
+)
 
 WRITE_SYSTEM_ONE_CONFIDENCE = 0.8
 # Validator availability. Orbits and terminals stay unfiltered, matching the
@@ -162,6 +167,15 @@ async def resolve_location(
     )
     if scope in _SCOPE and rows is not None:
         pool = [row for row in pool if row["scope"] == scope]
+    # poi:13 is the row with that id. It does not go through the name ranker,
+    # so a case collision on the display name cannot swallow it.
+    ref = _parse_block_ref(text)
+    if ref is not None:
+        ref_scope, ref_id = ref
+        for row in pool:
+            if row.get("scope") == ref_scope and _ids_equal(row.get("id"), ref_id):
+                return Resolution(match=row, method="exact", candidates=[row])
+        return Resolution()
     # allow_llm is false for a write: no main model and no dumb match.
     # ask_system_one stays true, so the 0.8 pick still runs. Confirm's noul
     # check is a second System One call and is not affected by allow_llm.
@@ -343,9 +357,10 @@ async def resolve_location_name(helper, name: str, for_trading: bool = False):
     """Validator entry. Returns ``(canonical name, note)``.
 
     One stored spelling, ignoring case, returns that spelling before any
-    model call. Two places that share the spelling still return it. Two
-    spellings that differ only by case are not a pick. Anything fuzzier
-    goes through one :meth:`Llm.find_closest_key` call that matches names
+    model call. Two places that share one spelling still return it. When
+    two stored spellings differ only by case, a query that copies one of
+    them exactly keeps that spelling; any other casing is not a pick.
+    Anything fuzzier goes through one :meth:`Llm.find_closest_key` call that matches names
     and aliases. Display labels are not the match corpus.
     """
     text = strip_type_tag((name or "").strip())
@@ -353,6 +368,9 @@ async def resolve_location_name(helper, name: str, for_trading: bool = False):
         return None, None
     rows = collect_locations(helper, for_trading=for_trading, available_only=True)
     spellings = _casefold_spellings(rows, text)
+    typed = [name for name in spellings if name == text]
+    if len(typed) == 1:
+        return typed[0], None
     if len(spellings) == 1:
         return spellings[0], None
     found = await _llm(helper).find_closest_key(

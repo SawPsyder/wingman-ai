@@ -632,15 +632,11 @@
     ]
   },
   "commodity:ice": {
-    "match": null,
-    "picked": null,
-    "method": null,
+    "match": "Ice",
+    "picked": "Ice",
+    "method": "exact",
     "candidates": [
-      "Ice",
-      "Iodine",
-      "Torite",
-      "Silicon",
-      "Pressurized Ice"
+      "Ice"
     ]
   },
   "commodity:Laranit": {
@@ -661,35 +657,35 @@
     ]
   },
   "commodity:widow": {
-    "match": null,
-    "picked": null,
-    "method": null,
+    "match": "WiDoW",
+    "picked": "WiDoW",
+    "method": "exact",
     "candidates": [
       "WiDoW"
     ]
   },
   "commodity:gold": {
-    "match": null,
-    "picked": null,
-    "method": null,
+    "match": "Gold",
+    "picked": "Gold",
+    "method": "exact",
     "candidates": [
-      "Gold",
-      "Argon",
-      "Cobalt",
-      "Iodine",
-      "Golden Medmon"
+      "Gold"
+    ]
+  },
+  "commodity:iron": {
+    "match": "Iron",
+    "picked": "Iron",
+    "method": "exact",
+    "candidates": [
+      "Iron"
     ]
   },
   "ship:Freelancer Max": {
     "match": "Freelancer MAX",
     "picked": "Freelancer MAX",
-    "method": "dumb",
+    "method": "exact",
     "candidates": [
-      "Freelancer MAX",
-      "Freelancer MIS",
-      "Freelancer",
-      "Freelancer DUR",
-      "Reclaimer"
+      "Freelancer MAX"
     ]
   },
   "ship:Freelancer MAX": {
@@ -762,9 +758,9 @@
     ]
   },
   "vehicle:ursa": {
-    "match": null,
-    "picked": null,
-    "method": null,
+    "match": "Ursa",
+    "picked": "Ursa",
+    "method": "exact",
     "candidates": [
       "Ursa"
     ]
@@ -778,11 +774,10 @@
     ]
   },
   "vehicle:roc-ds": {
-    "match": null,
-    "picked": null,
-    "method": null,
+    "match": "ROC-DS",
+    "picked": "ROC-DS",
+    "method": "exact",
     "candidates": [
-      "Ursa",
       "ROC-DS"
     ]
   },
@@ -814,10 +809,9 @@
   "item:attrition-3": {
     "match": "Attrition-3",
     "picked": "Attrition-3",
-    "method": "dumb",
+    "method": "exact",
     "candidates": [
-      "Attrition-3",
-      "Attrition-4"
+      "Attrition-3"
     ]
   },
   "attribute:Rate of Fire": {
@@ -831,10 +825,9 @@
   "attribute:rate of fire": {
     "match": "Rate of Fire",
     "picked": "Rate of Fire",
-    "method": "dumb",
+    "method": "exact",
     "candidates": [
-      "Rate of Fire",
-      "Magazine Size"
+      "Rate of Fire"
     ]
   },
   "attribute:DPS": {
@@ -936,20 +929,18 @@
     ]
   },
   "case:Alpha": {
-    "match": null,
-    "picked": null,
-    "method": null,
+    "match": "Alpha",
+    "picked": "Alpha",
+    "method": "exact",
     "candidates": [
-      "Alpha",
-      "alpha"
+      "Alpha"
     ]
   },
   "case:alpha": {
-    "match": null,
-    "picked": null,
-    "method": null,
+    "match": "alpha",
+    "picked": "alpha",
+    "method": "exact",
     "candidates": [
-      "Alpha",
       "alpha"
     ]
   },

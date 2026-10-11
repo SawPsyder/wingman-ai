@@ -340,6 +340,10 @@ class LocationBlocklist:
         _PREVIEWS.pop(self.path, None)
         return True
 
+    def drop_preview(self) -> None:
+        """Forget the pending preview so a later confirm cannot save it."""
+        _PREVIEWS.pop(self.path, None)
+
     def add(self, candidate: dict, reason: str | None, expires: int | None) -> dict:
         with _LOCK:
             entries = [
