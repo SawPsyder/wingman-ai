@@ -134,21 +134,32 @@ class ImportHandler:
         self.__imported_percent = 0
         self.__import_started = True
         self.import_failed = False
-        for importer in self.__importers.values():
-            if self.active:
-                outcome = importer()
-                if outcome is self.IMPORT_FAILED:
-                    self.import_failed = True
-                    self.__helper.get_handler_debug().write(
-                        "UEX import step failed. Previous rows for that dataset were kept.",
-                        True,
+        try:
+            for importer in self.__importers.values():
+                if self.active:
+                    outcome = importer()
+                    if outcome is self.IMPORT_FAILED:
+                        self.import_failed = True
+                        self.__helper.get_handler_debug().write(
+                            "UEX import step failed. Previous rows for that dataset were kept.",
+                            True,
+                        )
+                    else:
+                        total_count += int(outcome or 0)
+                    self.__imported_percent = int(
+                        min(self.__imported_percent + (100 / len(self.__importers)), 100)
                     )
-                else:
-                    total_count += int(outcome or 0)
-                self.__imported_percent = int(
-                    min(self.__imported_percent + (100 / len(self.__importers)), 100)
-                )
-        self.__imported_percent = 100
+        except Exception as e:
+            self.import_failed = True
+            self.__helper.get_handler_debug().write(
+                f"UEX import stopped on an unexpected error. Previous data was kept. {e}",
+                True,
+            )
+            self.__helper.get_handler_error().write("ImportHandler.__import_data", [], e)
+        finally:
+            # A raised fetch used to leave this at 0, and every later import
+            # was refused as "previous import wasn't finished".
+            self.__imported_percent = 100
         return total_count
 
     def __require_fetch(self, endpoint: str, get: dict | None = None, params: dict | None = None):

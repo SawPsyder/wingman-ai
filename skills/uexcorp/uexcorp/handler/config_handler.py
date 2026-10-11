@@ -14,6 +14,27 @@ if TYPE_CHECKING:
 
 DEFAULT_API_URL = "https://api.uexcorp.uk/2.0"
 
+# Quoted YAML values arrive as strings. bool("false") is True.
+_BLACKLIST_FALSE = {"false", "no", "0"}
+
+
+def blacklist_flag(value) -> bool:
+    """True only when the file entry is actually blacklisted."""
+    if isinstance(value, str):
+        return value.strip().lower() not in _BLACKLIST_FALSE
+    return bool(value)
+
+
+def blacklist_id(value):
+    """Collapse quoted ids like \"52\" onto the integer catalog id."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value.strip())
+    return value
+
 
 def normalize_api_url(value) -> tuple[str, str | None]:
     """Trim a configured API URL. Invalid values fall back to the default.
@@ -198,12 +219,13 @@ class ConfigHandler:
             try:
                 applicable = []
                 for commodity in file_entries:
-                    if "id" not in commodity:
+                    commodity_id = blacklist_id(commodity.get("id"))
+                    if commodity_id is None:
                         continue
-                    commodity_model = CommodityDataAccess().load_by_property("id", commodity["id"])
+                    commodity_model = CommodityDataAccess().load_by_property("id", commodity_id)
                     if commodity_model is None:
                         continue
-                    commodity_model.set_is_blacklisted(bool(commodity.get("is_blacklisted")))
+                    commodity_model.set_is_blacklisted(blacklist_flag(commodity.get("is_blacklisted")))
                     applicable.append(commodity_model)
                 for index, commodity_model in enumerate(applicable):
                     commodity_model.persist(index < len(applicable) - 1)
@@ -235,13 +257,13 @@ class ConfigHandler:
         # blacklisted name that is no longer in the catalog.
         written: dict = {}
         for entry in file_entries:
-            commodity_id = entry.get("id")
+            commodity_id = blacklist_id(entry.get("id"))
             if commodity_id is None:
                 continue
             written[commodity_id] = {
                 "id": commodity_id,
                 "commodity": entry.get("commodity"),
-                "is_blacklisted": bool(entry.get("is_blacklisted")),
+                "is_blacklisted": blacklist_flag(entry.get("is_blacklisted")),
             }
         for commodity in catalog:
             written[commodity.get_id()] = {
@@ -253,15 +275,23 @@ class ConfigHandler:
         commodity_data = [written[commodity_id] for commodity_id in sorted(written, key=lambda value: (not isinstance(value, int), value))]
         payload = (
             "# Only the 'is_blacklisted' value must be changed to 'true' or 'false'."
+            "\n# To un-blacklist a commodity, set is_blacklisted to false. Do not delete the line."
             "\n# Blacklisted commodities ('is_blacklisted: true') will be ignored in trade route calculations."
             "\n# If the yaml-format gets corrupted, the file will be deleted and recreated on the next start."
             "\n# This would reset previous set commodity blacklists.\n\n"
             + yaml.dump(commodity_data)
         )
         temporary_path = file_path + ".tmp"
-        with open(temporary_path, "w") as file:
-            file.write(payload)
-        os.replace(temporary_path, file_path)
+        try:
+            with open(temporary_path, "w") as file:
+                file.write(payload)
+            os.replace(temporary_path, file_path)
+        except OSError as e:
+            warn(f"UEX commodity blacklist file was not rewritten ({e}). The previous file was kept.")
+            try:
+                os.remove(temporary_path)
+            except OSError:
+                pass
 
     def __sync_terminal_blacklist(self):
         from skills.uexcorp.uexcorp.data_access.terminal_data_access import TerminalDataAccess

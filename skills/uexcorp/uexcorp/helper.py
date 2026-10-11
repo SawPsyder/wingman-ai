@@ -113,7 +113,12 @@ class Helper:
             self.__handler_config.handle_secret_change(secrets["uex"])
 
     def on_import_completed(self, imported_rows_count: int):
-        self.get_handler_config().sync_blacklists()
+        try:
+            self.get_handler_config().sync_blacklists()
+        except OSError as e:
+            from skills.uexcorp.uexcorp.log import warn
+
+            warn(f"UEX blacklist file was not rewritten ({e}). The previous file was kept.")
         self.__version_uex = self.get_handler_import().get_version_uex()
         self.set_ready(True)
         if self.__data_pool_recreated:

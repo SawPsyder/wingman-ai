@@ -90,15 +90,22 @@ class UEXCorp(Skill):
             f"Starting master loop with a {cycle}s cycle"
         )
         while self.__helper.is_loaded():
-            if (
-                self.__helper.is_ready()
-                and self.__helper.get_handler_import().get_imported_percent() == 100
-            ):
+            try:
+                if (
+                    self.__helper.is_ready()
+                    and self.__helper.get_handler_import().get_imported_percent() == 100
+                ):
+                    self.__helper.get_handler_debug().write(
+                        "Automated import data refresh by master loop."
+                    )
+                    self.__helper.ensure_version_parity()
+                    self.__helper.get_handler_import().import_data()
+            except Exception as e:
                 self.__helper.get_handler_debug().write(
-                    "Automated import data refresh by master loop."
+                    f"Master loop iteration failed: {e}",
+                    True,
                 )
-                self.__helper.ensure_version_parity()
-                self.__helper.get_handler_import().import_data()
+                self.__helper.get_handler_error().write("UEXCorp.loop_master", [], e)
             self.__helper.wait(cycle)
         self.__helper.get_handler_debug().write("Stopping master loop")
 

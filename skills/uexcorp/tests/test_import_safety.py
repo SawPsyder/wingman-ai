@@ -1467,6 +1467,143 @@ class CommodityBlacklistFileTest(_SqliteCase):
         self.assertEqual(self._flags()["Gold"], 1)
         self.assertEqual(self._flags()["Iron"], 0)
 
+    def test_quoted_false_and_string_ids_collapse(self) -> None:
+        import yaml
+
+        # Agricium starts blacklisted in the DB. The file clears it with "0".
+        # A quoted "false" must not become True via bool("false").
+        self._db.execute(
+            """
+            INSERT INTO commodity (id, name, is_blacklisted) VALUES
+                (52, 'Gold', 0),
+                (7, 'Iron', 0),
+                (8, 'Waste', 0),
+                (9, 'Agricium', 1),
+                (10, 'Scrap', 0)
+            """
+        )
+        self._db.execute(
+            """
+            INSERT INTO commodity_price (id, id_commodity, id_terminal, price_buy, price_sell)
+            VALUES
+                (1, 10, 10, 4, 0),
+                (2, 10, 11, 0, 9)
+            """
+        )
+        self._db.commit()
+        self._write_blacklist(
+            "- id: \"52\"\n"
+            "  commodity: Gold\n"
+            "  is_blacklisted: \"false\"\n"
+            "- id: 52\n"
+            "  commodity: Gold\n"
+            "  is_blacklisted: \"false\"\n"
+            "- id: \"7\"\n"
+            "  commodity: Iron\n"
+            "  is_blacklisted: \"no\"\n"
+            "- id: 8\n"
+            "  commodity: Waste\n"
+            "  is_blacklisted: \"False\"\n"
+            "- id: 9\n"
+            "  commodity: Agricium\n"
+            "  is_blacklisted: \"0\"\n"
+            "- id: 10\n"
+            "  commodity: Scrap\n"
+            "  is_blacklisted: true\n"
+        )
+        self._sync()
+        self.assertEqual(
+            self._flags(),
+            {"Gold": 0, "Iron": 0, "Waste": 0, "Agricium": 0, "Scrap": 1},
+        )
+        saved = yaml.safe_load(self._blacklist_text())
+        ids = [row["id"] for row in saved]
+        self.assertEqual(ids.count(52), 1)
+        self.assertTrue(all(isinstance(row["id"], int) for row in saved))
+        by_name = {row["commodity"]: row["is_blacklisted"] for row in saved}
+        self.assertEqual(by_name["Gold"], False)
+        self.assertEqual(by_name["Scrap"], True)
+        self.assertIn("Do not delete the line", self._blacklist_text())
+
+    def test_oserror_on_rewrite_keeps_the_file_and_warns(self) -> None:
+        import skills.uexcorp.uexcorp.handler.config_handler as config_handler
+        from skills.uexcorp.uexcorp.helper import Helper
+
+        self._db.execute(
+            """
+            INSERT INTO commodity (id, name, is_blacklisted) VALUES
+                (1, 'Gold', 0)
+            """
+        )
+        self._db.execute(
+            """
+            INSERT INTO commodity_price (id, id_commodity, id_terminal, price_buy, price_sell)
+            VALUES (1, 1, 10, 4, 8)
+            """
+        )
+        self._db.commit()
+        original = (
+            "# keep me\n"
+            "- id: 1\n"
+            "  commodity: Gold\n"
+            "  is_blacklisted: true\n"
+        )
+        self._write_blacklist(original)
+        warnings = []
+        original_replace = config_handler.os.replace
+        original_warn = config_handler.warn
+
+        def _disk_full(src, dst):
+            raise OSError("disk full")
+
+        config_handler.os.replace = _disk_full
+        config_handler.warn = warnings.append
+        try:
+            self._sync()
+        finally:
+            config_handler.os.replace = original_replace
+            config_handler.warn = original_warn
+        self.assertEqual(self._blacklist_text(), original)
+        self.assertTrue(warnings)
+        self.assertIn("not rewritten", warnings[0])
+        self.assertEqual(self._flags()["Gold"], 1)
+
+        class _Completion:
+            def __init__(self):
+                self.ready = False
+                self._Helper__data_pool_recreated = False
+
+            def get_handler_config(self):
+                return self
+
+            def sync_blacklists(self):
+                raise OSError("readonly")
+
+            def get_handler_import(self):
+                return self
+
+            def get_version_uex(self):
+                return "live"
+
+            def set_ready(self, ready=True):
+                self.ready = ready
+
+        import skills.uexcorp.uexcorp.log as log_module
+
+        completion_warnings = []
+        original_log_warn = log_module.warn
+        log_module.warn = completion_warnings.append
+        # on_import_completed imports warn inside the except, so patch the
+        # name it binds. Re-import path is skills.uexcorp.uexcorp.log.warn.
+        host = _Completion()
+        try:
+            Helper.on_import_completed(host, 0)
+        finally:
+            log_module.warn = original_log_warn
+        self.assertTrue(host.ready)
+        self.assertTrue(completion_warnings)
+        self.assertIn("not rewritten", completion_warnings[0])
+
 
 class OffPlanetOrbitQueryTest(_SqliteCase):
     def test_capped_split_queries_trading_stations_not_every_orbit(self) -> None:
@@ -1705,6 +1842,155 @@ class ConnectionErrorBreakerTest(_SqliteCase):
         )
         self.assertEqual(stamp[0]["date_imported"], NOW)
         self.assertEqual(stamp[0]["dataset_count"], 1)
+
+    def _assert_body_read_failure_allows_the_next_import(self, error) -> None:
+        self._seed_stale_route()
+
+        class _BodyDown:
+            def __init__(self):
+                self.urls = []
+
+            def get(self, url, params=None, timeout=None, headers=None, stream=None):
+                self.urls.append(url)
+
+                class _Body:
+                    status_code = 200
+                    headers = {"content-type": "application/json"}
+                    encoding = None
+
+                    def json(self):
+                        raise error
+
+                    def close(self):
+                        return None
+
+                return _Body()
+
+        session = _BodyDown()
+        handler, api = self._handler(session)
+        handler.import_data(True)
+
+        self.assertTrue(api._is_blocked())
+        self.assertTrue(handler.import_failed)
+        self.assertEqual(handler.get_imported_percent(), 100)
+        self.assertEqual(len(session.urls), MAX_ATTEMPTS)
+        self.assertLess(len(session.urls), 30)
+        self.assertEqual(self._route_ids(), [7])
+        stamp = self._db.execute_fetchall(
+            "SELECT date_imported, dataset_count FROM imports WHERE `table` = ?",
+            ("commodity_route",),
+        )
+        self.assertEqual(stamp[0]["date_imported"], 1)
+        self.assertEqual(stamp[0]["dataset_count"], 1)
+
+        class _Ok:
+            def __init__(self):
+                self.urls = []
+
+            def get(self, url, params=None, timeout=None, headers=None, stream=None):
+                self.urls.append(url)
+                return _Response(200, {"status": "ok", "data": []})
+
+        ok = _Ok()
+        api.session = ok
+        handler._ImportHandler__importers = {
+            "category": handler._ImportHandler__import_data_category,
+        }
+        handler.import_data()
+        self.assertEqual(handler.get_imported_percent(), 100)
+        self.assertGreaterEqual(len(ok.urls), 1)
+        self.assertFalse(api._is_blocked())
+
+    def test_truncated_body_trips_breaker_and_releases_the_import(self) -> None:
+        import requests
+
+        self._assert_body_read_failure_allows_the_next_import(
+            requests.exceptions.ChunkedEncodingError("Response ended prematurely")
+        )
+
+    def test_stalled_body_read_trips_breaker_and_releases_the_import(self) -> None:
+        import requests
+
+        self._assert_body_read_failure_allows_the_next_import(
+            requests.exceptions.ConnectionError("Read timed out")
+        )
+
+    def test_unexpected_importer_error_resets_percent_and_allows_the_next_run(self) -> None:
+        handler, _api = self._handler(_ScriptedSession())
+        state = {"calls": 0}
+
+        def boom():
+            state["calls"] += 1
+            raise RuntimeError("importer blew up")
+
+        handler._ImportHandler__importers = {"boom": boom}
+        handler.import_data(True)
+        self.assertEqual(state["calls"], 1)
+        self.assertEqual(handler.get_imported_percent(), 100)
+        self.assertTrue(handler.import_failed)
+
+        def ok():
+            state["calls"] += 1
+            return 0
+
+        handler._ImportHandler__importers = {"ok": ok}
+        handler.import_data()
+        self.assertEqual(state["calls"], 2)
+        self.assertEqual(handler.get_imported_percent(), 100)
+
+
+class LoopMasterTest(unittest.TestCase):
+    def test_loop_continues_after_an_exception(self) -> None:
+        from skills.uexcorp.main import UEXCorp
+
+        class _Handler:
+            def __init__(self):
+                self.imports = 0
+                self.errors = []
+                self.loaded = True
+                self.waits = 0
+                self._Helper__data_pool_recreated = False
+
+            def wait(self, seconds):
+                self.waits += 1
+                if self.waits >= 3:
+                    self.loaded = False
+
+            def is_loaded(self):
+                return self.loaded
+
+            def is_ready(self):
+                return True
+
+            def get_handler_import(self):
+                return self
+
+            def get_imported_percent(self):
+                return 100
+
+            def ensure_version_parity(self):
+                return None
+
+            def import_data(self):
+                self.imports += 1
+                if self.imports == 1:
+                    raise RuntimeError("refresh failed")
+
+            def get_handler_debug(self):
+                return self
+
+            def get_handler_error(self):
+                return self
+
+            def write(self, *args, **kwargs):
+                self.errors.append(args)
+
+        helper = _Handler()
+        skill = UEXCorp.__new__(UEXCorp)
+        skill._UEXCorp__helper = helper
+        skill.loop_master()
+        self.assertEqual(helper.imports, 2)
+        self.assertTrue(any("refresh failed" in str(entry) for entry in helper.errors))
 
 
 class ApiUrlTest(unittest.TestCase):

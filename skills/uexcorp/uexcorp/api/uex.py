@@ -246,13 +246,9 @@ class Uex:
                 # DNS, connection refused, and timeouts. One failure is retried.
                 # The breaker opens only after this request has used its attempts,
                 # so the rest of the run does not keep calling a dead host.
-                last_error = str(e) or "connection_error"
-                self.helper.get_handler_debug().write(f"Error while retrieving data from {url}: {e}", attempt == MAX_ATTEMPTS)
-                self.helper.get_handler_error().write("Api.fetch", [endpoint, params], e)
-                if attempt >= MAX_ATTEMPTS:
-                    self._trip_breaker(last_error)
-                    return FetchResult(False, error=self._blocked_error or last_error)
-                self._sleeper(self._backoff_seconds(attempt))
+                failed = self._exhausted_connection(attempt, e, url)
+                if failed is not None:
+                    return failed
                 continue
             except (requests.exceptions.RequestException, requests.exceptions.JSONDecodeError) as e:
                 last_error = str(e)
@@ -281,7 +277,18 @@ class Uex:
 
             try:
                 response_json = response.json()
-            except (requests.exceptions.JSONDecodeError, ValueError) as e:
+            except requests.exceptions.RequestException as e:
+                # stream=True defers the body read until json(). A truncated
+                # chunk or a read timeout is raised here, not from session.get.
+                try:
+                    response.close()
+                except Exception:
+                    pass
+                failed = self._exhausted_connection(attempt, e, url)
+                if failed is not None:
+                    return failed
+                continue
+            except ValueError as e:
                 last_error = str(e)
                 self.helper.get_handler_debug().write(f"Error while retrieving data from {url}: {e}", attempt == MAX_ATTEMPTS)
                 self.helper.get_handler_error().write("Api.fetch", [endpoint, params], e)
@@ -315,6 +322,24 @@ class Uex:
             return FetchResult(True, data)
 
         return FetchResult(False, error=last_error)
+
+    def _exhausted_connection(self, attempt: int, error: BaseException, url: str) -> FetchResult | None:
+        """Retry a connection or body-read failure.
+
+        Return a failed result once this request has used its attempts and the
+        breaker is open. Return None when the caller should try again.
+        """
+        message = str(error) or "connection_error"
+        self.helper.get_handler_debug().write(
+            f"Error while retrieving data from {url}: {error}",
+            attempt == MAX_ATTEMPTS,
+        )
+        self.helper.get_handler_error().write("Api.fetch", [url], error)
+        if attempt >= MAX_ATTEMPTS:
+            self._trip_breaker(message)
+            return FetchResult(False, error=self._blocked_error or message)
+        self._sleeper(self._backoff_seconds(attempt))
+        return None
 
     def _give_up_or_retry(self, attempt: int, reason: str, url: str, pause_everyone: bool, response) -> bool:
         """Pause or back off. Return True when the breaker is now open."""
