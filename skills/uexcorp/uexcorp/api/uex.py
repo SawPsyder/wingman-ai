@@ -124,19 +124,24 @@ def all_timeouts_worst_case(
     read: float | None = None,
     backoff_factor: float = 1.0,
 ) -> dict:
-    """Time if every request times out and only retries are budget-capped.
+    """Time if every read times out.
 
-    First attempts always run. A retry runs only while charged timeout time
-    is still under the budget. The attempt that crosses the budget is kept.
-    ``backoff_factor`` 1 is the worst jitter. Charged time counts timed-out
-    reads and the backoff of retries that actually run. Throttle does not.
+    The first endpoint uses every attempt that still fits in the budget.
+    The next endpoint's timed-out read counts as the second exhausted
+    endpoint once the budget is spent, and the breaker opens. Later
+    requests are not sent. ``backoff_factor`` 1 is the worst jitter.
+    Charged time is timed-out reads plus the backoff of retries that run.
+    A slow read already covers the throttle gap, so throttle is not added.
     """
     read = float(LARGE_READ_TIMEOUT_SECONDS if read is None else read)
     factor = min(1.0, max(0.0, backoff_factor))
     spent = 0.0
     wait = 0.0
     attempts = 0
+    exhausted = 0
     for _ in range(max(int(request_count), 0)):
+        if exhausted >= TIMEOUT_ENDPOINTS_BEFORE_BREAK:
+            break
         for attempt in range(1, MAX_ATTEMPTS + 1):
             if attempt > 1 and spent >= IMPORT_DEADLINE_SECONDS:
                 break
@@ -147,8 +152,9 @@ def all_timeouts_worst_case(
                 backoff = _backoff_delay(attempt) * factor
                 wait += backoff
                 spent += backoff
-            else:
-                break
+                continue
+            exhausted += 1
+            break
     return {
         "wait": wait,
         "charged": spent,
@@ -156,6 +162,7 @@ def all_timeouts_worst_case(
         "budget": float(IMPORT_DEADLINE_SECONDS),
         "requests": max(int(request_count), 0),
         "read": read,
+        "endpoints": exhausted,
     }
 
 
@@ -179,11 +186,12 @@ def timeout_budget_message(large_read: float | None = None) -> str:
         "UEX import timeout budget: "
         f"{budget['deadline']:.0f}s of timed-out reads and retry backoff. "
         "Healthy requests are not counted and are not refused. "
-        "Retries stop once that is spent; the next endpoint's first attempt still goes out. "
-        f"Two endpoints that each use every attempt still open the breaker "
-        f"(uncapped {budget['uncapped']:.1f}s before the breaker). "
-        f"If all {COLD_IMPORT_REQUESTS} cold-import requests time out, "
-        f"the worst case is {worst['wait']:.1f}s ({worst['attempts']} attempts)."
+        "Retries stop once that is spent. An endpoint that then fails counts "
+        "toward the breaker, and two timed-out endpoints open it. "
+        f"If every request times out, the worst case is {worst['wait']:.1f}s "
+        f"({worst['attempts']} attempts). "
+        f"Two endpoints that each use every attempt are uncapped {budget['uncapped']:.1f}s "
+        "before the breaker."
     )
 
 
@@ -400,10 +408,10 @@ class Uex:
         last_error = "request failed"
         connect, read = self._timeouts(endpoint)
         for attempt in range(1, MAX_ATTEMPTS + 1):
-            # The budget refuses retries only. A first attempt always goes out,
-            # including after the budget is spent and on every other endpoint.
+            # The budget refuses retries only. A first attempt always goes out
+            # until two timed-out endpoints have opened the breaker.
             if attempt > 1 and self._timeout_budget_exhausted():
-                return FetchResult(False, error="timeout_budget")
+                return self._note_timeout_endpoint(endpoint, "timeout_budget")
             if not self._acquire_rate_limit():
                 return FetchResult(False, error=self._blocked_error or "blocked")
             self.helper.get_handler_debug().write(f"Fetching data (request {attempt}/{MAX_ATTEMPTS}) from {url} ...")
@@ -584,9 +592,9 @@ class Uex:
 
         Charged time is the wait that just timed out, plus the backoff of a
         retry that will actually run. A spent budget fails this endpoint and
-        leaves the breaker alone, so the next endpoint's first attempt still
-        goes out. The breaker opens only after two different endpoints have
-        each used every attempt. Return None when the caller should try again.
+        counts it as exhausted, the same as using every attempt. The breaker
+        opens after two different endpoints. Until then, the next endpoint's
+        first attempt still goes out. Return None when the caller should try again.
         """
         message = str(error) or "read_timeout"
         waited = max(0.0, self._monotonic() - started_attempt)
@@ -596,20 +604,24 @@ class Uex:
             attempt == MAX_ATTEMPTS,
         )
         self.helper.get_handler_error().write("Api.fetch", [url], error)
-        if attempt < MAX_ATTEMPTS:
-            if self._timeout_budget_exhausted():
-                return FetchResult(False, error="timeout_budget")
+        if attempt < MAX_ATTEMPTS and not self._timeout_budget_exhausted():
             backoff = self._backoff_seconds(attempt)
             self._charge_timeout(backoff)
             self._sleeper(backoff)
             return None
+        if attempt < MAX_ATTEMPTS:
+            return self._note_timeout_endpoint(endpoint, "timeout_budget")
+        return self._note_timeout_endpoint(endpoint, message)
+
+    def _note_timeout_endpoint(self, endpoint: str, error: str) -> FetchResult:
+        """Count one exhausted timeout endpoint. Open the breaker at two."""
         with self._rate_lock:
             self._timeout_endpoints.add(endpoint)
             opened = len(self._timeout_endpoints) >= TIMEOUT_ENDPOINTS_BEFORE_BREAK
         if opened:
-            self._trip_breaker(message)
-            return FetchResult(False, error=self._blocked_error or message)
-        return FetchResult(False, error=message)
+            self._trip_breaker(error)
+            return FetchResult(False, error=self._blocked_error or error)
+        return FetchResult(False, error=error)
 
     def _exhausted_connection(self, attempt: int, error: BaseException, url: str) -> FetchResult | None:
         """Retry a connection or body-read failure.

@@ -898,6 +898,8 @@ class UexClientTest(unittest.TestCase):
         self.assertIn("270s of timed-out reads and retry backoff", message)
         self.assertIn(f"the worst case is {worst['wait']:.1f}s", message)
         self.assertIn(f"({worst['attempts']} attempts)", message)
+        self.assertEqual(worst["attempts"], MAX_ATTEMPTS + 1)
+        self.assertLess(worst["wait"], 320)
 
         class _Pages:
             def __init__(self):
@@ -943,21 +945,24 @@ class UexClientTest(unittest.TestCase):
         self.assertFalse(self._api._is_blocked())
         second = self._api.fetch("commodities_prices_all")
         self.assertFalse(second.ok)
-        # The budget stops the second endpoint's retries. It does not open
-        # the breaker, so a later healthy request still goes out.
-        self.assertFalse(self._api._is_blocked())
+        # The second endpoint's budget failure counts as exhausted, so the
+        # breaker opens and a later request is not sent.
+        self.assertTrue(self._api._is_blocked())
         self.assertEqual(second.error, "timeout_budget")
         self.assertGreaterEqual(self._api._timeout_spent, IMPORT_DEADLINE_SECONDS)
         bound = all_timeouts_worst_case(2, LARGE_READ_TIMEOUT_SECONDS)
+        self.assertLess(self._clock.now, 320)
+        self.assertAlmostEqual(self._clock.now, all_timeouts_worst_case(2, LARGE_READ_TIMEOUT_SECONDS, backoff_factor=0.5)["wait"])
         self.assertLessEqual(self._clock.now, bound["wait"])
-        self.assertLessEqual(len(session.urls), bound["attempts"])
+        self.assertEqual(len(session.urls), bound["attempts"])
         self.assertEqual(
             sum(url.endswith("/commodities_prices_all") for url in session.urls),
             1,
         )
+        before = len(session.urls)
         healthy = self._api.fetch("cities")
-        self.assertTrue(healthy.ok)
-        self.assertFalse(self._api._is_blocked())
+        self.assertFalse(healthy.ok)
+        self.assertEqual(len(session.urls), before)
 
     def test_short_configured_read_uses_the_large_timeout(self) -> None:
         class _Short(_FakeConfig):
@@ -1110,7 +1115,7 @@ class UexClientTest(unittest.TestCase):
         for index in range(COLD_IMPORT_REQUESTS):
             result = self._api.fetch(names[index % len(names)])
             self.assertFalse(result.ok)
-        self.assertFalse(self._api._is_blocked())
+        self.assertTrue(self._api._is_blocked())
         worst = all_timeouts_worst_case(COLD_IMPORT_REQUESTS, LARGE_READ_TIMEOUT_SECONDS)
         actual = all_timeouts_worst_case(
             COLD_IMPORT_REQUESTS,
@@ -1119,12 +1124,14 @@ class UexClientTest(unittest.TestCase):
         )
         self.assertEqual(len(session.urls), actual["attempts"])
         self.assertAlmostEqual(self._clock.now, actual["wait"])
+        self.assertLess(self._clock.now, 320)
         self.assertLessEqual(self._clock.now, worst["wait"])
         self.assertGreaterEqual(self._api._timeout_spent, IMPORT_DEADLINE_SECONDS)
+        before = len(session.urls)
         self._api.session = _ResponseOk()
         followed = self._api.fetch("cities")
-        self.assertTrue(followed.ok)
-        self.assertFalse(self._api._is_blocked())
+        self.assertFalse(followed.ok)
+        self.assertEqual(len(session.urls), before)
 
 
 class _ResponseOk:
@@ -2542,16 +2549,19 @@ class ConnectionErrorBreakerTest(_SqliteCase):
 
         self.assertTrue(handler.import_failed)
         self.assertEqual(handler.get_imported_percent(), 100)
-        self.assertFalse(api._is_blocked())
+        self.assertTrue(api._is_blocked())
         self.assertGreaterEqual(api._timeout_spent, IMPORT_DEADLINE_SECONDS)
         worst = all_timeouts_worst_case(COLD_IMPORT_REQUESTS, LARGE_READ_TIMEOUT_SECONDS)
-        self.assertLessEqual(len(session.urls), worst["attempts"])
+        self.assertEqual(len(session.urls), worst["attempts"])
+        self.assertLess(self._clock.now, 320)
         self.assertLessEqual(self._clock.now, worst["wait"])
         self.assertEqual(self._route_ids(), [7])
         systems = [url for url in session.urls if url.endswith("/star_systems")]
+        planets = [url for url in session.urls if url.endswith("/planets")]
         versions = [url for url in session.urls if url.endswith("/game_versions")]
-        self.assertGreaterEqual(len(systems), MAX_ATTEMPTS)
-        self.assertEqual(len(versions), 1)
+        self.assertEqual(len(systems), MAX_ATTEMPTS)
+        self.assertEqual(len(planets), 1)
+        self.assertEqual(versions, [])
 
     def test_unexpected_importer_error_resets_percent_and_allows_the_next_run(self) -> None:
         handler, _api = self._handler(_ScriptedSession())
