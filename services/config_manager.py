@@ -1984,11 +1984,6 @@ class ConfigManager:
 
         An entry that carries the full property itself is kept, so a skill that
         ships its metadata in the Wingman config still works.
-
-        Ids listed on the manifest as ``retired_custom_properties`` are dropped
-        the same way, including a full property, and they do not log a warning.
-        A skill uses that when a setting is gone for good: the saved ``{id, value}``
-        would otherwise warn on every startup, and the value is never read again.
         """
         stored = wingman_skill.get("custom_properties")
         if not stored:
@@ -1999,48 +1994,33 @@ class ConfigManager:
             for prop in (skill_manifest or {}).get("custom_properties") or []
             if isinstance(prop, dict) and "id" in prop
         }
-        raw_retired = (skill_manifest or {}).get("retired_custom_properties") or []
-        retired_ids = (
-            {item for item in raw_retired if isinstance(item, str)}
-            if isinstance(raw_retired, list)
-            else set()
-        )
 
         kept = []
         dropped = []
-        retired = []
         for prop in stored:
-            if not isinstance(prop, dict):
-                kept.append(prop)
-                continue
-            prop_id = prop.get("id")
-            if prop_id in retired_ids:
-                retired.append(prop_id)
-                continue
-            if prop_id in known_ids:
+            if not isinstance(prop, dict) or prop.get("id") in known_ids:
                 kept.append(prop)
                 continue
             try:
                 CustomProperty(**prop)
             except ValidationError:
-                dropped.append(prop_id)
+                dropped.append(prop.get("id"))
                 continue
             kept.append(prop)
 
-        if not dropped and not retired:
+        if not dropped:
             return wingman_skill
 
-        if dropped:
-            self.printr.print(
-                f"Skill '{skill_dir}': dropped setting(s) {dropped} - the installed "
-                "version of the skill does not have them (any more). The values stay "
-                "in the Wingman file and are used again if the skill brings the "
-                "setting back.",
-                color=LogType.WARNING,
-                server_only=True,
-                source=LogSource.SYSTEM,
-                source_name=self.log_source_name,
-            )
+        self.printr.print(
+            f"Skill '{skill_dir}': dropped setting(s) {dropped} - the installed "
+            "version of the skill does not have them (any more). The values stay "
+            "in the Wingman file and are used again if the skill brings the "
+            "setting back.",
+            color=LogType.WARNING,
+            server_only=True,
+            source=LogSource.SYSTEM,
+            source_name=self.log_source_name,
+        )
         wingman_skill = dict(wingman_skill)
         wingman_skill["custom_properties"] = kept
         return wingman_skill

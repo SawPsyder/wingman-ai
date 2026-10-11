@@ -139,8 +139,3 @@ custom_properties:
   #   required: true
   #   property_type: boolean
   ### Profit Calculation End ###
-
-# Settings removed from the skill. A saved Wingman still stores {id, value}
-# for these. The config loader drops them with no warning.
-retired_custom_properties:
-  - add_fasterwhisper_hotwords
