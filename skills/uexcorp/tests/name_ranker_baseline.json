@@ -1,0 +1,1052 @@
+{
+  "commodity:Agricium": {
+    "match": "Agricium",
+    "picked": "Agricium",
+    "method": "exact",
+    "candidates": [
+      "Agricium"
+    ]
+  },
+  "commodity:Agricultural Supplies": {
+    "match": "Agricultural Supplies",
+    "picked": "Agricultural Supplies",
+    "method": "exact",
+    "candidates": [
+      "Agricultural Supplies"
+    ]
+  },
+  "commodity:Altruciatoxin": {
+    "match": "Altruciatoxin",
+    "picked": "Altruciatoxin",
+    "method": "exact",
+    "candidates": [
+      "Altruciatoxin"
+    ]
+  },
+  "commodity:Aluminum": {
+    "match": "Aluminum",
+    "picked": "Aluminum",
+    "method": "exact",
+    "candidates": [
+      "Aluminum"
+    ]
+  },
+  "commodity:Amioshi Plague": {
+    "match": "Amioshi Plague",
+    "picked": "Amioshi Plague",
+    "method": "exact",
+    "candidates": [
+      "Amioshi Plague"
+    ]
+  },
+  "commodity:Ammonia": {
+    "match": "Ammonia",
+    "picked": "Ammonia",
+    "method": "exact",
+    "candidates": [
+      "Ammonia"
+    ]
+  },
+  "commodity:Argon": {
+    "match": "Argon",
+    "picked": "Argon",
+    "method": "exact",
+    "candidates": [
+      "Argon"
+    ]
+  },
+  "commodity:Astatine": {
+    "match": "Astatine",
+    "picked": "Astatine",
+    "method": "exact",
+    "candidates": [
+      "Astatine"
+    ]
+  },
+  "commodity:Atacamite": {
+    "match": "Atacamite",
+    "picked": "Atacamite",
+    "method": "exact",
+    "candidates": [
+      "Atacamite"
+    ]
+  },
+  "commodity:Atlasium": {
+    "match": "Atlasium",
+    "picked": "Atlasium",
+    "method": "exact",
+    "candidates": [
+      "Atlasium"
+    ]
+  },
+  "commodity:Beryl": {
+    "match": "Beryl",
+    "picked": "Beryl",
+    "method": "exact",
+    "candidates": [
+      "Beryl"
+    ]
+  },
+  "commodity:Bexalite": {
+    "match": "Bexalite",
+    "picked": "Bexalite",
+    "method": "exact",
+    "candidates": [
+      "Bexalite"
+    ]
+  },
+  "commodity:Bioplastic": {
+    "match": "Bioplastic",
+    "picked": "Bioplastic",
+    "method": "exact",
+    "candidates": [
+      "Bioplastic"
+    ]
+  },
+  "commodity:Carbon": {
+    "match": "Carbon",
+    "picked": "Carbon",
+    "method": "exact",
+    "candidates": [
+      "Carbon"
+    ]
+  },
+  "commodity:Carbon-Silk": {
+    "match": "Carbon-Silk",
+    "picked": "Carbon-Silk",
+    "method": "exact",
+    "candidates": [
+      "Carbon-Silk"
+    ]
+  },
+  "commodity:Carinite": {
+    "match": "Carinite",
+    "picked": "Carinite",
+    "method": "exact",
+    "candidates": [
+      "Carinite"
+    ]
+  },
+  "commodity:Carinite (Pure)": {
+    "match": "Carinite (Pure)",
+    "picked": "Carinite (Pure)",
+    "method": "exact",
+    "candidates": [
+      "Carinite (Pure)"
+    ]
+  },
+  "commodity:Chlorine": {
+    "match": "Chlorine",
+    "picked": "Chlorine",
+    "method": "exact",
+    "candidates": [
+      "Chlorine"
+    ]
+  },
+  "commodity:Cobalt": {
+    "match": "Cobalt",
+    "picked": "Cobalt",
+    "method": "exact",
+    "candidates": [
+      "Cobalt"
+    ]
+  },
+  "commodity:Compboard": {
+    "match": "Compboard",
+    "picked": "Compboard",
+    "method": "exact",
+    "candidates": [
+      "Compboard"
+    ]
+  },
+  "commodity:Construction Materials": {
+    "match": "Construction Materials",
+    "picked": "Construction Materials",
+    "method": "exact",
+    "candidates": [
+      "Construction Materials"
+    ]
+  },
+  "commodity:Copper": {
+    "match": "Copper",
+    "picked": "Copper",
+    "method": "exact",
+    "candidates": [
+      "Copper"
+    ]
+  },
+  "commodity:Corundum": {
+    "match": "Corundum",
+    "picked": "Corundum",
+    "method": "exact",
+    "candidates": [
+      "Corundum"
+    ]
+  },
+  "commodity:CryoPod": {
+    "match": "CryoPod",
+    "picked": "CryoPod",
+    "method": "exact",
+    "candidates": [
+      "CryoPod"
+    ]
+  },
+  "commodity:Degnous Root": {
+    "match": "Degnous Root",
+    "picked": "Degnous Root",
+    "method": "exact",
+    "candidates": [
+      "Degnous Root"
+    ]
+  },
+  "commodity:Diamond": {
+    "match": "Diamond",
+    "picked": "Diamond",
+    "method": "exact",
+    "candidates": [
+      "Diamond"
+    ]
+  },
+  "commodity:Distilled Spirits": {
+    "match": "Distilled Spirits",
+    "picked": "Distilled Spirits",
+    "method": "exact",
+    "candidates": [
+      "Distilled Spirits"
+    ]
+  },
+  "commodity:Dymantium": {
+    "match": "Dymantium",
+    "picked": "Dymantium",
+    "method": "exact",
+    "candidates": [
+      "Dymantium"
+    ]
+  },
+  "commodity:DynaFlex": {
+    "match": "DynaFlex",
+    "picked": "DynaFlex",
+    "method": "exact",
+    "candidates": [
+      "DynaFlex"
+    ]
+  },
+  "commodity:E'tam": {
+    "match": "E'tam",
+    "picked": "E'tam",
+    "method": "exact",
+    "candidates": [
+      "E'tam"
+    ]
+  },
+  "commodity:Fluorine": {
+    "match": "Fluorine",
+    "picked": "Fluorine",
+    "method": "exact",
+    "candidates": [
+      "Fluorine"
+    ]
+  },
+  "commodity:Fresh Food": {
+    "match": "Fresh Food",
+    "picked": "Fresh Food",
+    "method": "exact",
+    "candidates": [
+      "Fresh Food"
+    ]
+  },
+  "commodity:Gold": {
+    "match": "Gold",
+    "picked": "Gold",
+    "method": "exact",
+    "candidates": [
+      "Gold"
+    ]
+  },
+  "commodity:Golden Medmon": {
+    "match": "Golden Medmon",
+    "picked": "Golden Medmon",
+    "method": "exact",
+    "candidates": [
+      "Golden Medmon"
+    ]
+  },
+  "commodity:Helium": {
+    "match": "Helium",
+    "picked": "Helium",
+    "method": "exact",
+    "candidates": [
+      "Helium"
+    ]
+  },
+  "commodity:Hephaestanite": {
+    "match": "Hephaestanite",
+    "picked": "Hephaestanite",
+    "method": "exact",
+    "candidates": [
+      "Hephaestanite"
+    ]
+  },
+  "commodity:Human Food Bars": {
+    "match": "Human Food Bars",
+    "picked": "Human Food Bars",
+    "method": "exact",
+    "candidates": [
+      "Human Food Bars"
+    ]
+  },
+  "commodity:Hydrogen": {
+    "match": "Hydrogen",
+    "picked": "Hydrogen",
+    "method": "exact",
+    "candidates": [
+      "Hydrogen"
+    ]
+  },
+  "commodity:Iodine": {
+    "match": "Iodine",
+    "picked": "Iodine",
+    "method": "exact",
+    "candidates": [
+      "Iodine"
+    ]
+  },
+  "commodity:Iron": {
+    "match": "Iron",
+    "picked": "Iron",
+    "method": "exact",
+    "candidates": [
+      "Iron"
+    ]
+  },
+  "commodity:Jaclium": {
+    "match": "Jaclium",
+    "picked": "Jaclium",
+    "method": "exact",
+    "candidates": [
+      "Jaclium"
+    ]
+  },
+  "commodity:Jumping Limes": {
+    "match": "Jumping Limes",
+    "picked": "Jumping Limes",
+    "method": "exact",
+    "candidates": [
+      "Jumping Limes"
+    ]
+  },
+  "commodity:Laranite": {
+    "match": "Laranite",
+    "picked": "Laranite",
+    "method": "exact",
+    "candidates": [
+      "Laranite"
+    ]
+  },
+  "commodity:Lindinium": {
+    "match": "Lindinium",
+    "picked": "Lindinium",
+    "method": "exact",
+    "candidates": [
+      "Lindinium"
+    ]
+  },
+  "commodity:Medical Supplies": {
+    "match": "Medical Supplies",
+    "picked": "Medical Supplies",
+    "method": "exact",
+    "candidates": [
+      "Medical Supplies"
+    ]
+  },
+  "commodity:Mercury": {
+    "match": "Mercury",
+    "picked": "Mercury",
+    "method": "exact",
+    "candidates": [
+      "Mercury"
+    ]
+  },
+  "commodity:Methane": {
+    "match": "Methane",
+    "picked": "Methane",
+    "method": "exact",
+    "candidates": [
+      "Methane"
+    ]
+  },
+  "commodity:Neon": {
+    "match": "Neon",
+    "picked": "Neon",
+    "method": "exact",
+    "candidates": [
+      "Neon"
+    ]
+  },
+  "commodity:Nitrogen": {
+    "match": "Nitrogen",
+    "picked": "Nitrogen",
+    "method": "exact",
+    "candidates": [
+      "Nitrogen"
+    ]
+  },
+  "commodity:Omnapoxy": {
+    "match": "Omnapoxy",
+    "picked": "Omnapoxy",
+    "method": "exact",
+    "candidates": [
+      "Omnapoxy"
+    ]
+  },
+  "commodity:Organics": {
+    "match": "Organics",
+    "picked": "Organics",
+    "method": "exact",
+    "candidates": [
+      "Organics"
+    ]
+  },
+  "commodity:Osoian Hides": {
+    "match": "Osoian Hides",
+    "picked": "Osoian Hides",
+    "method": "exact",
+    "candidates": [
+      "Osoian Hides"
+    ]
+  },
+  "commodity:Ouratite": {
+    "match": "Ouratite",
+    "picked": "Ouratite",
+    "method": "exact",
+    "candidates": [
+      "Ouratite"
+    ]
+  },
+  "commodity:Partillium": {
+    "match": "Partillium",
+    "picked": "Partillium",
+    "method": "exact",
+    "candidates": [
+      "Partillium"
+    ]
+  },
+  "commodity:Potassium": {
+    "match": "Potassium",
+    "picked": "Potassium",
+    "method": "exact",
+    "candidates": [
+      "Potassium"
+    ]
+  },
+  "commodity:Pressurized Ice": {
+    "match": "Pressurized Ice",
+    "picked": "Pressurized Ice",
+    "method": "exact",
+    "candidates": [
+      "Pressurized Ice"
+    ]
+  },
+  "commodity:Processed Food": {
+    "match": "Processed Food",
+    "picked": "Processed Food",
+    "method": "exact",
+    "candidates": [
+      "Processed Food"
+    ]
+  },
+  "commodity:Quartz": {
+    "match": "Quartz",
+    "picked": "Quartz",
+    "method": "exact",
+    "candidates": [
+      "Quartz"
+    ]
+  },
+  "commodity:Recycled Material Composite": {
+    "match": "Recycled Material Composite",
+    "picked": "Recycled Material Composite",
+    "method": "exact",
+    "candidates": [
+      "Recycled Material Composite"
+    ]
+  },
+  "commodity:Revenant Tree Pollen": {
+    "match": "Revenant Tree Pollen",
+    "picked": "Revenant Tree Pollen",
+    "method": "exact",
+    "candidates": [
+      "Revenant Tree Pollen"
+    ]
+  },
+  "commodity:Sadaryx": {
+    "match": "Sadaryx",
+    "picked": "Sadaryx",
+    "method": "exact",
+    "candidates": [
+      "Sadaryx"
+    ]
+  },
+  "commodity:Saldynium (Ore)": {
+    "match": "Saldynium (Ore)",
+    "picked": "Saldynium (Ore)",
+    "method": "exact",
+    "candidates": [
+      "Saldynium (Ore)"
+    ]
+  },
+  "commodity:Savrilium": {
+    "match": "Savrilium",
+    "picked": "Savrilium",
+    "method": "exact",
+    "candidates": [
+      "Savrilium"
+    ]
+  },
+  "commodity:Scrap": {
+    "match": "Scrap",
+    "picked": "Scrap",
+    "method": "exact",
+    "candidates": [
+      "Scrap"
+    ]
+  },
+  "commodity:Silicon": {
+    "match": "Silicon",
+    "picked": "Silicon",
+    "method": "exact",
+    "candidates": [
+      "Silicon"
+    ]
+  },
+  "commodity:Steel": {
+    "match": "Steel",
+    "picked": "Steel",
+    "method": "exact",
+    "candidates": [
+      "Steel"
+    ]
+  },
+  "commodity:Stims": {
+    "match": "Stims",
+    "picked": "Stims",
+    "method": "exact",
+    "candidates": [
+      "Stims"
+    ]
+  },
+  "commodity:Sunset Berries": {
+    "match": "Sunset Berries",
+    "picked": "Sunset Berries",
+    "method": "exact",
+    "candidates": [
+      "Sunset Berries"
+    ]
+  },
+  "commodity:Taranite": {
+    "match": "Taranite",
+    "picked": "Taranite",
+    "method": "exact",
+    "candidates": [
+      "Taranite"
+    ]
+  },
+  "commodity:Thermalfoam": {
+    "match": "Thermalfoam",
+    "picked": "Thermalfoam",
+    "method": "exact",
+    "candidates": [
+      "Thermalfoam"
+    ]
+  },
+  "commodity:Tin": {
+    "match": "Tin",
+    "picked": "Tin",
+    "method": "exact",
+    "candidates": [
+      "Tin"
+    ]
+  },
+  "commodity:Titanium": {
+    "match": "Titanium",
+    "picked": "Titanium",
+    "method": "exact",
+    "candidates": [
+      "Titanium"
+    ]
+  },
+  "commodity:Torite": {
+    "match": "Torite",
+    "picked": "Torite",
+    "method": "exact",
+    "candidates": [
+      "Torite"
+    ]
+  },
+  "commodity:Tritium": {
+    "match": "Tritium",
+    "picked": "Tritium",
+    "method": "exact",
+    "candidates": [
+      "Tritium"
+    ]
+  },
+  "commodity:Tungsten": {
+    "match": "Tungsten",
+    "picked": "Tungsten",
+    "method": "exact",
+    "candidates": [
+      "Tungsten"
+    ]
+  },
+  "commodity:Waste": {
+    "match": "Waste",
+    "picked": "Waste",
+    "method": "exact",
+    "candidates": [
+      "Waste"
+    ]
+  },
+  "commodity:WiDoW": {
+    "match": "WiDoW",
+    "picked": "WiDoW",
+    "method": "exact",
+    "candidates": [
+      "WiDoW"
+    ]
+  },
+  "commodity:Xa'Pyen": {
+    "match": "Xa'Pyen",
+    "picked": "Xa'Pyen",
+    "method": "exact",
+    "candidates": [
+      "Xa'Pyen"
+    ]
+  },
+  "commodity:Ice": {
+    "match": "Ice",
+    "picked": "Ice",
+    "method": "exact",
+    "candidates": [
+      "Ice"
+    ]
+  },
+  "commodity:ice": {
+    "match": null,
+    "picked": null,
+    "method": null,
+    "candidates": [
+      "Ice",
+      "Iodine",
+      "Torite",
+      "Silicon",
+      "Pressurized Ice"
+    ]
+  },
+  "commodity:Laranit": {
+    "match": "Laranite",
+    "picked": "Laranite",
+    "method": "dumb",
+    "candidates": [
+      "Laranite",
+      "Caranite",
+      "Taranite",
+      "Carinite",
+      "Organics",
+      "Ouratite",
+      "Atacamite",
+      "Hephaestanite",
+      "Quartz",
+      "Torite"
+    ]
+  },
+  "commodity:widow": {
+    "match": null,
+    "picked": null,
+    "method": null,
+    "candidates": [
+      "WiDoW"
+    ]
+  },
+  "commodity:gold": {
+    "match": null,
+    "picked": null,
+    "method": null,
+    "candidates": [
+      "Gold",
+      "Argon",
+      "Cobalt",
+      "Iodine",
+      "Golden Medmon"
+    ]
+  },
+  "ship:Freelancer Max": {
+    "match": "Freelancer MIS",
+    "picked": "Freelancer MIS",
+    "method": "dumb",
+    "candidates": [
+      "Freelancer MAX",
+      "Freelancer MIS",
+      "Freelancer",
+      "Freelancer DUR",
+      "Reclaimer"
+    ]
+  },
+  "ship:Freelancer MAX": {
+    "match": "Freelancer MAX",
+    "picked": "Freelancer MAX",
+    "method": "exact",
+    "candidates": [
+      "Freelancer MAX"
+    ]
+  },
+  "ship:Mole": {
+    "match": null,
+    "picked": null,
+    "method": null,
+    "candidates": [
+      "Golem",
+      "MOLE"
+    ]
+  },
+  "ship:MOLE": {
+    "match": "MOLE",
+    "picked": "MOLE",
+    "method": "exact",
+    "candidates": [
+      "MOLE"
+    ]
+  },
+  "ship:Hornet": {
+    "match": null,
+    "picked": null,
+    "method": null,
+    "candidates": [
+      "F7C Hornet",
+      "Fortune",
+      "F7C-M Super Hornet",
+      "F7C-S Hornet Ghost",
+      "F7C-R Hornet Tracker"
+    ]
+  },
+  "ship:Cutlas Black": {
+    "match": "Cutlass Black",
+    "picked": "Cutlass Black",
+    "method": "dumb",
+    "candidates": [
+      "Cutlass Black",
+      "Carrack"
+    ]
+  },
+  "ship:Carrack": {
+    "match": "Carrack",
+    "picked": "Carrack",
+    "method": "exact",
+    "candidates": [
+      "Carrack"
+    ]
+  },
+  "vehicle:Cyclone": {
+    "match": "Cyclone",
+    "picked": "Cyclone",
+    "method": "exact",
+    "candidates": [
+      "Cyclone"
+    ]
+  },
+  "vehicle:Cyclone MT": {
+    "match": "Cyclone MT",
+    "picked": "Cyclone MT",
+    "method": "exact",
+    "candidates": [
+      "Cyclone MT"
+    ]
+  },
+  "vehicle:ursa": {
+    "match": null,
+    "picked": null,
+    "method": null,
+    "candidates": [
+      "Ursa"
+    ]
+  },
+  "vehicle:ROC": {
+    "match": "ROC",
+    "picked": "ROC",
+    "method": "exact",
+    "candidates": [
+      "ROC"
+    ]
+  },
+  "vehicle:roc-ds": {
+    "match": null,
+    "picked": null,
+    "method": null,
+    "candidates": [
+      "Ursa",
+      "ROC-DS"
+    ]
+  },
+  "item:Omnisky VI": {
+    "match": "Omnisky VI",
+    "picked": "Omnisky VI",
+    "method": "exact",
+    "candidates": [
+      "Omnisky VI"
+    ]
+  },
+  "item:Ominsky VI": {
+    "match": "Omnisky VI",
+    "picked": "Omnisky VI",
+    "method": "dumb",
+    "candidates": [
+      "Omnisky VI",
+      "Omnisky IX"
+    ]
+  },
+  "item:XL-1": {
+    "match": "XL-1",
+    "picked": "XL-1",
+    "method": "exact",
+    "candidates": [
+      "XL-1"
+    ]
+  },
+  "item:attrition-3": {
+    "match": "Attrition-3",
+    "picked": "Attrition-3",
+    "method": "dumb",
+    "candidates": [
+      "Attrition-3",
+      "Attrition-4"
+    ]
+  },
+  "attribute:Rate of Fire": {
+    "match": "Rate of Fire",
+    "picked": "Rate of Fire",
+    "method": "exact",
+    "candidates": [
+      "Rate of Fire"
+    ]
+  },
+  "attribute:rate of fire": {
+    "match": "Rate of Fire",
+    "picked": "Rate of Fire",
+    "method": "dumb",
+    "candidates": [
+      "Rate of Fire",
+      "Magazine Size"
+    ]
+  },
+  "attribute:DPS": {
+    "match": "DPS",
+    "picked": "DPS",
+    "method": "exact",
+    "candidates": [
+      "DPS"
+    ]
+  },
+  "company:Anvil Aerospace": {
+    "match": "Anvil Aerospace",
+    "picked": "Anvil Aerospace",
+    "method": "exact",
+    "candidates": [
+      "Anvil Aerospace"
+    ]
+  },
+  "company:Anvil Aerospce": {
+    "match": "Anvil Aerospace",
+    "picked": "Anvil Aerospace",
+    "method": "dumb",
+    "candidates": [
+      "Anvil Aerospace"
+    ]
+  },
+  "company:Behring": {
+    "match": "Behring",
+    "picked": "Behring",
+    "method": "exact",
+    "candidates": [
+      "Behring"
+    ]
+  },
+  "category:Systems Quantum Drives": {
+    "match": "Systems Quantum Drives",
+    "picked": "Systems Quantum Drives",
+    "method": "exact",
+    "candidates": [
+      "Systems Quantum Drives"
+    ]
+  },
+  "category:quantum drives": {
+    "match": null,
+    "picked": null,
+    "method": null,
+    "candidates": [
+      "Systems Quantum Drives",
+      "Weapons Missiles"
+    ]
+  },
+  "category:Armor": {
+    "match": "Armor",
+    "picked": "Armor",
+    "method": "exact",
+    "candidates": [
+      "Armor"
+    ]
+  },
+  "role:passenger transport": {
+    "match": "passenger transport",
+    "picked": "passenger transport",
+    "method": "exact",
+    "candidates": [
+      "passenger transport"
+    ]
+  },
+  "role:passanger transport": {
+    "match": "passenger transport",
+    "picked": "passenger transport",
+    "method": "dumb",
+    "candidates": [
+      "passenger transport",
+      "cargo transporter"
+    ]
+  },
+  "role:mining": {
+    "match": "mining",
+    "picked": "mining",
+    "method": "exact",
+    "candidates": [
+      "mining"
+    ]
+  },
+  "system:Stanton": {
+    "match": "Stanton",
+    "picked": "Stanton",
+    "method": "exact",
+    "candidates": [
+      "Stanton"
+    ]
+  },
+  "system:Stantn": {
+    "match": "Stanton",
+    "picked": "Stanton",
+    "method": "dumb",
+    "candidates": [
+      "Stanton"
+    ]
+  },
+  "case:Alpha": {
+    "match": "Alpha",
+    "picked": "Alpha",
+    "method": "exact",
+    "candidates": [
+      "Alpha"
+    ]
+  },
+  "case:alpha": {
+    "match": "alpha",
+    "picked": "alpha",
+    "method": "exact",
+    "candidates": [
+      "alpha"
+    ]
+  },
+  "case:ALPHA": {
+    "match": null,
+    "picked": null,
+    "method": null,
+    "candidates": [
+      "Alpha",
+      "alpha"
+    ]
+  },
+  "abstract:Millennium Falcon": {
+    "match": null,
+    "picked": null,
+    "method": null,
+    "candidates": []
+  },
+  "place:Lorvil": {
+    "match": "Lorville",
+    "picked": "Lorville",
+    "method": "dumb",
+    "candidates": [
+      "city:40|Lorville"
+    ]
+  },
+  "place:Area18": {
+    "match": "Area18",
+    "picked": "Area18",
+    "method": "exact",
+    "candidates": [
+      "city:41|Area18"
+    ]
+  },
+  "place:area18": {
+    "match": "Area18",
+    "picked": "Area18",
+    "method": "exact",
+    "candidates": [
+      "city:41|Area18"
+    ]
+  },
+  "place:Port Tresler": {
+    "match": "Port Tressler",
+    "picked": "Port Tressler",
+    "method": "dumb",
+    "candidates": [
+      "station:59|Port Tressler"
+    ]
+  },
+  "place:Levsky": {
+    "match": "Levski",
+    "picked": "Levski",
+    "method": "dumb",
+    "candidates": [
+      "station:80|Levski"
+    ]
+  },
+  "place:Olisar": {
+    "match": "Port Olisar",
+    "picked": "Port Olisar",
+    "method": "dumb",
+    "candidates": [
+      "station:1|Port Olisar",
+      "station:2|Olisar Point"
+    ]
+  },
+  "place:Pyro Gateway": {
+    "match": null,
+    "picked": null,
+    "method": null,
+    "candidates": [
+      "station:24|Pyro Gateway",
+      "station:57|Pyro Gateway"
+    ]
+  },
+  "place:Ruin": {
+    "match": null,
+    "picked": null,
+    "method": null,
+    "candidates": [
+      "station:54|Ruin Station"
+    ]
+  },
+  "place:Starlight": {
+    "match": "Starlight",
+    "picked": "Starlight",
+    "method": "exact",
+    "candidates": [
+      "station:56|Starlight"
+    ]
+  },
+  "place:Hurston Planet": {
+    "match": "Hurston",
+    "picked": "Hurston",
+    "method": "dumb",
+    "candidates": [
+      "planet:10|Hurston"
+    ]
+  }
+}
