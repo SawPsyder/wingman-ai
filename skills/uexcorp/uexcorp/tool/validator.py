@@ -93,6 +93,28 @@ def _commodity_miss_note(name: str, options: str | None, commodities) -> str:
     )
 
 
+def _short_vehicle_names(vehicles, query: str) -> list[str] | None:
+    """Distinct full names for an exact short ``name``, ignoring case.
+
+    None means the short name is not in the list, so ranking still runs.
+    Two rows that share one full name are one vehicle. Several different
+    full names stay a candidate list and are not sent to a model.
+    """
+    folded = (query or "").strip().casefold()
+    if not folded:
+        return None
+    fulls = []
+    for vehicle in vehicles:
+        if str(vehicle.get_name() or "").casefold() != folded:
+            continue
+        full = str(vehicle)
+        if full not in fulls:
+            fulls.append(full)
+    if not fulls:
+        return None
+    return fulls
+
+
 def _query_names_a_listed_place(query: str, options: str | None) -> bool:
     """True when a listed place name actually starts with the query or contains it.
 
@@ -251,6 +273,16 @@ class Validator:
 
     async def __validate_ship(self, name: str) -> (str | None, str | None):
         ships = VehicleDataAccess().add_filter_by_is_spaceship(True).load()
+        short = _short_vehicle_names(ships, name)
+        if short is not None:
+            if len(short) == 1:
+                return short[0], None
+            listed = ", ".join(short)
+            return None, (
+                f"Invalid ship name, no match found for '{name}': "
+                f"Did you mean one of those?: {listed}"
+            )
+
         ship_names = []
         for ship in ships:
             ship_names.append(str(ship))
@@ -266,6 +298,16 @@ class Validator:
 
     async def __validate_vehicle(self, name: str) -> (str | None, str | None):
         vehicles = VehicleDataAccess().load()
+        short = _short_vehicle_names(vehicles, name)
+        if short is not None:
+            if len(short) == 1:
+                return short[0], None
+            listed = ", ".join(short)
+            return None, (
+                f"Invalid vehicle name, no match found for '{name}': "
+                f"Did you mean one of those?: {listed}"
+            )
+
         vehicle_names = []
         for vehicle in vehicles:
             vehicle_names.append(str(vehicle))
