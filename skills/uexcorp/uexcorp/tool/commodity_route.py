@@ -331,7 +331,9 @@ class CommodityRoute(Tool):
                 config={
                     # Any known commodity, not only the current tradable set,
                     # so a name can be blacklisted or cleared while it has no price.
-                    "for_trading": False
+                    # A shared code such as BORA excludes every holder of that code.
+                    "for_trading": False,
+                    "exclude_code_holders": True,
                 },
                 prompt="Excludes trade routes for these commodities.",
             ),

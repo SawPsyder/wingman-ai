@@ -139,6 +139,19 @@ def _unique_tradable_holder(catalog, decided_name: str, tradable_names: set[str]
     return None
 
 
+def _code_holder_names(catalog, query: str) -> list[str]:
+    """Every commodity that carries this code, in catalog order."""
+    folded = (query or "").strip().casefold()
+    names = []
+    for item in catalog:
+        if _commodity_code(item) != folded:
+            continue
+        label = str(item)
+        if label and label not in names:
+            names.append(label)
+    return names
+
+
 def _closer_untradable(query: str, catalog_name: str, tradable_name: str | None) -> bool:
     """A typo of a sell-only commodity beats a weaker tradable lookalike."""
     left = (query or "").casefold().strip()
@@ -149,6 +162,29 @@ def _closer_untradable(query: str, catalog_name: str, tradable_name: str | None)
         return True
     tradable_ratio = difflib.SequenceMatcher(None, left, tradable_name.casefold()).ratio()
     return catalog_ratio >= tradable_ratio
+
+
+def _closest_catalog_name(query: str, catalog) -> str | None:
+    """The catalog name closest in spelling.
+
+    This is the comparison next to a tradable fuzzy match. It does not call
+    System One and does not add a ``Use X instead`` note. A second matcher
+    was asking System One again and could note the raw twin.
+    """
+    left = (query or "").casefold().strip()
+    if not left:
+        return None
+    best = None
+    best_ratio = 0.0
+    for item in catalog:
+        label = str(item)
+        ratio = difflib.SequenceMatcher(None, left, label.casefold()).ratio()
+        if ratio > best_ratio:
+            best_ratio = ratio
+            best = label
+    if best is not None and best_ratio >= 0.8:
+        return best
+    return None
 
 
 def _untradable_sentence(name: str, buy: bool, sell: bool) -> str:
@@ -328,7 +364,14 @@ class Validator:
             if validated is None:
                 return None
 
-            validated_values.append(validated)
+            # A blacklist code expands to every holder. Other validators
+            # still return one value.
+            if isinstance(validated, list):
+                for item in validated:
+                    if item not in validated_values:
+                        validated_values.append(item)
+            else:
+                validated_values.append(validated)
 
         if self.__multiple:
             return validated_values
@@ -453,7 +496,12 @@ class Validator:
         star_system_names = [str(star_system) for star_system in star_systems]
         return {"type": "string", "enum": star_system_names}
 
-    async def __validate_commodity(self, name: str, for_trading: bool = False) -> (str | None, str | None):
+    async def __validate_commodity(
+        self,
+        name: str,
+        for_trading: bool = False,
+        exclude_code_holders: bool = False,
+    ) -> (str | None, str | None):
         from skills.uexcorp.uexcorp.api.llm import _decide_exact
 
         commodity_data_access = CommodityDataAccess()
@@ -491,9 +539,9 @@ class Validator:
             closest_match, options = await _closest_record(
                 self.__helper, name, _commodity_records(tradable)
             )
-            catalog_match, _catalog_note = await _closest_record(
-                self.__helper, name, _commodity_records(catalog)
-            )
+            # Spelling only. A second find_closest_match asks System One
+            # again and can note the raw twin of the commodity we return.
+            catalog_match = _closest_catalog_name(name, catalog)
             if (
                 catalog_match
                 and catalog_match not in tradable_names
@@ -508,6 +556,16 @@ class Validator:
             return None, _tradable_miss_note(name, options, catalog, tradable_ids)
 
         commodities = commodity_data_access.load()
+        # Exclusion is the safe side: a shared code drops every holder.
+        # An exact name stays that one commodity. A stoplisted casing
+        # such as "Alum" is still not treated as the code.
+        if exclude_code_holders and _query_is_code(commodities, name):
+            from skills.uexcorp.uexcorp.api.llm import _stoplist_blocks_pick
+
+            if not _stoplist_blocks_pick(name):
+                holders = _code_holder_names(commodities, name)
+                if len(holders) > 1:
+                    return holders, None
         closest_match, options = await _closest_record(
             self.__helper, name, _commodity_records(commodities)
         )
@@ -526,6 +584,14 @@ class Validator:
         )
         if closest_match:
             return closest_match, None
+        # A shop chain is not one branch. Location info and route filters
+        # both say so, instead of keeping a System One pick of one terminal.
+        if (
+            options
+            and "is a shop" in options
+            and "not a trade terminal" in options
+        ):
+            return None, options
 
         # Route start, destination, and location blacklist pass for_trading.
         # A listed place is already returned above. This only runs when that

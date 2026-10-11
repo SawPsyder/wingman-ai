@@ -742,7 +742,7 @@ class RouteReproTest(_SqliteCase):
                 (116, 'Conscientious Objects - Levski', 'Conscientious Objects', 'clothing', 1, 2, 'Nyx', 41, 'Levski', NULL, NULL),
                 (117, 'Tammany and Sons - Metro Center - Lorville', 'Tammany and Sons', 'clothing', 1, 1, 'Stanton', 40, 'Lorville', NULL, NULL),
                 (201, 'Live Fire Weapons - Area 18', 'Live Fire Area 18', 'fps', 1, 1, 'Stanton', 18, 'Area 18', NULL, NULL),
-                (202, 'Live Fire Weapons - Lorville', 'Live Fire Lorville', 'fps', 1, 1, 'Stanton', 40, 'Lorville', NULL, NULL),
+                (202, 'Live Fire Weapons- Lorville', 'Live Fire Lorville', 'fps', 1, 1, 'Stanton', 40, 'Lorville', NULL, NULL),
                 (203, 'Casaba Outlet - Area 18', 'Casaba Area 18', 'clothing', 1, 1, 'Stanton', 18, 'Area 18', NULL, NULL),
                 (204, 'Casaba Outlet - Everus Harbor', 'Casaba Everus', 'clothing', 1, 1, 'Stanton', NULL, NULL, 52, 'Everus Harbor'),
                 (205, 'Casaba Outlet - CRU-L4', 'Casaba CRU', 'clothing', 1, 1, 'Stanton', NULL, NULL, 54, 'CRU-L4')
@@ -800,14 +800,118 @@ class RouteReproTest(_SqliteCase):
             self.assertNotIn("not recognized", text, query)
             self.assertNotIn("too abstract", text, query)
 
+        class _FirstBranch:
+            available = True
+
+            def __init__(self) -> None:
+                self.calls = 0
+                self.offered: list[str] = []
+
+            def choice(self, *args, **kwargs):
+                criteria = kwargs.get("criteria") if isinstance(kwargs.get("criteria"), dict) else {}
+                if len(args) > 1 and isinstance(args[1], dict):
+                    criteria = args[1]
+                self.offered = [name for name in criteria if name != "none_of_these"]
+                return {"criteria": criteria}
+
+            def noul(self, *args, **kwargs):
+                return {}
+
+            async def decide(self, state=None, questions=None):
+                self.calls += 1
+                offered = list(self.offered)
+
+                class _Answers:
+                    seconds = 0.0
+
+                    def choice(self, key, min_confidence=0.0):
+                        return offered[0] if offered else "Casaba Outlet - Area 18"
+
+                    def confidence(self, key):
+                        return 0.99
+
+                return _Answers()
+
+        picker = _FirstBranch()
+        self._install_llm(picker)
+        info, _instant = asyncio.run(
+            handler.execute_tool(
+                "uex_get_location_or_terminal_information",
+                {"filter_locations": ["Casaba Outlet"]},
+            )
+        )
+        self.assertIn("Casaba Outlet is a shop chain, not a trade terminal", info)
+        self.assertNotIn("Casaba Outlet - Area 18", info)
+        self.assertEqual(picker.calls, 0)
+
+    def test_scope_words_hit_exact_before_system_one(self) -> None:
+        """Levski Station and Daymar Station are exact names, not a model pick."""
+        from skills.uexcorp.uexcorp.resolver import resolve_location_name
+
+        class _Greedy:
+            available = True
+
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def choice(self, *args, **kwargs):
+                return {"criteria": {}}
+
+            def noul(self, *args, **kwargs):
+                return {}
+
+            async def decide(self, state=None, questions=None):
+                self.calls += 1
+
+                class _Answers:
+                    seconds = 0.0
+
+                    def choice(self, key, min_confidence=0.0):
+                        return "Seraphim Station"
+
+                    def confidence(self, key):
+                        return 0.99
+
+                return _Answers()
+
+        greedy = _Greedy()
+        self._install_llm(greedy)
+        self._seed_trade()
+        self._db.execute(
+            """
+            INSERT INTO moon (
+                id, name, code, id_star_system, id_planet, star_system_name,
+                planet_name, is_available, is_available_live
+            ) VALUES (25, 'Daymar', 'DAY', 1, 12, 'Stanton', 'ArcCorp', 1, 1)
+            """
+        )
+        self._db.execute(
+            """
+            INSERT INTO space_station (
+                id, name, id_star_system, star_system_name,
+                is_available, is_available_live, has_trade_terminal
+            ) VALUES (48, 'Seraphim Station', 1, 'Stanton', 1, 1, 1)
+            """
+        )
+        self._db.execute("UPDATE terminal SET is_available_live = 1 WHERE id = 80")
+        self._db.commit()
+        for query, place in (("Levski Station", "Levski"), ("Daymar Station", "Daymar")):
+            named, note = asyncio.run(
+                resolve_location_name(self._helper, query, for_trading=True)
+            )
+            self.assertEqual(named, place, query)
+            self.assertIsNone(note, query)
+        self.assertEqual(greedy.calls, 0)
+
     def test_shared_commodity_codes_prefer_the_tradable_holder(self) -> None:
         """Every code that two commodities share, on a route whitelist.
 
         The tradable holder is the one with both a terminal buy and a
         terminal sell. A shared code such as BORA prefers that holder.
         An exact name stays that commodity, so Borase and Gold (Ore)
-        keep their own sell-only note. A code with no tradable holder
-        still says why.
+        keep their own sell-only note. On a blacklist the same code
+        excludes every holder, and the exact name excludes only itself.
+        A code with no tradable holder still says why.
         """
         from skills.uexcorp.uexcorp.api.llm import _stoplist_blocks_pick
         from skills.uexcorp.uexcorp.tool.validator import Validator
@@ -882,7 +986,17 @@ class RouteReproTest(_SqliteCase):
                 418, 518, 'Gold', 80, 83,
                 'Levski', 'Area18 TDD',
                 10, 40, 8, 8, 1
+            ), (
+                419, 508, 'Borase', 80, 419,
+                'Levski', 'Borase Only Pad',
+                10, 11, 8, 8, 1
             )
+            """
+        )
+        self._db.execute(
+            """
+            INSERT INTO terminal (id, name, type, is_available)
+            VALUES (419, 'Borase Only Pad', 'commodity', 1)
             """
         )
         self._db.commit()
@@ -913,6 +1027,29 @@ class RouteReproTest(_SqliteCase):
                     self.assertNotIn("sell-only", notes, query)
                 else:
                     self.assertIsNone(result, query)
+        black = Validator(
+            Validator.VALIDATE_COMMODITY,
+            multiple=True,
+            config={"for_trading": False, "exclude_code_holders": True},
+        )
+        for code, first, second, _tradable in shared:
+            holders = [first, second]
+            literal_names = {first.casefold(): first, second.casefold(): second}
+            for query in (code, code.title(), code.lower(), first, second):
+                self._helper.get_handler_tool().notes.clear()
+                result = asyncio.run(black.validate([query]))
+                literal = literal_names.get(query.casefold())
+                if literal is not None:
+                    # GOLD is the name Gold, so it excludes Gold only.
+                    self.assertEqual(result, [literal], query)
+                    continue
+                if _stoplist_blocks_pick(query):
+                    self.assertFalse(
+                        isinstance(result, list) and set(result) == set(holders),
+                        query,
+                    )
+                    continue
+                self.assertEqual(sorted(result), sorted(holders), query)
         handler = self._handler()
         for query in ("BORA", "Bora", "bora"):
             text, _instant = asyncio.run(
@@ -947,6 +1084,119 @@ class RouteReproTest(_SqliteCase):
             self.assertNotIn("not recognized", text, query)
             self.assertIn(kept, text, query)
             self.assertIn("Area18 TDD", text, query)
+            if query == "Borase":
+                self.assertNotIn("Borase Only Pad", text, query)
+        for query in ("BORA", "Bora", "bora"):
+            text, _instant = asyncio.run(
+                handler.execute_tool(
+                    "uex_get_trade_routes",
+                    {"filter_commodity_blacklist": [query]},
+                )
+            )
+            self.assertNotIn("Borase", text, query)
+            self.assertNotIn("Borase Only Pad", text, query)
+            self.assertNotIn("sell-only", text, query)
+            self.assertNotIn("not recognized", text, query)
+
+    def test_tradable_typo_asks_system_one_once(self) -> None:
+        """The catalog comparison must not ask System One or note the raw twin."""
+        from skills.uexcorp.uexcorp.tool.validator import Validator
+
+        class _RawPicker:
+            available = True
+
+            def __init__(self) -> None:
+                self.calls = 0
+                self.offered: list[str] = []
+
+            def choice(self, prompt, criteria=None, examples=None, **kwargs):
+                self.offered = [
+                    name for name in (criteria or {}) if name != "none_of_these"
+                ]
+                return {"criteria": criteria or {}}
+
+            def noul(self, *args, **kwargs):
+                return {}
+
+            async def decide(self, state=None, questions=None):
+                self.calls += 1
+                offered = list(self.offered)
+                heard = ((state or {}).get("heard") or "").casefold()
+                wanted = {
+                    "laranit": "Laranite",
+                    "agricum": "Agricium",
+                    "tungstn": "Tungsten",
+                }.get(heard)
+
+                class _Answers:
+                    seconds = 0.0
+
+                    def choice(self, key, min_confidence=0.0):
+                        raw = next(
+                            (
+                                name
+                                for name in offered
+                                if "(Raw)" in name or "(Ore)" in name
+                            ),
+                            None,
+                        )
+                        if raw:
+                            return raw
+                        if wanted in offered:
+                            return wanted
+                        return None
+
+                    def confidence(self, key):
+                        return 0.99
+
+                return _Answers()
+
+        self._seed_trade()
+        rows = (
+            (47, "Laranite", "LARA", 0, 10, 12),
+            (48, "Laranite (Raw)", "LARA", 1, 0, 9),
+            (10, "Agricium", "AGRI", 0, 10, 12),
+            (11, "Agricium (Ore)", "AGRI", 1, 0, 9),
+            (20, "Tungsten", "TUNG", 0, 10, 12),
+            (21, "Tungsten (Ore)", "TUNG", 1, 0, 9),
+        )
+        for commodity_id, name, code, raw, buy, sell in rows:
+            self._db.execute(
+                "INSERT INTO commodity (id, name, code, is_raw) VALUES (?, ?, ?, ?)",
+                (commodity_id, name, code, raw),
+            )
+            self._db.execute(
+                """
+                INSERT INTO commodity_price (
+                    id, id_commodity, id_terminal, price_buy, price_sell, commodity_name
+                ) VALUES (?, ?, 80, ?, ?, ?)
+                """,
+                (commodity_id, commodity_id, buy, sell, name),
+            )
+        self._db.commit()
+        picker = _RawPicker()
+        self._install_llm(picker)
+        contexts: list[str] = []
+        self._helper.add_context = contexts.append
+        validator = Validator(
+            Validator.VALIDATE_COMMODITY,
+            config={"for_trading": True},
+        )
+        expected = {
+            "Laranit": "Laranite",
+            "Agricum": "Agricium",
+            "Tungstn": "Tungsten",
+        }
+        for query, name in expected.items():
+            picker.calls = 0
+            contexts.clear()
+            self._helper.get_handler_tool().notes.clear()
+            self.assertEqual(asyncio.run(validator.validate(query)), name, query)
+            self.assertEqual(picker.calls, 1, query)
+            note = " ".join(contexts)
+            self.assertIn(f"Use '{name}' instead of '{query}'", note, query)
+            self.assertNotIn("(Raw)", note, query)
+            self.assertNotIn("(Ore)", note, query)
 
     def test_untradable_typos_keep_the_sell_only_note(self) -> None:
         self._install_llm(None)

@@ -8,8 +8,14 @@ key match back into a place.
 from __future__ import annotations
 
 import difflib
+import re
 
-from skills.uexcorp.uexcorp.api.llm import _whole_word_name, rank_places, strip_type_tag
+from skills.uexcorp.uexcorp.api.llm import (
+    _strip_scope_words,
+    _whole_word_name,
+    rank_places,
+    strip_type_tag,
+)
 from skills.uexcorp.uexcorp.location_blocklist import (
     SCOPES,
     _SCOPE,
@@ -281,8 +287,13 @@ def _bare_generic_place(query: str) -> bool:
     return text.casefold() in _GENERIC_PLACE_WORDS
 
 
+# "Casaba Outlet - Area 18" and the live "Live Fire Weapons- Nyx Gateway"
+# are the same kind of split. A dash inside a token such as ARC-L1 stays.
+_BRAND_SPLIT = re.compile(r"\s*-\s")
+
+
 def _shop_brand(name: str) -> str:
-    return str(name or "").split(" - ", 1)[0].strip()
+    return _BRAND_SPLIT.split(str(name or ""), maxsplit=1)[0].strip()
 
 
 def _brand_query_ok(query: str, brand: str) -> bool:
@@ -362,6 +373,28 @@ def _note_for_brand(query: str, shops: list[dict], brand: str) -> str | None:
         parent = rows[0].get("parent_name")
         return shop_sentence(_shop_spoken_name(query, rows[0]["name"]), parent)
     return shop_chain_sentence(brand, _chain_parents(rows))
+
+
+def _multi_branch_chain_note(helper, query: str) -> str | None:
+    """The chain sentence when the query names one shop that has several branches.
+
+    Location info must not let System One pick a single Casaba Outlet.
+    A shop with one terminal is left to the normal lookup.
+    """
+    shops = _shop_records(helper)
+    if not shops:
+        return None
+    brands = []
+    for row in shops:
+        brand = _shop_brand(str(row.get("name") or ""))
+        if brand and brand not in brands:
+            brands.append(brand)
+    matches = [brand for brand in brands if _brand_query_ok(query, brand)]
+    if len(matches) != 1:
+        return None
+    if len(_shops_of_brand(shops, matches[0])) < 2:
+        return None
+    return _note_for_brand(query, shops, matches[0])
 
 
 def _unambiguous_shop_brand(query: str, hits: list[dict]) -> str | None:
@@ -552,21 +585,47 @@ async def resolve_location_name(helper, name: str, for_trading: bool = False):
     # auto-pick, including through System One. Its candidates include
     # non-trade POIs, so Mine can list Kudre Ore Mine instead of selecting it.
     generic = _bare_generic_place(text)
+    # A multi-branch shop is the chain hint. System One must not pick one
+    # Casaba Outlet terminal for location info or a route filter.
+    if not generic:
+        chain = _multi_branch_chain_note(helper, text)
+        if chain:
+            return None, chain
     rows = collect_locations(
         helper,
         for_trading=for_trading and not generic,
         available_only=True,
     )
-    found = await _llm(helper).find_closest_key(
-        text,
-        {row["key"]: row["name"] for row in rows},
-        {row["key"]: row["label"] for row in rows},
-        records=rows,
-        allow_llm=False,
-        allow_dumb=False,
-        ask_system_one=not generic,
-        allow_whole_word=not generic,
-    )
+    options = {row["key"]: row["name"] for row in rows}
+    labels = {row["key"]: row["label"] for row in rows}
+    found = None
+    # "Levski Station" is the exact name Levski. Strip the scope word
+    # before System One, and keep the pick only when that step is exact.
+    stripped = _strip_scope_words(text)
+    if not generic and stripped and stripped.casefold() != text.casefold():
+        again = await _llm(helper).find_closest_key(
+            stripped,
+            options,
+            labels,
+            records=rows,
+            allow_llm=False,
+            allow_dumb=False,
+            ask_system_one=False,
+            allow_whole_word=False,
+        )
+        if again.method == "exact" and again.key:
+            found = again
+    if found is None:
+        found = await _llm(helper).find_closest_key(
+            text,
+            options,
+            labels,
+            records=rows,
+            allow_llm=False,
+            allow_dumb=False,
+            ask_system_one=not generic,
+            allow_whole_word=not generic,
+        )
     if found.method == "prefix" and found.key and not _whole_word_pick_is_unique(helper, text, found, rows):
         found.key = None
         found.keys = []
@@ -579,26 +638,6 @@ async def resolve_location_name(helper, name: str, for_trading: bool = False):
             )
     chosen = _rows_for_keys(rows, found)
     decided = _decided_name(text, chosen, found)
-    if decided is None:
-        from skills.uexcorp.uexcorp.api.llm import _strip_scope_words
-
-        stripped = _strip_scope_words(text)
-        if stripped and stripped.casefold() != text.casefold():
-            # "Hurston Planet" is the exact name Hurston, not a fuzzy pick.
-            again = await _llm(helper).find_closest_key(
-                stripped,
-                {row["key"]: row["name"] for row in rows},
-                {row["key"]: row["label"] for row in rows},
-                records=rows,
-                allow_llm=False,
-                allow_dumb=False,
-                ask_system_one=False,
-                allow_whole_word=False,
-            )
-            if again.method == "exact":
-                found = again
-                chosen = _rows_for_keys(rows, found)
-                decided = _decided_name(stripped, chosen, found)
     if decided is not None:
         if for_trading:
             decided = _station_label_for_admin(text, chosen, found, decided)
