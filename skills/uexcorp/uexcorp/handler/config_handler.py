@@ -62,6 +62,12 @@ def get_tools() -> tuple[list, bool]:
     from skills.uexcorp.uexcorp.tool.location_information import LocationInformation
     from skills.uexcorp.uexcorp.tool.vehicle_information import VehicleInformation
     from skills.uexcorp.uexcorp.tool.profit_calculation import ProfitCalculation
+    from skills.uexcorp.uexcorp.tool.location_blocks import (
+        BlockLocation,
+        ClearLocationBlocks,
+        ListLocationBlocks,
+        UnblockLocation,
+    )
 
     needs_authentication = False
     tools = []
@@ -97,6 +103,11 @@ def get_tools() -> tuple[list, bool]:
         tools.append(ProfitCalculation.TOOL_NAME)
         if ProfitCalculation.REQUIRES_AUTHENTICATION:
             needs_authentication = True
+
+        tools.append(ListLocationBlocks.TOOL_NAME)
+        tools.append(BlockLocation.TOOL_NAME)
+        tools.append(UnblockLocation.TOOL_NAME)
+        tools.append(ClearLocationBlocks.TOOL_NAME)
     except Exception:
         pass
 
@@ -294,60 +305,11 @@ class ConfigHandler:
                 pass
 
     def __sync_terminal_blacklist(self):
-        from skills.uexcorp.uexcorp.data_access.terminal_data_access import TerminalDataAccess
+        # The old per-terminal file is migrated once, then left as
+        # terminal_blacklist.yaml.migrated. Later imports only refresh names.
+        from skills.uexcorp.uexcorp.location_blocklist import LocationBlocklist
 
-        if not self.__helper.is_ready():
-            return False
-
-        file_path = os.path.join(
-            self.__fine_config_path, "terminal_blacklist.yaml"
-        )
-
-        # sync status from file to database
-        if os.path.exists(file_path):
-            try:
-                with open(file_path, "r") as file:
-                    terminal_data = yaml.safe_load(file)
-
-                for index, terminal in enumerate(terminal_data):
-                    terminal_model = TerminalDataAccess().load_by_property("id", terminal["id"])
-                    if terminal_model is None:
-                        continue
-                    terminal_model.set_is_blacklisted(bool(terminal["is_blacklisted"]))
-                    terminal_model.persist(index < len(terminal_data) - 1)
-
-                # delete file after sync
-                os.remove(file_path)
-            except Exception as e:
-                self.__helper.get_handler_debug().write(f"Error while syncing terminal blacklist: {e}", True)
-                self.__helper.get_handler_error().write("ConfigHandler.__init_terminal_blacklist", [], e)
-                self.__helper.get_handler_debug().write("Terminal blacklist config will be recreated.", True)
-
-        # rewrite file to add possible new terminals
-        terminals = TerminalDataAccess().load()
-        terminal_data = []
-        for terminal in terminals:
-            terminal_data.append(
-                {
-                    "id": terminal.get_id(),
-                    "system": terminal.get_star_system_name(),
-                    "orbit": terminal.get_orbit_name(),
-                    "faction": terminal.get_faction_name(),
-                    "terminal": terminal.get_name(),
-                    "is_blacklisted": bool(terminal.get_is_blacklisted()),
-                }
-            )
-
-        try:
-            with open(file_path, "w") as file:
-                file.write("# Only the 'is_blacklisted' value must be changed to 'true' or 'false'.")
-                file.write("\n# Blacklisted terminals ('is_blacklisted: true') will be ignored in trade route calculations and buy/sell recommendations.")
-                file.write("\n# If the yaml-format gets corrupted, the file will be deleted and recreated on the next start.")
-                file.write("\n# This would reset previous set terminal blacklists.\n\n")
-                file.write(yaml.dump(terminal_data))
-        except Exception as e:
-            self.__helper.get_handler_debug().write(f"Error while writing terminal blacklist: {e}", True)
-            self.__helper.get_handler_error().write("ConfigHandler.__init_terminal_blacklist", [], e)
+        LocationBlocklist(self.__helper).sync_after_import()
 
     def is_tool_enabled(self, tool_name: str) -> bool:
         return tool_name in self.__behavior_enabled_tools

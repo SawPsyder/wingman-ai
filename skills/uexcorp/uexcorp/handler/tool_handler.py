@@ -6,6 +6,12 @@ from skills.uexcorp.uexcorp.tool.commodity_information import CommodityInformati
 from skills.uexcorp.uexcorp.tool.location_information import LocationInformation
 from skills.uexcorp.uexcorp.tool.item_information import ItemInformation
 from skills.uexcorp.uexcorp.tool.profit_calculation import ProfitCalculation
+from skills.uexcorp.uexcorp.tool.location_blocks import (
+    BlockLocation,
+    ClearLocationBlocks,
+    ListLocationBlocks,
+    UnblockLocation,
+)
 
 if TYPE_CHECKING:
     from skills.uexcorp.uexcorp.helper import Helper
@@ -28,6 +34,10 @@ class ToolHandler:
             ItemInformation.TOOL_NAME: ItemInformation,
             CommodityRoute.TOOL_NAME: CommodityRoute,
             ProfitCalculation.TOOL_NAME: ProfitCalculation,
+            ListLocationBlocks.TOOL_NAME: ListLocationBlocks,
+            BlockLocation.TOOL_NAME: BlockLocation,
+            UnblockLocation.TOOL_NAME: UnblockLocation,
+            ClearLocationBlocks.TOOL_NAME: ClearLocationBlocks,
         }
         self.__notes = []
 

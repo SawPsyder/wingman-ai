@@ -24,6 +24,57 @@ def _commodity_terminal_ids_at(location_names: str | list[str]) -> list[int]:
     return [terminal.get_id() for terminal in access.load()]
 
 
+def _persistent_blocked_ids(helper) -> list[int]:
+    try:
+        if not hasattr(helper, "get_data_path"):
+            return []
+        from skills.uexcorp.uexcorp.location_blocklist import LocationBlocklist
+
+        return LocationBlocklist(helper).blocked_terminal_ids()
+    except Exception:
+        return []
+
+
+def _block_conflict(helper, label: str, place: str, terminal_ids: list[int], blocked_ids: list[int]) -> str | None:
+    blocked_here = [terminal_id for terminal_id in terminal_ids if terminal_id in blocked_ids]
+    if not blocked_here or len(blocked_here) != len(terminal_ids):
+        return None
+    detail = _block_detail(helper, blocked_here)
+    extra = f" ({detail})" if detail else ""
+    return (
+        f"{label} location {place} is on your blocklist{extra}. "
+        "Unblock it, or ask again with ignore_blocklist."
+    )
+
+
+def _drop_blocked(helper, place: str, terminal_ids: list[int], blocked_ids: list[int]) -> list[int]:
+    kept = [terminal_id for terminal_id in terminal_ids if terminal_id not in blocked_ids]
+    skipped = len(terminal_ids) - len(kept)
+    if skipped and kept:
+        helper.get_handler_tool().add_note(
+            f"{skipped} of {len(terminal_ids)} terminals at {place} are blocked and were skipped."
+        )
+    return kept
+
+
+def _block_detail(helper, terminal_ids: list[int]) -> str:
+    try:
+        from skills.uexcorp.uexcorp.location_blocklist import LocationBlocklist, format_expiry
+
+        store = LocationBlocklist(helper)
+        wanted = set(terminal_ids)
+        for entry in store.active():
+            if wanted.intersection(store.terminal_ids_for(entry)):
+                reason = entry.get("reason") or ""
+                when = format_expiry(entry.get("expires"))
+                if reason and when:
+                    return f"{reason}, until {when}"
+                return reason or (f"until {when}" if when else "")
+    except Exception:
+        return ""
+    return ""
+
+
 def _note_hidden_illegal_commodities(helper, names: list[str]) -> None:
     """Say why a named commodity disappeared while the illegal switch is off."""
     from skills.uexcorp.uexcorp.data_access.commodity_data_access import CommodityDataAccess
@@ -74,6 +125,7 @@ class CommodityRoute(Tool):
         filter_destination_location: str | None = None,
         filter_location_blacklist: list[str] | None = None,
         filter_require_auto_load: bool | None = None,
+        ignore_blocklist: bool | None = None,
     ) -> (str, str):
         from skills.uexcorp.uexcorp.data_access.vehicle_data_access import VehicleDataAccess
         from skills.uexcorp.uexcorp.data_access.terminal_data_access import TerminalDataAccess
@@ -176,6 +228,22 @@ class CommodityRoute(Tool):
                     f"No terminal matches destination location {filter_destination_location}.",
                 )
 
+        blocked_ids = [] if ignore_blocklist else _persistent_blocked_ids(helper)
+        if blocked_ids:
+            for blocked_id in blocked_ids:
+                if blocked_id not in terminal_ids_exclude:
+                    terminal_ids_exclude.append(blocked_id)
+            if filter_start_location:
+                stopped = _block_conflict(helper, "Start", filter_start_location, start_terminal_ids, blocked_ids)
+                if stopped:
+                    return _no_routes(helper, stopped)
+                start_terminal_ids = _drop_blocked(helper, filter_start_location, start_terminal_ids, blocked_ids)
+            if filter_destination_location:
+                stopped = _block_conflict(helper, "Destination", filter_destination_location, end_terminals_ids, blocked_ids)
+                if stopped:
+                    return _no_routes(helper, stopped)
+                end_terminals_ids = _drop_blocked(helper, filter_destination_location, end_terminals_ids, blocked_ids)
+
         if filter_require_auto_load:
             # Route rows have no is_auto_load; constrain both ends via terminal ids.
             auto_load_terminal_ids = []
@@ -185,11 +253,14 @@ class CommodityRoute(Tool):
             auto_load_terminal_data_access.add_filter_by_is_available(True)
             for terminal in auto_load_terminal_data_access.load():
                 auto_load_terminal_ids.append(terminal.get_id())
+            if blocked_ids:
+                auto_load_terminal_ids = [terminal_id for terminal_id in auto_load_terminal_ids if terminal_id not in blocked_ids]
 
             if not auto_load_terminal_ids:
-                helper.get_handler_tool().add_note(
-                    "No available commodity terminals support ship hangar auto load/unload."
-                )
+                note = "No available commodity terminals support ship hangar auto load/unload."
+                if blocked_ids:
+                    note += " Blocked locations were removed from the auto-load list."
+                helper.get_handler_tool().add_note(note)
                 return compression.dumps([]), ""
 
             commodity_route_data_access.add_filter_by_id_terminal_origin(auto_load_terminal_ids)
@@ -228,6 +299,17 @@ class CommodityRoute(Tool):
         routes = commodity_route_data_access.load(debug=True) # TODO remove debug=True
 
         routes = [route.get_data_for_ai() for route in routes]
+        if not routes and blocked_ids:
+            try:
+                from skills.uexcorp.uexcorp.location_blocklist import LocationBlocklist
+
+                blocked_places = len(LocationBlocklist(helper).active())
+            except Exception:
+                blocked_places = len(blocked_ids)
+            if blocked_places:
+                helper.get_handler_tool().add_note(
+                    f"{blocked_places} locations are blocked; this may be why."
+                )
         return compression.dumps(routes), ""
 
     def get_mandatory_fields(self) -> dict[str, Validator]:
@@ -303,6 +385,10 @@ class CommodityRoute(Tool):
                     "for_trading": True
                 },
                 prompt="Shows only trade routes ending at this location. eg \"Stanton\" or \"Nyx\".",
+            ),
+            "ignore_blocklist": Validator(
+                Validator.VALIDATE_BOOL,
+                prompt="Set true to include blocked locations for this one search. Mention it only after a blocklist conflict.",
             ),
             "filter_location_blacklist": Validator(
                 Validator.VALIDATE_LOCATION,

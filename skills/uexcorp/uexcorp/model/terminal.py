@@ -155,8 +155,9 @@ class Terminal(DataModel):
             extras.append("Loading Dock")
         if self.get_has_freight_elevator():
             extras.append("Freight Elevator")
-        if self.get_is_blacklisted():
-            extras.append("Blacklisted for trade recommendations through advanced uex skill configuration")
+        blocked = _blocked_reason(self)
+        if blocked:
+            extras.append(f"Blocked: {blocked}")
         if self.get_is_affinity_influenceable():
             extras.append("Faction Affinity Influenceable")
         return extras
@@ -277,7 +278,11 @@ class Terminal(DataModel):
         for part in [self.get_parent_location_name(), self.get_star_system_name()]:
             if part and part not in name and part not in context:
                 context.append(part)
-        return f"{name} ({', '.join(context)})" if context else name
+        label = f"{name} ({', '.join(context)})" if context else name
+        blocked = _blocked_reason(self)
+        if blocked:
+            label += f" [Blocked: {blocked}]"
+        return label
 
     def get_id(self) -> int:
         return self.data["id"]
@@ -434,3 +439,13 @@ class Terminal(DataModel):
 
     def __str__(self):
         return str(self.data["name"])
+
+
+def _blocked_reason(terminal) -> str | None:
+    try:
+        from skills.uexcorp.uexcorp.helper import Helper
+        from skills.uexcorp.uexcorp.location_blocklist import block_reason_for_terminal
+
+        return block_reason_for_terminal(Helper.get_instance(), terminal)
+    except Exception:
+        return None

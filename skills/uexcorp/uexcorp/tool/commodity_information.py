@@ -61,14 +61,24 @@ class CommodityInformation(Tool):
                 if filter_location_blacklist is not None:
                     terminal_data_access.add_filter_by_location_name_blacklist(filter_location_blacklist)
 
-                for terminal in terminal_data_access.load():
-                    terminal_ids.append(terminal.get_id())
+                matched_ids = [terminal.get_id() for terminal in terminal_data_access.load()]
+                from skills.uexcorp.uexcorp.tool.commodity_route import _persistent_blocked_ids
+
+                blocked_ids = set(_persistent_blocked_ids(helper))
+                terminal_ids = [
+                    terminal_id for terminal_id in matched_ids if terminal_id not in blocked_ids
+                ]
 
                 # Whitelist is an include. No matching terminal must not become
                 # "every commodity". A blacklist that matches nothing leaves the
                 # other terminals in place; an empty list here means none remain.
                 if not terminal_ids:
-                    if filter_location_whitelist is not None:
+                    if matched_ids and blocked_ids:
+                        place = ", ".join(filter_location_whitelist or filter_location_blacklist or [])
+                        helper.get_handler_tool().add_note(
+                            f"Location {place} is on your blocklist, so its commodity prices were left out."
+                        )
+                    elif filter_location_whitelist is not None:
                         helper.get_handler_tool().add_note(
                             f"No terminal matches location {', '.join(filter_location_whitelist)}."
                         )
