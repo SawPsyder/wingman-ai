@@ -436,9 +436,10 @@ class Llm:
                     return result
 
             use(shown)
-            result.note = ", ".join(
-                (hit.get("label") or hit["name"]) for hit in shown[:3]
-            )
+            # The shortlist above is what System One sees. The note prefers
+            # stations, cities, and systems over shop terminals, taken from
+            # the full ranked set so a shop code cannot fill every slot.
+            result.note = _place_candidate_note(ranked)
             return result
 
         else:
@@ -1077,6 +1078,41 @@ def _place_sort_key(hit: dict):
         len(hit.get("name") or ""),
         hit.get("id") or 0,
     )
+
+
+# Shown ahead of terminals when nothing was picked. The shortlist System
+# One sees stays in score order; this set is only the candidate note.
+_NOTE_PLACE_SCOPES = frozenset({
+    "system", "planet", "moon", "city", "station", "outpost", "poi", "orbit",
+})
+
+
+def _place_candidate_note(ranked: list[dict], limit: int = 3) -> str:
+    """Names for a no-pick note. Real places, then pads, then shops.
+
+    A shop code such as STARID would otherwise fill the first three rows.
+    Stations, cities, systems, and planets are taken from the full ranked
+    set, so Stanton is listed even when it sits past the score top five.
+    The System One shortlist is not this list.
+    """
+
+    def band(hit: dict) -> int:
+        if hit.get("is_shop"):
+            return 2
+        if hit.get("scope") in _NOTE_PLACE_SCOPES:
+            return 0
+        return 1
+
+    ordered = sorted(ranked, key=lambda hit: (band(hit),) + _place_sort_key(hit))
+    labels = []
+    for hit in ordered:
+        label = hit.get("label") or hit.get("name")
+        if not label or label in labels:
+            continue
+        labels.append(label)
+        if len(labels) >= limit:
+            break
+    return ", ".join(labels)
 
 
 

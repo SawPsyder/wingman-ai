@@ -15,14 +15,20 @@ from urllib.parse import parse_qs, urlparse
 
 from skills.uexcorp.uexcorp.api.route_pages import ROUTE_PAGE_CAP, collect_commodity_routes
 from skills.uexcorp.uexcorp.api.uex import (
+    CONNECT_TIMEOUT_SECONDS,
+    IMPORT_DEADLINE_SECONDS,
+    LARGE_READ_TIMEOUT_SECONDS,
     LIMIT_JITTER_SECONDS,
     MAX_ATTEMPTS,
     MAX_WORKERS,
     RATE_LIMIT_WINDOW_SECONDS,
+    READ_TIMEOUT_SECONDS,
     REQUESTS_PER_MINUTE,
     FetchResult,
     Uex,
     skill_user_agent,
+    timeout_budget,
+    timeout_budget_message,
 )
 from skills.uexcorp.uexcorp.compression import LEGEND_KEY
 from skills.uexcorp.uexcorp.helper import Helper
@@ -728,6 +734,117 @@ class UexClientTest(unittest.TestCase):
         self.assertTrue(self._api.fetch("commodities").ok)
         self.assertAlmostEqual(self._clock.sleeps[0], 60.0 / REQUESTS_PER_MINUTE)
 
+    def test_slow_success_beats_the_old_ten_second_read(self) -> None:
+        import requests
+
+        seen = []
+
+        class _SlowOk:
+            def get(self, url, params=None, timeout=None, headers=None, stream=None):
+                seen.append(timeout)
+                read = timeout[1] if isinstance(timeout, tuple) else timeout
+                if read < 12:
+                    raise requests.exceptions.Timeout(f"Read timed out. (read timeout={read})")
+                return _Response(200, {"status": "ok", "data": [{"id": 1, "live": "4.0"}]})
+
+        self._api.session = _SlowOk()
+        result = self._api.fetch("game_versions")
+        self.assertTrue(result.ok)
+        self.assertEqual(result.data, [{"id": 1, "live": "4.0"}])
+        self.assertEqual(seen, [(CONNECT_TIMEOUT_SECONDS, READ_TIMEOUT_SECONDS)])
+
+        large = []
+
+        class _Large:
+            def get(self, url, params=None, timeout=None, headers=None, stream=None):
+                large.append(timeout)
+                return _Response(200, {"status": "ok", "data": []})
+
+        self._api.session = _Large()
+        self.assertTrue(self._api.fetch("items_prices_all").ok)
+        self.assertEqual(large, [(CONNECT_TIMEOUT_SECONDS, LARGE_READ_TIMEOUT_SECONDS)])
+
+    def test_timeout_settings_are_clamped(self) -> None:
+        class _Wide(_FakeConfig):
+            def get_api_connect_timeout(self) -> int:
+                return 1
+
+            def get_api_read_timeout(self) -> int:
+                return 999
+
+            def get_api_large_read_timeout(self) -> int:
+                return 5
+
+        self._helper._config = _Wide()
+        seen = []
+
+        class _Record:
+            def get(self, url, params=None, timeout=None, headers=None, stream=None):
+                seen.append((url, timeout))
+                return _Response(200, {"status": "ok", "data": []})
+
+        self._api.session = _Record()
+        self.assertTrue(self._api.fetch("game_versions").ok)
+        self.assertTrue(self._api.fetch("terminals").ok)
+        self.assertEqual(seen[0][1], (2, 60))
+        self.assertEqual(seen[1][1], (2, 30))
+
+    def test_timeout_budget_fits_one_endpoint_and_caps_two(self) -> None:
+        budget = timeout_budget()
+        self.assertLess(budget["one_endpoint"], budget["deadline"])
+        self.assertLess(budget["deadline"], budget["uncapped"])
+        self.assertAlmostEqual(budget["uncapped"], 491.6666666666667)
+        self.assertEqual(budget["deadline"], IMPORT_DEADLINE_SECONDS)
+        self.assertIn("491.7s", timeout_budget_message())
+        self.assertIn("Deadline 270s", timeout_budget_message())
+
+        class _Pages:
+            def __init__(self):
+                self.urls = []
+
+            def get(self, url, params=None, timeout=None, headers=None, stream=None):
+                self.urls.append(url)
+                raise requests.exceptions.Timeout("Read timed out. (read timeout=60)")
+
+        import requests
+
+        pages = _Pages()
+        self._api.session = pages
+        self._api.begin_run()
+        first = self._api.fetch("commodities_routes", {"id_commodity": 1})
+        second_page = self._api.fetch("commodities_routes", {"id_commodity": 2})
+        self.assertFalse(first.ok)
+        self.assertFalse(second_page.ok)
+        self.assertFalse(self._api._is_blocked())
+        self.assertEqual(len(pages.urls), MAX_ATTEMPTS * 2)
+
+    def test_read_timeouts_stay_inside_the_deadline(self) -> None:
+        import requests
+
+        class _BurnsRead:
+            def __init__(self):
+                self.urls = []
+
+            def get(self, url, params=None, timeout=None, headers=None, stream=None):
+                self.urls.append(url)
+                read = timeout[1] if isinstance(timeout, tuple) else float(timeout or 0)
+                self_clock.sleep(read)
+                raise requests.exceptions.ReadTimeout(f"Read timed out. (read timeout={read})")
+
+        self_clock = self._clock
+        session = _BurnsRead()
+        self._api.session = session
+        self._api.begin_run()
+        first = self._api.fetch("items_prices_all")
+        self.assertFalse(first.ok)
+        self.assertFalse(self._api._is_blocked())
+        second = self._api.fetch("commodities_prices_all")
+        self.assertFalse(second.ok)
+        self.assertTrue(self._api._is_blocked())
+        self.assertLessEqual(self._clock.now, IMPORT_DEADLINE_SECONDS)
+        self.assertLess(self._clock.now, timeout_budget()["uncapped"])
+        self.assertGreaterEqual(len(session.urls), MAX_ATTEMPTS)
+
 
 class SellVolumeAndProfitTest(_SqliteCase):
     def test_sell_volume_drops_absurd_stock_and_does_not_pretend_they_match(self) -> None:
@@ -859,6 +976,42 @@ class LegalFilterAndPromptTest(_SqliteCase):
         self.assertFalse(
             any("illegal" in note.lower() for note in self._helper.get_handler_tool().notes)
         )
+
+    def test_zero_buy_or_sell_price_is_not_a_route(self) -> None:
+        from skills.uexcorp.uexcorp.handler.import_handler import _route_prices_positive
+        from skills.uexcorp.uexcorp.tool.commodity_route import CommodityRoute
+
+        self.assertFalse(_route_prices_positive({"price_origin": 10, "price_destination": 0}))
+        self.assertFalse(_route_prices_positive({"price_origin": 0, "price_destination": 12}))
+        self.assertFalse(_route_prices_positive({"price_origin": 10, "price_destination": None}))
+        self.assertTrue(_route_prices_positive({"price_origin": 10, "price_destination": 12}))
+        self.assertTrue(_route_prices_positive({"id": 1, "id_orbit_origin": 10}))
+
+        self._db.execute(
+            """
+            INSERT INTO commodity (id, name, is_illegal, is_blacklisted)
+            VALUES (1, 'Iron', 0, 0), (2, 'Waste', 0, 0)
+            """
+        )
+        self._db.execute(
+            """
+            INSERT INTO commodity_route (
+                id, id_commodity, commodity_name, price_origin, price_destination,
+                scu_origin, scu_destination, score,
+                origin_terminal_name, destination_terminal_name
+            ) VALUES
+                (1, 1, 'Iron', 10, 0, 10, 10, 9, 'Levski', 'Admin - Stanton Gateway (Nyx)'),
+                (2, 2, 'Waste', 5, 9, 10, 10, 1, 'Lorville Admin', 'Area18 TDD')
+            """
+        )
+        self._db.commit()
+        names = {
+            route["commodity"]
+            for route in _parse_routes(CommodityRoute().execute()[0])
+        }
+        self.assertEqual(names, {"Waste"})
+        self.assertNotIn("Iron", names)
+        self.assertNotIn("Stanton Gateway", CommodityRoute().execute()[0])
 
     def test_prompts_match_the_filters_and_mention_nyx(self) -> None:
         from skills.uexcorp.uexcorp.tool.commodity_route import CommodityRoute
@@ -1732,6 +1885,7 @@ class ConnectionErrorBreakerTest(_SqliteCase):
         )
         api.session = session
         handler._ImportHandler__api = api
+        self._clock = clock
         return handler, api
 
     def _seed_stale_route(self) -> None:
@@ -1782,27 +1936,81 @@ class ConnectionErrorBreakerTest(_SqliteCase):
         )
         self.assertEqual(stamp[0]["date_imported"], 1)
         self.assertEqual(stamp[0]["dataset_count"], 1)
+        # DNS does not wait out a read timeout.
+        self.assertLess(self._clock.now, READ_TIMEOUT_SECONDS)
 
-        # A timeout that also burns every attempt opens the breaker the same way.
-        api.begin_run()
+    def test_one_read_timeout_keeps_going_and_keeps_old_rows(self) -> None:
+        import requests
 
-        class _Timeouts:
+        self._db.execute(
+            "INSERT INTO category (id, name, section) VALUES (9, 'Old Guns', 'Ship')"
+        )
+        self._db.execute(
+            """
+            INSERT INTO imports (`table`, date_imported, dataset_count, time_taken, last_import_run_id)
+            VALUES ('category', 1, 1, 0, 1)
+            """
+        )
+        self._db.commit()
+
+        class _OneSlow:
             def __init__(self):
                 self.urls = []
 
             def get(self, url, params=None, timeout=None, headers=None, stream=None):
                 self.urls.append(url)
-                raise requests.exceptions.Timeout("timed out")
+                if url.endswith("/categories"):
+                    raise requests.exceptions.Timeout("Read timed out. (read timeout=30)")
+                return _Response(200, {"status": "ok", "data": [{"id": 3, "name": "Argo"}]})
 
-        timeouts = _Timeouts()
-        api.session = timeouts
-        failed = api.fetch("categories")
-        self.assertFalse(failed.ok)
+        session = _OneSlow()
+        handler, api = self._handler(session)
+        handler._ImportHandler__importers = {
+            "category": handler._ImportHandler__import_data_category,
+            "company": handler._ImportHandler__import_data_company,
+        }
+        handler.import_data(True)
+
+        self.assertFalse(api._is_blocked())
+        self.assertTrue(handler.import_failed)
+        self.assertEqual(
+            [row["name"] for row in self._db.execute_fetchall("SELECT name FROM category")],
+            ["Old Guns"],
+        )
+        self.assertEqual(
+            [row["name"] for row in self._db.execute_fetchall("SELECT name FROM company")],
+            ["Argo"],
+        )
+        category_urls = [url for url in session.urls if url.endswith("/categories")]
+        self.assertEqual(len(category_urls), MAX_ATTEMPTS)
+        self.assertTrue(any(url.endswith("/companies") for url in session.urls))
+
+    def test_two_read_timeouts_trip_the_breaker(self) -> None:
+        import requests
+
+        class _BothSlow:
+            def __init__(self):
+                self.urls = []
+
+            def get(self, url, params=None, timeout=None, headers=None, stream=None):
+                self.urls.append(url)
+                raise requests.exceptions.Timeout("Read timed out. (read timeout=30)")
+
+        session = _BothSlow()
+        handler, api = self._handler(session)
+        handler._ImportHandler__importers = {
+            "category": handler._ImportHandler__import_data_category,
+            "company": handler._ImportHandler__import_data_company,
+        }
+        handler.import_data(True)
+
         self.assertTrue(api._is_blocked())
-        self.assertEqual(len(timeouts.urls), MAX_ATTEMPTS)
+        self.assertEqual(len(session.urls), MAX_ATTEMPTS * 2)
+        self.assertTrue(any(url.endswith("/categories") for url in session.urls))
+        self.assertTrue(any(url.endswith("/companies") for url in session.urls))
         again = api.fetch("commodities")
         self.assertFalse(again.ok)
-        self.assertEqual(len(timeouts.urls), MAX_ATTEMPTS)
+        self.assertEqual(len(session.urls), MAX_ATTEMPTS * 2)
 
     def test_connection_error_then_success_does_not_trip(self) -> None:
         import requests

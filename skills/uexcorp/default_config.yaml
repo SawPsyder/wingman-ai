@@ -66,6 +66,27 @@ custom_properties:
     required: true
     property_type: string
 
+  - id: api_connect_timeout
+    name: UEX connect timeout (seconds)
+    hint: Seconds to wait for the TCP connection. Kept short so a dead host fails fast. Clamped to 2-30.
+    value: 10
+    required: true
+    property_type: number
+
+  - id: api_read_timeout
+    name: UEX read timeout (seconds)
+    hint: Seconds to wait for a normal response body. Clamped to 10-60.
+    value: 30
+    required: true
+    property_type: number
+
+  - id: api_large_read_timeout
+    name: UEX large-list read timeout (seconds)
+    hint: Seconds to wait for large list responses such as items_prices_all, commodities_routes, terminals, and vehicles. Clamped to 30-90.
+    value: 60
+    required: true
+    property_type: number
+
   ### Commodity Information Start ###
   # - id: tool_commodity_information
   #   name: Provide commodity information

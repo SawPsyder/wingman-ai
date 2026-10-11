@@ -78,6 +78,8 @@ def collect_locations(
         for column in selected:
             if column not in columns:
                 columns.append(column)
+        if item_scope == "terminal" and "type" not in columns:
+            columns.append("type")
         where = []
         if available_only and _AVAILABLE_SQL.get(item_scope):
             where.append(_AVAILABLE_SQL[item_scope])
@@ -128,6 +130,7 @@ def collect_locations(
             item["label"] = _label(item)
             if item_scope == "terminal":
                 item["place_name"] = _parent_place(row)
+                item["is_shop"] = _is_shop_terminal({"type": row.get("type")})
             rows.append(item)
     return rows
 
@@ -415,9 +418,10 @@ async def shop_trade_note(helper, name: str) -> str | None:
     An exact name or alias of a terminal that is not a trade terminal names
     that shop and its parent place. A unique whole-word prefix such as
     Cubby Blast does too. Several branches that share the typed name name
-    the chain instead. A typo gets that hint when the shortlist, or System
-    One's pick, is unambiguously that one shop. A fuzzy or dumb match does
-    not, and a bare word such as Star does not either.
+    the chain instead. A typo gets that hint when the shortlist is
+    unambiguously that one shop. The place lookup is the only System One
+    call. A fuzzy or dumb match does not get this hint, and a bare word
+    such as Star does not either.
     """
     text = strip_type_tag((name or "").strip())
     if not text or text == "None" or _bare_generic_place(text):
@@ -432,7 +436,7 @@ async def shop_trade_note(helper, name: str) -> str | None:
         records=shops,
         allow_llm=False,
         allow_dumb=False,
-        ask_system_one=True,
+        ask_system_one=False,
         allow_whole_word=True,
     )
     if found.method in ("exact", "alias", "prefix"):
@@ -567,7 +571,12 @@ def _whole_word_pick_is_unique(helper, query: str, found, pool: list[dict]) -> b
     return len(hits) == 1 and hits[0] == found.key
 
 
-async def resolve_location_name(helper, name: str, for_trading: bool = False):
+async def resolve_location_name(
+    helper,
+    name: str,
+    for_trading: bool = False,
+    ask_system_one: bool = True,
+):
     """Validator entry. Returns ``(canonical name, note)``.
 
     Names and aliases go through one :meth:`Llm.find_closest_key` call.
@@ -623,7 +632,7 @@ async def resolve_location_name(helper, name: str, for_trading: bool = False):
             records=rows,
             allow_llm=False,
             allow_dumb=False,
-            ask_system_one=not generic,
+            ask_system_one=ask_system_one and not generic,
             allow_whole_word=not generic,
         )
     if found.method == "prefix" and found.key and not _whole_word_pick_is_unique(helper, text, found, rows):

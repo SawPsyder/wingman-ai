@@ -341,6 +341,60 @@ class ConfigHandler:
     def set_api_timeout(self, api_timeout: int):
         self.__api_timeout = api_timeout
 
+    def __clamped_timeout(self, key: str, default: int, low: int, high: int) -> int:
+        # A config that predates the setting has no property. Keep the default.
+        from skills.uexcorp.uexcorp.api.uex import clamp_timeout
+
+        raw = default
+        if self.__property_retriever:
+            errors = []
+            value = self.__property_retriever(key, errors)
+            if not errors and value is not None:
+                raw = value
+        return clamp_timeout(raw, default, low, high)
+
+    def get_api_connect_timeout(self) -> int:
+        from skills.uexcorp.uexcorp.api.uex import (
+            CONNECT_TIMEOUT_MAX,
+            CONNECT_TIMEOUT_MIN,
+            CONNECT_TIMEOUT_SECONDS,
+        )
+
+        return self.__clamped_timeout(
+            "api_connect_timeout",
+            CONNECT_TIMEOUT_SECONDS,
+            CONNECT_TIMEOUT_MIN,
+            CONNECT_TIMEOUT_MAX,
+        )
+
+    def get_api_read_timeout(self) -> int:
+        from skills.uexcorp.uexcorp.api.uex import (
+            READ_TIMEOUT_MAX,
+            READ_TIMEOUT_MIN,
+            READ_TIMEOUT_SECONDS,
+        )
+
+        return self.__clamped_timeout(
+            "api_read_timeout",
+            READ_TIMEOUT_SECONDS,
+            READ_TIMEOUT_MIN,
+            READ_TIMEOUT_MAX,
+        )
+
+    def get_api_large_read_timeout(self) -> int:
+        from skills.uexcorp.uexcorp.api.uex import (
+            LARGE_READ_TIMEOUT_MAX,
+            LARGE_READ_TIMEOUT_MIN,
+            LARGE_READ_TIMEOUT_SECONDS,
+        )
+
+        return self.__clamped_timeout(
+            "api_large_read_timeout",
+            LARGE_READ_TIMEOUT_SECONDS,
+            LARGE_READ_TIMEOUT_MIN,
+            LARGE_READ_TIMEOUT_MAX,
+        )
+
     def get_api_retries(self) -> int:
         return self.__api_retries
 

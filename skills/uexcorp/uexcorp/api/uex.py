@@ -23,6 +23,99 @@ RATE_LIMIT_WINDOW_SECONDS = 60.0
 # Spread retries a few seconds past the window so workers do not line up.
 LIMIT_JITTER_SECONDS = 5.0
 OTHER_ERROR_BACKOFF_BASE = 0.5
+# Connect stays short. A slow body is a read timeout, not a dead host.
+CONNECT_TIMEOUT_SECONDS = 10
+READ_TIMEOUT_SECONDS = 30
+LARGE_READ_TIMEOUT_SECONDS = 60
+CONNECT_TIMEOUT_MIN = 2
+CONNECT_TIMEOUT_MAX = 30
+READ_TIMEOUT_MIN = 10
+READ_TIMEOUT_MAX = 60
+LARGE_READ_TIMEOUT_MIN = 30
+LARGE_READ_TIMEOUT_MAX = 90
+# Read timeouts open the breaker only after this many different endpoints
+# have each used every attempt. One slow list must not wipe the run.
+TIMEOUT_ENDPOINTS_BEFORE_BREAK = 2
+# Two large endpoints at 60s x 4 attempts is about 8 minutes before backoff.
+# One large endpoint still fits (4 x 60s + backoff). The rest is cut here.
+IMPORT_DEADLINE_SECONDS = 270
+# List and *_all payloads. commodities_routes counts as one endpoint
+# even though its pages are separate GETs.
+LARGE_ENDPOINTS = frozenset({
+    "commodities_prices_all",
+    "commodities_raw_prices_all",
+    "commodities_routes",
+    "fuel_prices_all",
+    "items",
+    "items_attributes",
+    "items_prices_all",
+    "outposts",
+    "poi",
+    "terminals",
+    "vehicles",
+    "vehicles_purchases_prices_all",
+    "vehicles_rentals_prices_all",
+})
+
+
+def clamp_timeout(value, default: int, low: int, high: int) -> int:
+    """Integer seconds inside ``low``..``high``. Bad values use ``default``."""
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return int(default)
+    if number < low:
+        return int(low)
+    if number > high:
+        return int(high)
+    return number
+
+
+def _retry_backoff_worst() -> float:
+    """Backoff after attempts 1..MAX_ATTEMPTS-1 when the jitter factor is 1."""
+    total = 0.0
+    for attempt in range(1, MAX_ATTEMPTS):
+        delay = OTHER_ERROR_BACKOFF_BASE * (2 ** max(attempt - 1, 0))
+        total += min(MAX_BACKOFF_SECONDS, delay)
+    return total
+
+
+def timeout_budget(large_read: float | None = None) -> dict:
+    """Worst wait if the timeout endpoints each burn every read attempt.
+
+    Throttle gaps are added on top of the reads. A slow read already covers
+    the spacing interval, so this sum is an upper bound, not a stopwatch.
+    """
+    read = float(LARGE_READ_TIMEOUT_SECONDS if large_read is None else large_read)
+    endpoints = TIMEOUT_ENDPOINTS_BEFORE_BREAK
+    backoff_each = _retry_backoff_worst()
+    backoff_total = endpoints * backoff_each
+    gaps = endpoints * MAX_ATTEMPTS - 1
+    throttle = gaps * (60.0 / REQUESTS_PER_MINUTE)
+    one_endpoint = MAX_ATTEMPTS * read + backoff_each
+    uncapped = endpoints * one_endpoint + throttle
+    return {
+        "uncapped": uncapped,
+        "one_endpoint": one_endpoint,
+        "deadline": float(IMPORT_DEADLINE_SECONDS),
+        "backoff_total": backoff_total,
+        "throttle": throttle,
+        "large_read": read,
+        "attempts": MAX_ATTEMPTS,
+        "endpoints": endpoints,
+    }
+
+
+def timeout_budget_message(large_read: float | None = None) -> str:
+    budget = timeout_budget(large_read)
+    return (
+        "UEX import timeout budget: "
+        f"uncapped {budget['uncapped']:.1f}s "
+        f"({budget['endpoints']} endpoints x {budget['attempts']} attempts x "
+        f"{budget['large_read']:.0f}s read + {budget['backoff_total']:.1f}s backoff + "
+        f"{budget['throttle']:.1f}s throttle). "
+        f"Deadline {budget['deadline']:.0f}s."
+    )
 
 
 def skill_user_agent() -> str:
@@ -99,6 +192,8 @@ class Uex:
         self._pause_until = 0.0
         self._blocked = False
         self._blocked_error: str | None = None
+        self._timeout_endpoints: set[str] = set()
+        self._run_started: float | None = None
         self._min_interval = 60.0 / REQUESTS_PER_MINUTE
 
     def _get_headers(self) -> dict[str, str]:
@@ -118,6 +213,9 @@ class Uex:
             self._blocked = False
             self._blocked_error = None
             self._pause_until = 0.0
+            self._timeout_endpoints = set()
+            self._run_started = self._monotonic()
+        self.helper.get_handler_debug().write(timeout_budget_message(self._read_timeout("items_prices_all")))
 
     def _is_blocked(self) -> bool:
         with self._rate_lock:
@@ -230,7 +328,11 @@ class Uex:
             self.session = requests.Session()
 
         last_error = "request failed"
+        connect, read = self._timeouts(endpoint)
         for attempt in range(1, MAX_ATTEMPTS + 1):
+            if self._would_pass_deadline(read):
+                self._trip_breaker("import_deadline")
+                return FetchResult(False, error=self._blocked_error or "import_deadline")
             if not self._acquire_rate_limit():
                 return FetchResult(False, error=self._blocked_error or "blocked")
             self.helper.get_handler_debug().write(f"Fetching data (request {attempt}/{MAX_ATTEMPTS}) from {url} ...")
@@ -238,14 +340,21 @@ class Uex:
                 response = self.session.get(
                     url,
                     params=params,
-                    timeout=self.helper.get_handler_config().get_api_timeout(),
+                    timeout=(connect, read),
                     headers=self._get_headers(),
                     stream=True,
                 )
-            except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
-                # DNS, connection refused, and timeouts. One failure is retried.
-                # The breaker opens only after this request has used its attempts,
-                # so the rest of the run does not keep calling a dead host.
+            except requests.exceptions.Timeout as e:
+                # ReadTimeout, and ConnectTimeout (it subclasses Timeout too).
+                # DNS failure and connection refused are ConnectionError only
+                # and take the fast path below.
+                failed = self._exhausted_read_timeout(attempt, e, url, endpoint)
+                if failed is not None:
+                    return failed
+                continue
+            except requests.exceptions.ConnectionError as e:
+                # DNS and connection refused. One endpoint that burns its
+                # attempts opens the breaker. A read timeout does not.
                 failed = self._exhausted_connection(attempt, e, url)
                 if failed is not None:
                     return failed
@@ -277,9 +386,20 @@ class Uex:
 
             try:
                 response_json = response.json()
+            except requests.exceptions.Timeout as e:
+                # A body ReadTimeout is the slow path. It is not a dead host.
+                try:
+                    response.close()
+                except Exception:
+                    pass
+                failed = self._exhausted_read_timeout(attempt, e, url, endpoint)
+                if failed is not None:
+                    return failed
+                continue
             except requests.exceptions.RequestException as e:
                 # stream=True defers the body read until json(). A truncated
-                # chunk or a read timeout is raised here, not from session.get.
+                # chunk stays on the fast path. So does ConnectionError
+                # raised while reading the body.
                 try:
                     response.close()
                 except Exception:
@@ -322,6 +442,82 @@ class Uex:
             return FetchResult(True, data)
 
         return FetchResult(False, error=last_error)
+
+    def _configured_seconds(self, method: str, default: int, low: int, high: int) -> int:
+        config = self.helper.get_handler_config()
+        getter = getattr(config, method, None)
+        raw = default
+        if callable(getter):
+            try:
+                raw = getter()
+            except Exception:
+                raw = default
+        return clamp_timeout(raw, default, low, high)
+
+    def _timeouts(self, endpoint: str) -> tuple[int, int]:
+        connect = self._configured_seconds(
+            "get_api_connect_timeout",
+            CONNECT_TIMEOUT_SECONDS,
+            CONNECT_TIMEOUT_MIN,
+            CONNECT_TIMEOUT_MAX,
+        )
+        if endpoint in LARGE_ENDPOINTS:
+            read = self._configured_seconds(
+                "get_api_large_read_timeout",
+                LARGE_READ_TIMEOUT_SECONDS,
+                LARGE_READ_TIMEOUT_MIN,
+                LARGE_READ_TIMEOUT_MAX,
+            )
+        else:
+            read = self._configured_seconds(
+                "get_api_read_timeout",
+                READ_TIMEOUT_SECONDS,
+                READ_TIMEOUT_MIN,
+                READ_TIMEOUT_MAX,
+            )
+        return connect, read
+
+    def _read_timeout(self, endpoint: str) -> int:
+        return self._timeouts(endpoint)[1]
+
+    def _would_pass_deadline(self, read_timeout: float) -> bool:
+        """True when this attempt's read wait would pass the run deadline.
+
+        Fetches outside an import have no start time and are not capped.
+        """
+        started = self._run_started
+        if started is None:
+            return False
+        return self._monotonic() + read_timeout > started + IMPORT_DEADLINE_SECONDS
+
+    def _exhausted_read_timeout(
+        self,
+        attempt: int,
+        error: BaseException,
+        url: str,
+        endpoint: str,
+    ) -> FetchResult | None:
+        """Retry a read timeout like a 5xx.
+
+        The breaker opens only after two different endpoints have each used
+        their attempts. Return None when the caller should try again.
+        """
+        message = str(error) or "read_timeout"
+        self.helper.get_handler_debug().write(
+            f"Error while retrieving data from {url}: {error}",
+            attempt == MAX_ATTEMPTS,
+        )
+        self.helper.get_handler_error().write("Api.fetch", [url], error)
+        if attempt < MAX_ATTEMPTS:
+            self._sleeper(self._backoff_seconds(attempt))
+            return None
+        with self._rate_lock:
+            self._timeout_endpoints.add(endpoint)
+            opened = len(self._timeout_endpoints) >= TIMEOUT_ENDPOINTS_BEFORE_BREAK
+        if opened:
+            self._trip_breaker(message)
+            return FetchResult(False, error=self._blocked_error or message)
+        return FetchResult(False, error=message)
 
     def _exhausted_connection(self, attempt: int, error: BaseException, url: str) -> FetchResult | None:
         """Retry a connection or body-read failure.

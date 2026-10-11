@@ -137,6 +137,7 @@ class CommodityRoute(Tool):
         helper = Helper.get_instance()
 
         commodity_route_data_access = CommodityRouteDataAccess()
+        commodity_route_data_access.add_filter_by_positive_prices()
         start_terminal_ids = []
         end_terminals_ids = []
         terminal_ids_exclude = []

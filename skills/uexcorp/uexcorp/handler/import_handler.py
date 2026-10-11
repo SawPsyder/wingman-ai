@@ -6,6 +6,27 @@ if TYPE_CHECKING:
     from skills.uexcorp.uexcorp.helper import Helper
 
 
+def _route_prices_positive(data: dict) -> bool:
+    """True unless a carried buy or sell price is missing or not above zero.
+
+    A page row that does not carry prices is left alone. Those rows are
+    how the route split decides which planets to ask for. A 0 on either
+    side is not a route.
+    """
+
+    def positive(value) -> bool:
+        if value is None or isinstance(value, bool):
+            return False
+        try:
+            return float(value) > 0
+        except (TypeError, ValueError):
+            return False
+
+    if "price_origin" not in data and "price_destination" not in data:
+        return True
+    return positive(data.get("price_origin")) and positive(data.get("price_destination"))
+
+
 def dataset_row_count(data) -> int:
     """Count stored rows, not the keys of a wrapper object.
 
@@ -525,6 +546,10 @@ class ImportHandler:
             for data in page.data:
                 route_id = data.get("id")
                 if route_id in seen_route_ids:
+                    continue
+                # A buy or sell of 0 is not a route. Iron at Levski can list
+                # a destination whose sell price is 0.
+                if not _route_prices_positive(data):
                     continue
                 seen_route_ids.add(route_id)
                 commodity_route_data.append(data)

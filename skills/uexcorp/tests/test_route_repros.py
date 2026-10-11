@@ -495,6 +495,19 @@ class RouteReproTest(_SqliteCase):
             )
             """
         )
+        self._db.execute("UPDATE star_system SET code = 'ST' WHERE name = 'Stanton'")
+        self._db.execute("UPDATE terminal SET code = 'STARL' WHERE id = 450")
+        self._db.execute(
+            """
+            INSERT INTO terminal (
+                id, name, nickname, code, type, is_available, is_shop_fps, star_system_name
+            ) VALUES
+                (901, 'Shop Terminal - Arid Reach', 'Shop Arid Reach', 'STARID', 'item', 1, 1, 'Pyro'),
+                (902, 'Shop Terminal - Sacren''s Plot', 'Shop Sacren', 'STSACR', 'item', 1, 1, 'Pyro'),
+                (903, 'Shop Terminal - The Yard', 'Shop The Yard', 'STYARD', 'item', 1, 1, 'Pyro'),
+                (904, 'Scarper''s Turn', NULL, 'STURN', 'commodity', 1, 0, 'Pyro')
+            """
+        )
         self._db.commit()
         handler = self._handler()
 
@@ -528,8 +541,16 @@ class RouteReproTest(_SqliteCase):
         self.assertNotEqual(station, "Seraphim Station")
         self.assertNotEqual(station, "Starlight Service Station")
 
-        star, _note = asyncio.run(resolve_location_name(self._helper, "Star", for_trading=True))
+        star, star_note = asyncio.run(resolve_location_name(self._helper, "Star", for_trading=True))
         self.assertIsNone(star)
+        star_labels = [part.strip() for part in (star_note or "").split(",")]
+        self.assertGreaterEqual(len(star_labels), 3, star_note)
+        self.assertIn("Starlight Service Station", star_labels[0])
+        self.assertEqual(star_labels[1], "Stanton")
+        self.assertTrue(
+            all(not label.startswith("Shop Terminal") for label in star_labels[:3]),
+            star_note,
+        )
         starred, _instant = asyncio.run(
             handler.execute_tool(
                 "uex_get_trade_routes",
@@ -743,6 +764,7 @@ class RouteReproTest(_SqliteCase):
                 (117, 'Tammany and Sons - Metro Center - Lorville', 'Tammany and Sons', 'clothing', 1, 1, 'Stanton', 40, 'Lorville', NULL, NULL),
                 (201, 'Live Fire Weapons - Area 18', 'Live Fire Area 18', 'fps', 1, 1, 'Stanton', 18, 'Area 18', NULL, NULL),
                 (202, 'Live Fire Weapons- Lorville', 'Live Fire Lorville', 'fps', 1, 1, 'Stanton', 40, 'Lorville', NULL, NULL),
+                (206, 'Live Fire Weapons- Nyx Gateway (Pyro)', 'Live Fire Nyx', 'fps', 1, 2, 'Nyx', NULL, NULL, 57, 'Nyx Gateway'),
                 (203, 'Casaba Outlet - Area 18', 'Casaba Area 18', 'clothing', 1, 1, 'Stanton', 18, 'Area 18', NULL, NULL),
                 (204, 'Casaba Outlet - Everus Harbor', 'Casaba Everus', 'clothing', 1, 1, 'Stanton', NULL, NULL, 52, 'Everus Harbor'),
                 (205, 'Casaba Outlet - CRU-L4', 'Casaba CRU', 'clothing', 1, 1, 'Stanton', NULL, NULL, 54, 'CRU-L4')
@@ -781,7 +803,7 @@ class RouteReproTest(_SqliteCase):
             (
                 "Live Fire Weapons",
                 "Live Fire Weapons is a shop chain, not a trade terminal. "
-                "Try a nearby trade terminal such as Area 18, Lorville.",
+                "Try a nearby trade terminal such as Area 18, Lorville, Nyx Gateway.",
             ),
             (
                 "Casaba Outlett",
@@ -843,6 +865,19 @@ class RouteReproTest(_SqliteCase):
         self.assertIn("Casaba Outlet is a shop chain, not a trade terminal", info)
         self.assertNotIn("Casaba Outlet - Area 18", info)
         self.assertEqual(picker.calls, 0)
+        live, _instant = asyncio.run(
+            handler.execute_tool(
+                "uex_get_location_or_terminal_information",
+                {"filter_locations": ["Live Fire Weapons"]},
+            )
+        )
+        self.assertIn(
+            "Live Fire Weapons is a shop chain, not a trade terminal. "
+            "Try a nearby trade terminal such as Area 18, Lorville, Nyx Gateway.",
+            live,
+        )
+        self.assertNotIn("Live Fire Weapons- Nyx Gateway", live)
+        self.assertEqual(picker.calls, 0)
 
     def test_scope_words_hit_exact_before_system_one(self) -> None:
         """Levski Station and Daymar Station are exact names, not a model pick."""
@@ -902,6 +937,75 @@ class RouteReproTest(_SqliteCase):
             self.assertEqual(named, place, query)
             self.assertIsNone(note, query)
         self.assertEqual(greedy.calls, 0)
+
+    def test_read_filters_ask_system_one_once(self) -> None:
+        """A route place filter asks System One once, on the place pass."""
+
+        class _Counter:
+            available = True
+
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def choice(self, *args, **kwargs):
+                return {"criteria": {}}
+
+            def noul(self, *args, **kwargs):
+                return {}
+
+            async def decide(self, state=None, questions=None):
+                self.calls += 1
+
+                class _Answers:
+                    seconds = 0.0
+
+                    def choice(self, key, min_confidence=0.0):
+                        return None
+
+                    def confidence(self, key):
+                        return 0.0
+
+                return _Answers()
+
+        counter = _Counter()
+        self._install_llm(counter)
+        self._seed_trade()
+        self._db.execute(
+            """
+            INSERT INTO terminal (
+                id, name, nickname, type, is_available, id_star_system, star_system_name,
+                id_city, city_name
+            ) VALUES
+                (203, 'Casaba Outlet - Area 18', 'Casaba Area 18', 'clothing', 1, 1, 'Stanton', 18, 'Area 18'),
+                (204, 'Casaba Outlet - Everus Harbor', 'Casaba Everus', 'clothing', 1, 1, 'Stanton', NULL, NULL)
+            """
+        )
+        self._db.execute(
+            """
+            UPDATE space_station SET is_available_live = 1, has_trade_terminal = 1
+            WHERE id = 52
+            """
+        )
+        self._db.commit()
+        handler = self._handler()
+
+        def ask(query: str) -> None:
+            counter.calls = 0
+            asyncio.run(
+                handler.execute_tool(
+                    "uex_get_trade_routes",
+                    {"filter_start_location": query},
+                )
+            )
+
+        ask("Lorvile")
+        self.assertEqual(counter.calls, 1)
+        ask("Levski")
+        self.assertEqual(counter.calls, 0)
+        ask("Star")
+        self.assertEqual(counter.calls, 0)
+        ask("Casaba Outlet")
+        self.assertEqual(counter.calls, 0)
 
     def test_shared_commodity_codes_prefer_the_tradable_holder(self) -> None:
         """Every code that two commodities share, on a route whitelist.

@@ -272,7 +272,9 @@ async def _place_without_trade_terminal(helper, name: str) -> str | None:
     """
     from skills.uexcorp.uexcorp.resolver import collect_locations, resolve_location_name
 
-    listed, _note = await resolve_location_name(helper, name, for_trading=False)
+    listed, _note = await resolve_location_name(
+        helper, name, for_trading=False, ask_system_one=False
+    )
     if not listed:
         return None
     trading_keys = {
