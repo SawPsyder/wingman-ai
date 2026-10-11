@@ -75,14 +75,14 @@ custom_properties:
 
   - id: api_read_timeout
     name: UEX read timeout (seconds)
-    hint: Seconds to wait for a normal response body. Clamped to 10-60.
-    value: 30
+    hint: Seconds to wait for a response body. Every import read waits at least as long as the large-list timeout, so a slow answer is kept. Clamped to 10-60.
+    value: 60
     required: true
     property_type: number
 
   - id: api_large_read_timeout
     name: UEX large-list read timeout (seconds)
-    hint: Seconds to wait for large list responses such as items_prices_all, commodities_routes, terminals, and vehicles. Clamped to 30-90.
+    hint: Seconds every import read waits at least this long, including large lists such as items_prices_all, commodities_routes, terminals, and vehicles. A slow answer inside this window is kept. Clamped to 30-90.
     value: 60
     required: true
     property_type: number

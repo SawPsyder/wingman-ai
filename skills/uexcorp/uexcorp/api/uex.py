@@ -24,8 +24,11 @@ RATE_LIMIT_WINDOW_SECONDS = 60.0
 LIMIT_JITTER_SECONDS = 5.0
 OTHER_ERROR_BACKOFF_BASE = 0.5
 # Connect stays short. A slow body is a read timeout, not a dead host.
+# DNS failure and connection refused stay on the fast path.
 CONNECT_TIMEOUT_SECONDS = 10
-READ_TIMEOUT_SECONDS = 30
+# Every import read waits at least the large-list timeout. A body that
+# answers in 25–40s is success on cities the same as on items_prices_all.
+READ_TIMEOUT_SECONDS = 60
 LARGE_READ_TIMEOUT_SECONDS = 60
 CONNECT_TIMEOUT_MIN = 2
 CONNECT_TIMEOUT_MAX = 30
@@ -38,9 +41,12 @@ LARGE_READ_TIMEOUT_MAX = 90
 TIMEOUT_ENDPOINTS_BEFORE_BREAK = 2
 # Two large endpoints at 60s x 4 attempts is about 8 minutes before backoff.
 # One large endpoint still fits (4 x 60s + backoff). The rest is cut here.
+# The clock starts at the first read timeout, not at run start. A healthy
+# run, however slow, does not start it and is not capped.
 IMPORT_DEADLINE_SECONDS = 270
-# List and *_all payloads. commodities_routes counts as one endpoint
-# even though its pages are separate GETs.
+# Lists that the large-read setting was added for. commodities_routes counts
+# as one endpoint even though its pages are separate GETs. Every endpoint
+# waits at least this long; the set is what the timeout budget assumes.
 LARGE_ENDPOINTS = frozenset({
     "commodities_prices_all",
     "commodities_raw_prices_all",
@@ -106,6 +112,19 @@ def timeout_budget(large_read: float | None = None) -> dict:
     }
 
 
+def healthy_run_seconds(request_count: int) -> float:
+    """Throttle wait for a cold import whose responses are instantaneous.
+
+    The first request does not wait. Real bodies add time on top. That time
+    is a healthy read, not part of the timeout deadline. The spacing is
+    ``REQUESTS_PER_MINUTE`` (90), under the documented 120/minute quota.
+    """
+    count = max(int(request_count), 0)
+    if count <= 1:
+        return 0.0
+    return (count - 1) * (60.0 / REQUESTS_PER_MINUTE)
+
+
 def timeout_budget_message(large_read: float | None = None) -> str:
     budget = timeout_budget(large_read)
     return (
@@ -114,7 +133,7 @@ def timeout_budget_message(large_read: float | None = None) -> str:
         f"({budget['endpoints']} endpoints x {budget['attempts']} attempts x "
         f"{budget['large_read']:.0f}s read + {budget['backoff_total']:.1f}s backoff + "
         f"{budget['throttle']:.1f}s throttle). "
-        f"Deadline {budget['deadline']:.0f}s."
+        f"Deadline {budget['deadline']:.0f}s after the first read timeout."
     )
 
 
@@ -193,7 +212,8 @@ class Uex:
         self._blocked = False
         self._blocked_error: str | None = None
         self._timeout_endpoints: set[str] = set()
-        self._run_started: float | None = None
+        # Set on the first read timeout. None for a run that has not timed out.
+        self._timeout_started: float | None = None
         self._min_interval = 60.0 / REQUESTS_PER_MINUTE
 
     def _get_headers(self) -> dict[str, str]:
@@ -214,7 +234,7 @@ class Uex:
             self._blocked_error = None
             self._pause_until = 0.0
             self._timeout_endpoints = set()
-            self._run_started = self._monotonic()
+            self._timeout_started = None
         self.helper.get_handler_debug().write(timeout_budget_message(self._read_timeout("items_prices_all")))
 
     def _is_blocked(self) -> bool:
@@ -455,37 +475,52 @@ class Uex:
         return clamp_timeout(raw, default, low, high)
 
     def _timeouts(self, endpoint: str) -> tuple[int, int]:
+        """Connect stays short. Every read waits at least the large-list timeout.
+
+        A 35s answer on a small endpoint has to succeed. ``endpoint`` selects
+        nothing: ``LARGE_ENDPOINTS`` names the lists, and the wait is the
+        longer of the two configured reads.
+        """
         connect = self._configured_seconds(
             "get_api_connect_timeout",
             CONNECT_TIMEOUT_SECONDS,
             CONNECT_TIMEOUT_MIN,
             CONNECT_TIMEOUT_MAX,
         )
-        if endpoint in LARGE_ENDPOINTS:
-            read = self._configured_seconds(
-                "get_api_large_read_timeout",
-                LARGE_READ_TIMEOUT_SECONDS,
-                LARGE_READ_TIMEOUT_MIN,
-                LARGE_READ_TIMEOUT_MAX,
-            )
-        else:
-            read = self._configured_seconds(
-                "get_api_read_timeout",
-                READ_TIMEOUT_SECONDS,
-                READ_TIMEOUT_MIN,
-                READ_TIMEOUT_MAX,
-            )
-        return connect, read
+        read = self._configured_seconds(
+            "get_api_read_timeout",
+            READ_TIMEOUT_SECONDS,
+            READ_TIMEOUT_MIN,
+            READ_TIMEOUT_MAX,
+        )
+        large = self._configured_seconds(
+            "get_api_large_read_timeout",
+            LARGE_READ_TIMEOUT_SECONDS,
+            LARGE_READ_TIMEOUT_MIN,
+            LARGE_READ_TIMEOUT_MAX,
+        )
+        # LARGE_ENDPOINTS names the lists this wait was added for. A slow
+        # answer on any other endpoint gets the same window.
+        return connect, max(read, large)
 
     def _read_timeout(self, endpoint: str) -> int:
         return self._timeouts(endpoint)[1]
 
-    def _would_pass_deadline(self, read_timeout: float) -> bool:
-        """True when this attempt's read wait would pass the run deadline.
+    def _note_read_timeout(self) -> None:
+        """Start the deadline clock on the first read timeout of the run."""
+        with self._rate_lock:
+            if self._timeout_started is None:
+                self._timeout_started = self._monotonic()
 
-        Fetches outside an import have no start time and are not capped.
+    def _would_pass_deadline(self, read_timeout: float) -> bool:
+        """True when another timeout wait would pass the deadline.
+
+        The clock starts at the first read timeout. A healthy run never
+        starts it, so a long import of successful reads is not capped.
+        Fetches before that first timeout are not capped either.
         """
-        started = self._run_started
+        with self._rate_lock:
+            started = self._timeout_started
         if started is None:
             return False
         return self._monotonic() + read_timeout > started + IMPORT_DEADLINE_SECONDS
@@ -503,6 +538,7 @@ class Uex:
         their attempts. Return None when the caller should try again.
         """
         message = str(error) or "read_timeout"
+        self._note_read_timeout()
         self.helper.get_handler_debug().write(
             f"Error while retrieving data from {url}: {error}",
             attempt == MAX_ATTEMPTS,

@@ -52,25 +52,28 @@ class ImportHandler:
         self.__helper = helper
         self.__api = Uex(helper)
         self.active = True
+        # Trade datasets first. If later endpoints time out, a partial run
+        # still has systems, planets, terminals, commodities, and prices.
         self.__importers = {
+            "star_system": self.__import_data_star_system,
+            "planet": self.__import_data_planet,
+            "terminal": self.__import_data_terminal,
+            "commodity": self.__import_data_commodity,
+            "commodity_price": self.__import_data_commodity_price,
             "category": self.__import_data_category,
             "category_attribute": self.__import_data_category_attribute,
             "city": self.__import_data_city,
-            "commodity": self.__import_data_commodity,
             "company": self.__import_data_company,
             "faction": self.__import_data_faction,
             "item": self.__import_data_item,
             "jurisdiction": self.__import_data_jurisdiction,
-            "star_system": self.__import_data_star_system,
             "moon": self.__import_data_moon,
             "orbit": self.__import_data_orbit,
             "orbit_distance": self.__import_data_orbit_distance,
             "outpost": self.__import_data_outpost,
-            "planet": self.__import_data_planet,
             "poi": self.__import_data_poi,
             "refinery_method": self.__import_data_refinery_method,
             "space_station": self.__import_data_space_station,
-            "terminal": self.__import_data_terminal,
             "vehicle": self.__import_data_vehicle,
             "commodity_status": self.__import_data_commodity_status,
             "item_price": self.__import_data_item_price,
@@ -80,7 +83,6 @@ class ImportHandler:
             "vehicle_purchase_price": self.__import_data_vehicle_purchase_price,
             "vehicle_rental_price": self.__import_data_vehicle_rental_price,
             "commodity_alert": self.__import_data_commodity_alert,
-            "commodity_price": self.__import_data_commodity_price,
             "commodity_raw_price": self.__import_data_commodity_raw_price,
             "commodity_route": self.__import_data_commodity_route,
             "game_version": self.__import_data_game_version,

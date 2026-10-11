@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import threading
 import unittest
 from urllib.parse import parse_qs, urlparse
 
@@ -27,6 +28,7 @@ from skills.uexcorp.uexcorp.api.uex import (
     FetchResult,
     Uex,
     skill_user_agent,
+    healthy_run_seconds,
     timeout_budget,
     timeout_budget_message,
 )
@@ -121,13 +123,16 @@ class _Clock:
     def __init__(self):
         self.now = 0.0
         self.sleeps: list[float] = []
+        self._lock = threading.Lock()
 
     def monotonic(self) -> float:
-        return self.now
+        with self._lock:
+            return self.now
 
     def sleep(self, seconds: float) -> None:
-        self.sleeps.append(seconds)
-        self.now += float(seconds)
+        with self._lock:
+            self.sleeps.append(seconds)
+            self.now += float(seconds)
 
 
 class _Response:
@@ -182,6 +187,72 @@ class _ScriptedSession:
                 ],
             },
         )
+
+
+def _cold_import_body(endpoint: str):
+    """One persistable payload per importer. Shapes that are not a row list
+    stay in the shape the importer already expects.
+    """
+    if endpoint == "commodities_status":
+        return {
+            "buy": [{"code": 1, "name": "High"}],
+            "sell": [{"code": 1, "name": "High"}],
+        }
+    if endpoint == "game_versions":
+        return {"live": "4.0", "ptu": "4.0"}
+    if endpoint == "commodities_prices_all":
+        return [
+            {"id": 1, "id_commodity": 1, "price_buy": 5, "price_sell": 0},
+            {"id": 2, "id_commodity": 1, "price_buy": 0, "price_sell": 9},
+        ]
+    if endpoint == "commodities_routes":
+        return [
+            {
+                "id": 10,
+                "id_commodity": 1,
+                "price_origin": 5,
+                "price_destination": 9,
+            }
+        ]
+    if endpoint == "categories":
+        return [
+            {
+                "id": 1,
+                "name": "Guns",
+                "section": "Ship",
+                "type": "item",
+                "is_game_related": 1,
+            }
+        ]
+    if endpoint == "star_systems":
+        return [{"id": 1, "name": "Stanton", "is_available": 1}]
+    if endpoint == "planets":
+        return [{"id": 1, "name": "Hurston", "is_available": 1}]
+    if endpoint == "terminals":
+        return [{"id": 1, "name": "TDD"}]
+    if endpoint == "commodities":
+        return [{"id": 1, "name": "Laranite"}]
+    return [{"id": 1, "name": endpoint}]
+
+
+class _SlowAnswerSession:
+    """Every read takes ``seconds`` and then returns a row, when the client waited."""
+
+    def __init__(self, clock: _Clock, seconds: float):
+        self._clock = clock
+        self._seconds = seconds
+        self.urls: list[str] = []
+
+    def get(self, url, params=None, timeout=None, headers=None, stream=None):
+        import requests
+
+        self.urls.append(url)
+        read = timeout[1] if isinstance(timeout, tuple) else float(timeout or 0)
+        if read < self._seconds:
+            raise requests.exceptions.Timeout(f"Read timed out. (read timeout={read})")
+        self._clock.sleep(self._seconds)
+        endpoint = urlparse(url).path.rstrip("/").split("/")[-1]
+        return _Response(200, {"status": "ok", "data": _cold_import_body(endpoint)})
 
 
 def _commodity_ids(urls: list[str]) -> list[int]:
@@ -743,7 +814,8 @@ class UexClientTest(unittest.TestCase):
             def get(self, url, params=None, timeout=None, headers=None, stream=None):
                 seen.append(timeout)
                 read = timeout[1] if isinstance(timeout, tuple) else timeout
-                if read < 12:
+                # 35s is a slow answer, under the large read timeout.
+                if read < 35:
                     raise requests.exceptions.Timeout(f"Read timed out. (read timeout={read})")
                 return _Response(200, {"status": "ok", "data": [{"id": 1, "live": "4.0"}]})
 
@@ -751,7 +823,7 @@ class UexClientTest(unittest.TestCase):
         result = self._api.fetch("game_versions")
         self.assertTrue(result.ok)
         self.assertEqual(result.data, [{"id": 1, "live": "4.0"}])
-        self.assertEqual(seen, [(CONNECT_TIMEOUT_SECONDS, READ_TIMEOUT_SECONDS)])
+        self.assertEqual(seen, [(CONNECT_TIMEOUT_SECONDS, LARGE_READ_TIMEOUT_SECONDS)])
 
         large = []
 
@@ -786,8 +858,9 @@ class UexClientTest(unittest.TestCase):
         self._api.session = _Record()
         self.assertTrue(self._api.fetch("game_versions").ok)
         self.assertTrue(self._api.fetch("terminals").ok)
+        # read 999 clamps to 60, large 5 clamps to 30, every read waits the max.
         self.assertEqual(seen[0][1], (2, 60))
-        self.assertEqual(seen[1][1], (2, 30))
+        self.assertEqual(seen[1][1], (2, 60))
 
     def test_timeout_budget_fits_one_endpoint_and_caps_two(self) -> None:
         budget = timeout_budget()
@@ -796,7 +869,7 @@ class UexClientTest(unittest.TestCase):
         self.assertAlmostEqual(budget["uncapped"], 491.6666666666667)
         self.assertEqual(budget["deadline"], IMPORT_DEADLINE_SECONDS)
         self.assertIn("491.7s", timeout_budget_message())
-        self.assertIn("Deadline 270s", timeout_budget_message())
+        self.assertIn("Deadline 270s after the first read timeout.", timeout_budget_message())
 
         class _Pages:
             def __init__(self):
@@ -841,9 +914,98 @@ class UexClientTest(unittest.TestCase):
         second = self._api.fetch("commodities_prices_all")
         self.assertFalse(second.ok)
         self.assertTrue(self._api._is_blocked())
-        self.assertLessEqual(self._clock.now, IMPORT_DEADLINE_SECONDS)
+        self.assertIsNotNone(self._api._timeout_started)
+        # The old cap measured from run start. Absolute time can pass it.
+        # What is bounded is the wait after the first timeout.
+        self.assertGreater(self._clock.now, IMPORT_DEADLINE_SECONDS)
+        elapsed = self._clock.now - self._api._timeout_started
+        self.assertLessEqual(elapsed, IMPORT_DEADLINE_SECONDS)
         self.assertLess(self._clock.now, timeout_budget()["uncapped"])
-        self.assertGreaterEqual(len(session.urls), MAX_ATTEMPTS)
+        self.assertGreaterEqual(len(session.urls), MAX_ATTEMPTS + 1)
+
+    def test_short_configured_read_uses_the_large_timeout(self) -> None:
+        class _Short(_FakeConfig):
+            def get_api_connect_timeout(self) -> int:
+                return 10
+
+            def get_api_read_timeout(self) -> int:
+                return 12
+
+            def get_api_large_read_timeout(self) -> int:
+                return 45
+
+        self._helper._config = _Short()
+        seen = []
+
+        class _Record:
+            def get(self, url, params=None, timeout=None, headers=None, stream=None):
+                seen.append(timeout)
+                return _Response(200, {"status": "ok", "data": []})
+
+        self._api.session = _Record()
+        self.assertTrue(self._api.fetch("game_versions").ok)
+        self.assertTrue(self._api.fetch("cities").ok)
+        self.assertEqual(seen, [(10, 45), (10, 45)])
+
+    def test_healthy_cold_import_past_the_deadline_completes(self) -> None:
+        """A healthy run at the real GET count is not an import_deadline.
+
+        Catalog measured 2026-10-11 against api.uexcorp.uk/2.0:
+        31 importers, 4 of them fan out (items, item attributes, orbit
+        distances, commodity routes). The rest are one GET each.
+        items: 66 type=item categories.
+        items_attributes: 52 is_game_related categories.
+        orbits_distances: 3 available star systems (Nyx, Pyro, Stanton).
+        commodities_routes: 78 tradable commodities. 3 first pages are at
+        the 500-row cap (ids 63, 67, 79). None of their planet pages were
+        capped, so each adds 11 planet pages and 12 uncovered off-planet
+        orbit pages (69 extra GETs, 147 route GETs).
+        """
+        from skills.uexcorp.uexcorp.handler.import_handler import ImportHandler
+
+        importers = len(ImportHandler(self._helper)._ImportHandler__importers)
+        self.assertEqual(importers, 31)
+        fanout = 4
+        item_categories = 66
+        game_related_categories = 52
+        available_star_systems = 3
+        tradable_commodities = 78
+        capped_commodities = 3
+        planet_pages = 11
+        uncovered_orbits = 12
+        route_gets = tradable_commodities + capped_commodities * (planet_pages + uncovered_orbits)
+        count = (importers - fanout) + item_categories + game_related_categories
+        count += available_star_systems + route_gets
+        self.assertEqual(route_gets, 147)
+        self.assertEqual(count, 295)
+        self.assertAlmostEqual(healthy_run_seconds(count), 196.0)
+
+        class _Fast:
+            def __init__(self):
+                self.urls = []
+
+            def get(self, url, params=None, timeout=None, headers=None, stream=None):
+                self.urls.append(url)
+                read = timeout[1] if isinstance(timeout, tuple) else 0
+                if read < 35:
+                    raise AssertionError(f"healthy read waited only {read}s")
+                return _Response(200, {"status": "ok", "data": [{"id": 1, "name": "Stanton"}]})
+
+        session = _Fast()
+        self._api.session = session
+        self._api.begin_run()
+        # Already past the old run-start deadline, and no read has timed out.
+        self._clock.now = IMPORT_DEADLINE_SECONDS + 130
+        started = self._clock.now
+        for _ in range(count):
+            result = self._api.fetch("star_systems")
+            self.assertTrue(result.ok)
+            self.assertNotEqual(result.error, "import_deadline")
+        self.assertEqual(len(session.urls), count)
+        self.assertFalse(self._api._is_blocked())
+        self.assertIsNone(self._api._timeout_started)
+        self.assertGreater(self._clock.now, IMPORT_DEADLINE_SECONDS)
+        self.assertAlmostEqual(self._clock.now - started, healthy_run_seconds(count))
 
 
 class SellVolumeAndProfitTest(_SqliteCase):
@@ -1928,7 +2090,8 @@ class ConnectionErrorBreakerTest(_SqliteCase):
         self.assertEqual(len(session.urls), MAX_ATTEMPTS)
         self.assertLess(len(session.urls), 30)
         self.assertTrue(all("uex-r3-failure.invalid" in url for url in session.urls))
-        self.assertTrue(all(url.endswith("/categories") for url in session.urls))
+        self.assertTrue(all(url.endswith("/star_systems") for url in session.urls))
+        self.assertIsNone(api._timeout_started)
         self.assertEqual(self._route_ids(), [7])
         stamp = self._db.execute_fetchall(
             "SELECT date_imported, dataset_count FROM imports WHERE `table` = ?",
@@ -2121,6 +2284,88 @@ class ConnectionErrorBreakerTest(_SqliteCase):
         self._assert_body_read_failure_allows_the_next_import(
             requests.exceptions.ConnectionError("Read timed out")
         )
+
+    def _count(self, table: str) -> int:
+        rows = self._db.execute_fetchall(f"SELECT COUNT(*) AS n FROM {table}")
+        return int(rows[0]["n"])
+
+    def test_uniformly_slow_reads_fill_every_dataset(self) -> None:
+        import requests
+
+        handler, api = self._handler(None)
+        session = _SlowAnswerSession(self._clock, seconds=35)
+        api.session = session
+        self.assertEqual(
+            list(handler._ImportHandler__importers)[:5],
+            ["star_system", "planet", "terminal", "commodity", "commodity_price"],
+        )
+        handler.import_data(True)
+
+        self.assertFalse(api._is_blocked())
+        self.assertIsNone(api._timeout_started)
+        self.assertFalse(handler.import_failed)
+        self.assertGreater(self._clock.now, IMPORT_DEADLINE_SECONDS)
+        total = 0
+        for table in handler._ImportHandler__importers:
+            count = self._count(table)
+            self.assertGreater(count, 0, table)
+            total += count
+        self.assertGreater(total, 0)
+
+    def test_two_timeouts_keep_core_rows(self) -> None:
+        import requests
+
+        class _CoreThenTwoTimeouts:
+            def __init__(self):
+                self.urls = []
+
+            def get(self, url, params=None, timeout=None, headers=None, stream=None):
+                self.urls.append(url)
+                endpoint = urlparse(url).path.rstrip("/").split("/")[-1]
+                if endpoint in {"categories", "companies"}:
+                    raise requests.exceptions.Timeout("Read timed out. (read timeout=60)")
+                return _Response(200, {"status": "ok", "data": _cold_import_body(endpoint)})
+
+        session = _CoreThenTwoTimeouts()
+        handler, api = self._handler(session)
+        handler.import_data(True)
+
+        self.assertTrue(api._is_blocked())
+        self.assertNotEqual(api._blocked_error, "import_deadline")
+        self.assertTrue(handler.import_failed)
+        answered = [
+            "star_system",
+            "planet",
+            "terminal",
+            "commodity",
+            "commodity_price",
+            "category_attribute",
+            "city",
+        ]
+        total = 0
+        for table in answered:
+            count = self._count(table)
+            self.assertGreater(count, 0, table)
+            total += count
+        self.assertGreater(total, 0)
+        self.assertEqual(self._count("category"), 0)
+        self.assertEqual(self._count("company"), 0)
+        self.assertEqual(self._count("game_version"), 0)
+        self.assertFalse(any(url.endswith("/factions") for url in session.urls))
+        self.assertEqual(
+            [urlparse(url).path.rstrip("/").split("/")[-1] for url in session.urls[:5]],
+            [
+                "star_systems",
+                "planets",
+                "terminals",
+                "commodities",
+                "commodities_prices_all",
+            ],
+        )
+        timed_out = [
+            url for url in session.urls if url.endswith("/categories") or url.endswith("/companies")
+        ]
+        self.assertEqual(len(timed_out), MAX_ATTEMPTS * 2)
 
     def test_unexpected_importer_error_resets_percent_and_allows_the_next_run(self) -> None:
         handler, _api = self._handler(_ScriptedSession())
