@@ -118,6 +118,8 @@ def collect_locations(
             }
             item["key"] = f"{item_scope}:{item['id']}"
             item["label"] = _label(item)
+            if item_scope == "terminal":
+                item["place_name"] = _parent_place(row)
             rows.append(item)
     return rows
 
@@ -219,10 +221,17 @@ _PARENT_COLUMNS = (
 
 
 def _is_shop_terminal(row: dict) -> bool:
+    """Item and clothing shops. A commodity, fuel, or refinery pad is not one.
+
+    A trade type wins over the shop flags, so Admin - Starlight Service stays
+    a trade terminal even if a flag is set.
+    """
+    kind = str(row.get("type") or "").strip().lower()
+    if kind in _NOT_SHOP_TYPES:
+        return False
     if row.get("is_shop_fps") or row.get("is_shop_vehicle"):
         return True
-    kind = str(row.get("type") or "").strip().lower()
-    return kind not in _NOT_SHOP_TYPES
+    return True
 
 
 def _parent_place(row: dict) -> str | None:
@@ -287,9 +296,10 @@ def _shop_records(helper) -> list[dict]:
 async def shop_trade_note(helper, name: str) -> str | None:
     """Sentence when ``name`` is a shop the trade filters cannot use.
 
-    An exact stored name, or a matcher resolution onto one shop, names that
-    terminal and its parent place. Anything else returns None so the caller
-    keeps the generic unrecognized message.
+    An exact name or alias of a terminal that is not a trade terminal names
+    that shop and its parent place. A unique whole-word prefix such as
+    Cubby Blast does too. A fuzzy or dumb match does not, so Star cannot
+    turn Admin - Starlight Service into a shop hint.
     """
     text = strip_type_tag((name or "").strip())
     if not text or text == "None":
@@ -302,10 +312,13 @@ async def shop_trade_note(helper, name: str) -> str | None:
         {row["key"]: row["name"] for row in shops},
         {row["key"]: row["label"] for row in shops},
         records=shops,
-        allow_llm=True,
-        allow_dumb=True,
-        ask_system_one=True,
+        allow_llm=False,
+        allow_dumb=False,
+        ask_system_one=False,
+        allow_whole_word=True,
     )
+    if found.method not in ("exact", "alias", "prefix"):
+        return None
     chosen = _rows_for_keys(shops, found)
     decided = _decided_name(text, chosen, found)
     if decided is None:
@@ -374,6 +387,25 @@ def place_by_key(helper, key: str | None) -> dict | None:
     return None
 
 
+def _station_label_for_admin(query: str, chosen: list[dict], found, decided: str) -> str:
+    """Show the station when a route filter matched its admin terminal.
+
+    Port Olisar's station is not in the tradable place list when
+    ``has_trade_terminal`` is 0, so Olisar matches Admin - Port Olisar.
+    The routes still come from that terminal, because its station column
+    is Port Olisar. An exact terminal name stays the terminal.
+    """
+    if getattr(found, "method", None) == "exact":
+        return decided
+    rows = [row for row in chosen if row.get("name") == decided and row.get("scope") == "terminal"]
+    if len(rows) != 1:
+        return decided
+    place = rows[0].get("place_name")
+    if place and _whole_word_name(query, place):
+        return place
+    return decided
+
+
 async def resolve_location_name(helper, name: str, for_trading: bool = False):
     """Validator entry. Returns ``(canonical name, note)``.
 
@@ -387,18 +419,43 @@ async def resolve_location_name(helper, name: str, for_trading: bool = False):
     if not text or text == "None":
         return None, None
     rows = collect_locations(helper, for_trading=for_trading, available_only=True)
+    # Read filters accept an exact name, an alias, or one whole-word place.
+    # Fuzzy, dumb, System One, and the main model do not auto-pick.
     found = await _llm(helper).find_closest_key(
         text,
         {row["key"]: row["name"] for row in rows},
         {row["key"]: row["label"] for row in rows},
         records=rows,
-        allow_llm=True,
-        allow_dumb=True,
-        ask_system_one=True,
+        allow_llm=False,
+        allow_dumb=False,
+        ask_system_one=False,
+        allow_whole_word=True,
     )
     chosen = _rows_for_keys(rows, found)
     decided = _decided_name(text, chosen, found)
+    if decided is None:
+        from skills.uexcorp.uexcorp.api.llm import _strip_scope_words
+
+        stripped = _strip_scope_words(text)
+        if stripped and stripped.casefold() != text.casefold():
+            # "Hurston Planet" is the exact name Hurston, not a fuzzy pick.
+            again = await _llm(helper).find_closest_key(
+                stripped,
+                {row["key"]: row["name"] for row in rows},
+                {row["key"]: row["label"] for row in rows},
+                records=rows,
+                allow_llm=False,
+                allow_dumb=False,
+                ask_system_one=False,
+                allow_whole_word=False,
+            )
+            if again.method == "exact":
+                found = again
+                chosen = _rows_for_keys(rows, found)
+                decided = _decided_name(stripped, chosen, found)
     if decided is not None:
+        if for_trading:
+            decided = _station_label_for_admin(text, chosen, found, decided)
         return decided, None
     if not found.note:
         return None, "No approximate matches found, given name too abstract."

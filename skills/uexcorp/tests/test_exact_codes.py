@@ -75,7 +75,12 @@ class ExactCodeAndSlugTest(_SqliteCase):
                 (202, 'Iceberg', 'ICEB', 'iceberg', 0, 0),
                 (203, 'Nice', 'NICE', 'nice', 0, 0),
                 (301, 'North', 'PAIR', 'north', 0, 0),
-                (302, 'South', 'PAIR', 'south', 0, 0)
+                (302, 'South', 'PAIR', 'south', 0, 0),
+                (400, 'Aluminum', 'ALUM', 'aluminum', 0, 1),
+                (401, 'Thermalfoam', 'FOAM', 'thermalfoam', 0, 0),
+                (402, 'Argon', 'ARGO', 'argon', 0, 0),
+                (403, 'Quantainium', 'QUAN', 'quantainium', 0, 1),
+                (404, 'Quantainium (Raw)', 'QUAN', 'quantainium-raw', 1, 0)
             """
         )
         self._db.commit()
@@ -135,10 +140,14 @@ class ExactCodeAndSlugTest(_SqliteCase):
             "Irono": "Iron (Ore)",
             "irono": "Iron (Ore)",
             "iron-ore": "Iron (Ore)",
+            "QUAN": "Quantainium",
+            "Quan": "Quantainium",
+            "quan": "Quantainium",
             "FREE": "Freeze",
-            "Free": "Freeze",
             "AMMO": "Ammonia",
-            "Ammo": "Ammonia",
+            "FOAM": "Thermalfoam",
+            "ALUM": "Aluminum",
+            "ARGO": "Argon",
         }
         for system_one in (False, True):
             picker = _TwinPicker() if system_one else None
@@ -153,14 +162,23 @@ class ExactCodeAndSlugTest(_SqliteCase):
                 self.assertEqual(picker.decisions, 0)
 
     def test_lowercase_everyday_words_do_not_use_the_code_field(self) -> None:
-        """``ammo`` and ``free`` are words. ``lara`` is not, so the code still hits."""
+        """Stoplisted codes need ALL CAPS. ``lara`` is not stoplisted."""
         self._commodities()
         self._llm(None)
         self.assertEqual(self._commodity("lara"), "Laranite")
-        for query, forbidden in (("ammo", "Ammonia"), ("free", "Freeze")):
+        for query, commodity in (
+            ("ammo", "Ammonia"),
+            ("Ammo", "Ammonia"),
+            ("free", "Freeze"),
+            ("Free", "Freeze"),
+            ("foam", "Thermalfoam"),
+            ("Foam", "Thermalfoam"),
+        ):
             self._helper.get_handler_tool().notes.clear()
             self.assertIsNone(self._commodity(query), query)
-            self.assertNotEqual(self._commodity(query), forbidden, query)
+            notes = " ".join(self._helper.get_handler_tool().notes)
+            self.assertIn(commodity, notes, query)
+            self.assertNotIn("Lycara", notes, query)
 
     def test_explicit_code_field_matches_without_all_caps(self) -> None:
         from skills.uexcorp.uexcorp.api.llm import Llm
@@ -179,12 +197,18 @@ class ExactCodeAndSlugTest(_SqliteCase):
         ]
         options = {row["key"]: row["name"] for row in records}
         missed = asyncio.run(llm.find_closest_key("ammo", options, records=records))
-        self.assertNotEqual(missed.key, "Ammonia")
+        self.assertIsNone(missed.key)
+        self.assertIn("Ammonia", [item.get("name") for item in missed.candidates])
+        titled = asyncio.run(llm.find_closest_key("Ammo", options, records=records))
+        self.assertIsNone(titled.key)
         forced = asyncio.run(
             llm.find_closest_key("ammo", options, records=records, match_code=True)
         )
         self.assertEqual(forced.key, "Ammonia")
         self.assertEqual(forced.method, "alias")
+        caps = asyncio.run(llm.find_closest_key("AMMO", options, records=records))
+        self.assertEqual(caps.key, "Ammonia")
+        self.assertEqual(caps.method, "alias")
 
     def test_shared_refined_code_is_not_guessed(self) -> None:
         self._commodities()
@@ -237,3 +261,42 @@ class ExactCodeAndSlugTest(_SqliteCase):
         for query in ("omnisky-iii-cannon", "OMNISKY-III-CANNON"):
             self.assertEqual(asyncio.run(validator.validate(query)), "Omnisky III Cannon")
         self.assertEqual(picker.decisions, 0)
+
+
+def test_common_english_commodity_codes_are_stoplisted() -> None:
+    """A corpus code that is a common English word must be on the stoplist.
+
+    The word file is the 3-6 letter words from the first 2500 entries of
+    the Google 10000 English no-swears list, plus the dictionary words
+    alum, ammo, arse, audi, carp, coil, meth, merc, pita, and sari.
+    Abbreviations further down that frequency list (carb, comp, dist,
+    prot, rand, rico) are not in the file. A code that is also a
+    commodity name, such as GOLD, is resolved as a name and is skipped.
+    """
+    import json
+    from pathlib import Path
+
+    from skills.uexcorp.uexcorp.api.llm import _CODE_STOPLIST
+
+    words = set()
+    for line in Path(__file__).with_name("common_english_words.txt").read_text(encoding="utf-8").splitlines():
+        text = line.split("#", 1)[0].strip().casefold()
+        if text:
+            words.add(text)
+    corpus = json.loads(Path(__file__).with_name("name_corpus.json").read_text(encoding="utf-8"))
+    names = {name.casefold() for name in corpus["commodities"]}
+    missing = sorted(
+        code
+        for code in corpus["commodity_codes"]
+        if code.casefold() in words
+        and code.casefold() not in names
+        and code.casefold() not in _CODE_STOPLIST
+    )
+    assert missing == []
+    dictionary = {
+        "alum", "ammo", "blue", "carp", "coil", "dial", "fire", "foam",
+        "free", "jump", "last", "part", "pita", "sari", "tell", "thru",
+    }
+    assert dictionary <= words
+    assert dictionary <= _CODE_STOPLIST
+    assert {"argo", "audi", "merc", "meth", "arse"} <= _CODE_STOPLIST

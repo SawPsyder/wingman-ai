@@ -191,6 +191,7 @@ class Llm:
         system_one_min_confidence: float | None = None,
         records: list[dict] | None = None,
         match_code: bool = False,
+        allow_whole_word: bool | None = None,
     ):
         """Pick one key from ``options`` (key -> unique label).
 
@@ -212,13 +213,17 @@ class Llm:
         The exact step is the same for both, and it runs before either
         scorer. Names come first, then aliases the caller put on each
         record: codes, slugs, vehicle short names, and place aliases. A
-        code matches in any letter case. The lowercase words ``ammo`` and
-        ``free`` stay candidates instead of a pick. ``match_code`` forces
-        that pick. A query
-        that equals one stored name, including a difference only in case,
-        is method ``exact``. When two stored names differ only by case, the
-        query picks one only if it matches that spelling exactly; any other
-        casing stays a list of candidates and is not sent to a model.
+        code matches in any letter case. Lowercase codes that are not
+        English words, such as ``lara``, ``trit``, and ``quan``, auto-pick
+        the commodity. A code on the stoplist (``ammo``, ``free``, ``foam``,
+        and the other listed words) auto-picks only when the query is ALL
+        CAPS, or when ``match_code`` is true. Any other casing of a
+        stoplisted code stays a candidate list and is not sent to a model.
+        A query that equals one stored name, including a difference only
+        in case, is method ``exact``. When two stored names differ only by
+        case, the query picks one only if it matches that spelling exactly;
+        any other casing stays a list of candidates and is not sent to a
+        model.
 
         ``allow_llm`` and ``allow_dumb`` stay off for a blocklist write;
         ``system_one_min_confidence`` is the write threshold.
@@ -241,6 +246,7 @@ class Llm:
             ask_system_one=ask_system_one,
             system_one_min_confidence=system_one_min_confidence,
             match_code=match_code,
+            allow_whole_word=allow_dumb if allow_whole_word is None else allow_whole_word,
         )
 
     async def _rank(
@@ -256,6 +262,7 @@ class Llm:
         ask_system_one: bool,
         system_one_min_confidence: float | None,
         match_code: bool = False,
+        allow_whole_word: bool = True,
     ):
         """One entry point. Scoring stays profile-specific.
 
@@ -357,11 +364,12 @@ class Llm:
                 result.method = "alias"
                 return result
 
-            # Read filters only. A blocklist write leaves allow_dumb off, so
-            # a non-exact station still previews instead of being saved.
+            # A blocklist write leaves both switches off, so a non-exact
+            # station still previews instead of being saved. Read filters
+            # keep the unique whole-word pick and turn the dumb fallback off.
             # The whole-word hit has to be unique in the full ranked set.
             # The 5-row shortlist is only what gets shown.
-            if allow_dumb:
+            if allow_whole_word:
                 winner = _single_whole_word_place(text, ranked)
                 if winner is not None:
                     if not any(hit.get("key") == winner.get("key") for hit in shown):
@@ -615,15 +623,37 @@ def _is_code_shaped(query: str) -> bool:
     return bool(letters) and all(char.isupper() for char in letters)
 
 
-# Spoken English that collides with a commodity code. Any letter case of
-# these stays a candidate; LARA and the other pinned codes are not in here.
-_COMMON_CODE_WORDS = frozenset({"ammo", "free"})
+# Commodity codes that are English words, brand names, or easy to say.
+# Speech-to-text capitalises the first word, so title case must not become
+# a commodity filter. Only ALL CAPS, or match_code=True, picks one of these.
+# Names still resolve first. lara, trit, and quan are not in this set, so
+# they still auto-pick in any letter case.
+_CODE_STOPLIST = frozenset({
+    "alum", "ammo", "argo", "arse", "audi",
+    "blue",
+    "carp", "coil",
+    "dial",
+    "fire", "foam", "free",
+    "jump",
+    "last",
+    "merc", "meth",
+    "part", "pita",
+    "sari",
+    "tell", "thru",
+})
 
 
-def _lowercase_common_word(query: str) -> bool:
-    """True for ``ammo`` and ``free``, not for ``AMMO``, ``Free``, or ``lara``."""
+def _stoplist_blocks_pick(query: str) -> bool:
+    """True when ``query`` is a stoplisted code in any casing but ALL CAPS.
+
+    ``FOAM`` may pick. ``Foam`` and ``foam`` stay candidates. ``lara`` is
+    not stoplisted, so this returns false and the code still picks.
+    """
     text = (query or "").strip()
-    return bool(text) and text == text.casefold() and text in _COMMON_CODE_WORDS
+    folded = text.casefold()
+    if not text or folded not in _CODE_STOPLIST:
+        return False
+    return text != folded.upper()
 
 
 def _query_equals_code(records: list[dict] | None, query: str | None) -> bool:
@@ -883,9 +913,10 @@ def _decide_exact(records: list[dict], search: str | None, descriptions: dict | 
     if code_hits:
         chosen = _prefer_refined(code_hits)
         unique = len(_unique_row_names(chosen)) == 1
-        # Lowercase everyday words stay a candidate list. Title case and
-        # all caps still pick the commodity, and match_code forces it.
-        if unique and (match_code or not _lowercase_common_word(text)):
+        # Stoplisted codes pick only in ALL CAPS. match_code forces the
+        # pick. Any other casing is a candidate list, and the caller does
+        # not fall through to a model. Other codes pick in any letter case.
+        if unique and (match_code or not _stoplist_blocks_pick(text)):
             return _exact_result(chosen[0], descriptions, "alias")
         return _unpicked_result(chosen, descriptions)
     alias_hits = _collapse_terminal_alias_hits(alias_hits, records, text)

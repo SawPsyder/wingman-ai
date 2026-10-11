@@ -243,6 +243,7 @@ class RouteReproTest(_SqliteCase):
                 id, name, code, slug, is_raw, is_buyable, is_sellable, is_illegal, is_blacklisted
             ) VALUES
                 (214, 'Caranite', 'CARA', 'caranite', 0, 0, 0, 0, 0),
+                (44, 'Iron', 'IRON', 'iron', 0, 1, 1, 0, 0),
                 (45, 'Iron (Ore)', 'IRONO', 'iron-ore', 1, 0, 1, 0, 0),
                 (101, 'Pressurized Ice', 'PICE', 'pressurized-ice', 0, 1, 1, 0, 0),
                 (125, 'Ice (Raw)', 'ICEW', 'ice-raw', 1, 0, 0, 0, 0)
@@ -255,7 +256,23 @@ class RouteReproTest(_SqliteCase):
             ) VALUES
                 (20, 45, 80, 0, 1000, 'Iron (Ore)', 'Levski'),
                 (21, 101, 80, 4536, 0, 'Pressurized Ice', 'Levski'),
-                (22, 101, 83, 0, 5125, 'Pressurized Ice', 'Area18 TDD')
+                (22, 101, 83, 0, 5125, 'Pressurized Ice', 'Area18 TDD'),
+                (23, 44, 80, 10, 0, 'Iron', 'Levski'),
+                (24, 44, 83, 0, 40, 'Iron', 'Area18 TDD')
+            """
+        )
+        self._db.execute(
+            """
+            INSERT INTO commodity_route (
+                id, id_commodity, commodity_name,
+                id_terminal_origin, id_terminal_destination,
+                origin_terminal_name, destination_terminal_name,
+                price_origin, price_destination, scu_origin, scu_destination, profit, score
+            ) VALUES (
+                44, 44, 'Iron', 80, 83,
+                'Levski', 'Area18 TDD',
+                10, 40, 8, 8, 240, 1
+            )
             """
         )
         self._db.commit()
@@ -281,6 +298,30 @@ class RouteReproTest(_SqliteCase):
         )
         self.assertIn("Iron (Ore) is sell-only, so there are no trade routes", irono)
         self.assertNotIn("too abstract", irono)
+
+        for query in ("Irono", "irono", "Cara"):
+            text, _instant = asyncio.run(
+                handler.execute_tool(
+                    "uex_get_trade_routes",
+                    {"filter_commodity_whitelist": [query]},
+                )
+            )
+            if query.casefold() == "cara":
+                self.assertIn("Caranite has no buy/sell prices, so there are no trade routes", text)
+            else:
+                self.assertIn("Iron (Ore) is sell-only, so there are no trade routes", text)
+                self.assertNotIn("Area18 TDD", text)
+            self.assertNotIn("too abstract", text, query)
+
+        blocked, _instant = asyncio.run(
+            handler.execute_tool(
+                "uex_get_trade_routes",
+                {"filter_commodity_blacklist": ["Irono"]},
+            )
+        )
+        self.assertNotIn("not recognized", blocked)
+        self.assertIn("Area18 TDD", blocked)
+        self.assertNotIn("sell-only", blocked)
 
     def test_ice_route_suggestions_name_the_raw_variant(self) -> None:
         self._install_llm(None)
@@ -399,3 +440,157 @@ class RouteReproTest(_SqliteCase):
             self.assertIn("confirm=true", preview, query)
             self.assertNotIn("Nothing was saved", preview, query)
             self.assertEqual(self._entries(), [], query)
+
+    def test_read_filters_do_not_fuzzy_pick_places(self) -> None:
+        """Mine stays a candidate, Star is not a shop, Fuel is the whole word."""
+        from skills.uexcorp.uexcorp.resolver import resolve_location_name
+
+        self._install_llm(None)
+        self._seed_trade()
+        self._db.execute(
+            """
+            INSERT INTO orbit (
+                id, name, code, id_star_system, star_system_name, is_available
+            ) VALUES (191, 'Min I', 'MIN', 1, 'Stanton', 1)
+            """
+        )
+        self._db.execute(
+            """
+            INSERT INTO space_station (
+                id, name, nickname, id_star_system, star_system_name,
+                is_available, is_available_live, has_trade_terminal
+            ) VALUES
+                (33, 'Starlight Service Station', 'Starlight Service', 3, 'Pyro', 1, 1, 1),
+                (70, 'Rod''s Fuel ''N Supplies', 'Rods Fuel', 1, 'Stanton', 1, 1, 1)
+            """
+        )
+        self._db.execute(
+            """
+            INSERT INTO terminal (
+                id, name, nickname, type, is_available, is_shop_fps,
+                id_space_station, space_station_name, star_system_name
+            ) VALUES (
+                450, 'Admin - Starlight Service', 'Starlight', 'commodity', 1, 1,
+                33, 'Starlight Service Station', 'Pyro'
+            )
+            """
+        )
+        self._db.commit()
+        handler = self._handler()
+
+        mine, _note = asyncio.run(resolve_location_name(self._helper, "Mine", for_trading=True))
+        self.assertIsNone(mine)
+        mined, _instant = asyncio.run(
+            handler.execute_tool(
+                "uex_get_trade_routes",
+                {"filter_start_location": "Mine"},
+            )
+        )
+        self.assertIn("not recognized", mined)
+        self.assertNotIn("is a shop", mined)
+
+        star, _note = asyncio.run(resolve_location_name(self._helper, "Star", for_trading=True))
+        self.assertIsNone(star)
+        starred, _instant = asyncio.run(
+            handler.execute_tool(
+                "uex_get_trade_routes",
+                {"filter_start_location": "Star"},
+            )
+        )
+        self.assertNotIn("is a shop", starred)
+        self.assertNotIn("Admin - Starlight Service is a shop", starred)
+        self.assertIn("not recognized", starred)
+
+        fuel, fuel_note = asyncio.run(
+            resolve_location_name(self._helper, "Fuel", for_trading=True)
+        )
+        self.assertEqual(fuel, "Rod's Fuel 'N Supplies")
+        self.assertIsNone(fuel_note)
+        fueled, _instant = asyncio.run(
+            handler.execute_tool(
+                "uex_get_trade_routes",
+                {"filter_start_location": "Fuel"},
+            )
+        )
+        self.assertNotIn("not recognized", fueled)
+        self.assertNotIn("is a shop", fueled)
+
+    def test_olisar_routes_use_the_station_name(self) -> None:
+        from skills.uexcorp.uexcorp.resolver import resolve_location_name
+
+        self._install_llm(None)
+        self._seed_trade()
+        self._db.execute(
+            """
+            INSERT INTO space_station (
+                id, name, nickname, id_star_system, star_system_name,
+                is_available, is_available_live, has_trade_terminal
+            ) VALUES (22, 'Port Olisar', 'PO', 1, 'Stanton', 1, 1, 0)
+            """
+        )
+        self._db.execute(
+            """
+            INSERT INTO terminal (
+                id, name, type, is_available, id_space_station, space_station_name, star_system_name
+            ) VALUES (
+                65, 'Admin - Port Olisar', 'commodity', 1, 22, 'Port Olisar', 'Stanton'
+            )
+            """
+        )
+        self._db.execute(
+            """
+            INSERT INTO commodity_route (
+                id, id_commodity, commodity_name,
+                id_terminal_origin, id_terminal_destination,
+                origin_terminal_name, destination_terminal_name,
+                price_origin, price_destination, scu_origin, scu_destination, score
+            ) VALUES (
+                65, 1, 'Waste', 65, 81,
+                'Admin - Port Olisar', 'Lorville Admin',
+                5, 9, 10, 10, 1
+            )
+            """
+        )
+        self._db.commit()
+        handler = self._handler()
+        named, note = asyncio.run(
+            resolve_location_name(self._helper, "Olisar", for_trading=True)
+        )
+        self.assertEqual(named, "Port Olisar")
+        self.assertIsNone(note)
+        routes, _instant = asyncio.run(
+            handler.execute_tool(
+                "uex_get_trade_routes",
+                {"filter_start_location": "Olisar"},
+            )
+        )
+        self.assertNotIn("not recognized", routes)
+        self.assertIn("Admin - Port Olisar", routes)
+        self.assertIn("Lorville Admin", routes)
+
+    def test_place_without_a_trade_terminal_says_so(self) -> None:
+        self._install_llm(None)
+        self._seed_trade()
+        self._db.execute(
+            """
+            INSERT INTO poi (
+                id, name, nickname, id_star_system, star_system_name,
+                is_available, is_available_live, has_trade_terminal
+            ) VALUES (
+                89, 'Covalex Distribution Center S4DC05', 'S4DC05', 1, 'Stanton', 1, 1, 0
+            )
+            """
+        )
+        self._db.commit()
+        handler = self._handler()
+        text, _instant = asyncio.run(
+            handler.execute_tool(
+                "uex_get_trade_routes",
+                {"filter_start_location": "S4DC05"},
+            )
+        )
+        self.assertIn(
+            "Covalex Distribution Center S4DC05 has no trade terminal",
+            text,
+        )
+        self.assertNotIn("too abstract", text)

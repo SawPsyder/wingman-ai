@@ -1295,9 +1295,10 @@ class LocationBlocklistTest(_SqliteCase):
             asyncio.run(resolve_location_name(self._helper, "Hurston Planet", for_trading=True))[0],
             "Hurston",
         )
-        self.assertEqual(
+        # Port Olisar and Olisar Point both use the word, so a read filter
+        # lists them instead of dumb-picking one.
+        self.assertIsNone(
             asyncio.run(resolve_location_name(self._helper, "Olisar", for_trading=False))[0],
-            "Port Olisar",
         )
 
     def test_only_an_exact_name_saves_without_confirm(self) -> None:
@@ -1362,7 +1363,9 @@ class LocationBlocklistTest(_SqliteCase):
         self.assertIn("Levski", names)
 
         llm = Llm(self._helper)
-        expected = {
+        # A bare name list still dumb-matches a typo. A route read filter does
+        # not: only an exact name, an alias, or one whole-word place is a pick.
+        listed_expected = {
             "Lorvil": "Lorville",
             "Area18": "Area18",
             "Port Tresler": "Port Tressler",
@@ -1371,12 +1374,21 @@ class LocationBlocklistTest(_SqliteCase):
             "Teach's": None,
             "Cubby Blast": None,
         }
-        for query, want in expected.items():
+        resolved_expected = {
+            "Lorvil": None,
+            "Area18": "Area18",
+            "Port Tresler": None,
+            "Levsky": None,
+            "Casaba Outlet": None,
+            "Teach's": None,
+            "Cubby Blast": None,
+        }
+        for query, want in listed_expected.items():
             resolved, _note = asyncio.run(
                 resolve_location_name(self._helper, query, for_trading=True)
             )
             listed, _options = asyncio.run(llm.find_closest_match(query, names))
-            self.assertEqual(resolved, want, query)
+            self.assertEqual(resolved, resolved_expected[query], query)
             self.assertEqual(listed, want, query)
 
     def test_expired_block_stops_applying_when_the_clock_moves(self) -> None:
@@ -1835,7 +1847,6 @@ class LocationBlocklistTest(_SqliteCase):
             ("filter_start_location", "Casaba Outlet", "Everus Harbor"),
             ("filter_destination_location", "Teach's", "Lorville"),
             ("filter_location_blacklist", ["Cubby Blast"], "Quiet Harbor"),
-            ("filter_start_location", "Casaba Outlett", "Everus Harbor"),
         )
         for field, value, parent in cases:
             text, _instant = asyncio.run(
@@ -1845,6 +1856,15 @@ class LocationBlocklistTest(_SqliteCase):
             self.assertIn("is a shop, not a trade terminal", text, shown)
             self.assertIn(f"Try {parent}", text, shown)
             self.assertNotIn("not recognized", text, shown)
+
+        typo, _instant = asyncio.run(
+            handler.execute_tool(
+                "uex_get_trade_routes",
+                {"filter_start_location": "Casaba Outlett"},
+            )
+        )
+        self.assertIn("not recognized", typo)
+        self.assertNotIn("is a shop", typo)
 
         fuel, _instant = asyncio.run(
             handler.execute_tool(

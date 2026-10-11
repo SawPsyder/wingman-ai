@@ -163,6 +163,31 @@ def _tradable_miss_note(name: str, options: str | None, commodities, tradable_id
     return note.rstrip(".") + ". Note: " + " ".join(extras)
 
 
+async def _place_without_trade_terminal(helper, name: str) -> str | None:
+    """A station, city, outpost, or POI the trade filter cannot use.
+
+    The trading lookup already missed. This asks the full place list, and
+    only reports a place that is not itself a terminal.
+    """
+    from skills.uexcorp.uexcorp.resolver import collect_locations, resolve_location_name
+
+    listed, _note = await resolve_location_name(helper, name, for_trading=False)
+    if not listed:
+        return None
+    trading_keys = {
+        row["key"]
+        for row in collect_locations(helper, for_trading=True, available_only=True)
+    }
+    places = [
+        row
+        for row in collect_locations(helper, for_trading=False, available_only=True)
+        if row["name"] == listed and row["scope"] != "terminal"
+    ]
+    if not places or any(row["key"] in trading_keys for row in places):
+        return None
+    return listed
+
+
 class Validator:
 
     VALIDATE_NUMBER = "number"
@@ -364,37 +389,45 @@ class Validator:
         return {"type": "string", "enum": star_system_names}
 
     async def __validate_commodity(self, name: str, for_trading: bool = False) -> (str | None, str | None):
+        from skills.uexcorp.uexcorp.api.llm import _decide_exact
+
         commodity_data_access = CommodityDataAccess()
         if for_trading:
-            # Same terminal-price set the route import uses. Catalog buy/sell
-            # drops Gold and Iron, and the fuzzy matcher then renames them.
+            # Names, then codes, on the full catalog before any fuzzy match.
+            # Irono is the Iron (Ore) code, so it must not fuzzy-match Iron.
             from skills.uexcorp.uexcorp.tradable import tradable_commodity_ids
 
             ids = tradable_commodity_ids(self.__helper.get_database())
-            if not ids:
-                commodities = []
-            else:
-                commodities = commodity_data_access.add_filter_by_id(ids).load()
-        else:
-            commodities = commodity_data_access.load()
+            tradable = (
+                commodity_data_access.add_filter_by_id(ids).load() if ids else []
+            )
+            catalog = CommodityDataAccess().load()
+            decided = _decide_exact(
+                _commodity_records(catalog), name, None, match_code=False
+            )
+            if decided is not None:
+                tradable_names = {str(item) for item in tradable}
+                if decided.key:
+                    if decided.key in tradable_names:
+                        return decided.key, None
+                    row = next(item for item in catalog if str(item) == decided.key)
+                    buy, sell = _price_sides(self.__helper, row.get_id())
+                    return None, _untradable_sentence(decided.key, buy, sell)
+                return None, _commodity_miss_note(name, decided.note, catalog)
+            closest_match, options = await _closest_record(
+                self.__helper, name, _commodity_records(tradable)
+            )
+            if closest_match:
+                return closest_match, None
+            tradable_ids = set(ids) if ids else set()
+            return None, _tradable_miss_note(name, options, catalog, tradable_ids)
+
+        commodities = commodity_data_access.load()
         closest_match, options = await _closest_record(
             self.__helper, name, _commodity_records(commodities)
         )
         if closest_match:
             return closest_match, None
-
-        if for_trading:
-            catalog = CommodityDataAccess().load()
-            catalog_match, _catalog_note = await _closest_record(
-                self.__helper, name, _commodity_records(catalog)
-            )
-            if catalog_match:
-                row = next(item for item in catalog if str(item) == catalog_match)
-                buy, sell = _price_sides(self.__helper, row.get_id())
-                return None, _untradable_sentence(catalog_match, buy, sell)
-            tradable_ids = set(ids) if ids else set()
-            return None, _tradable_miss_note(name, options, catalog, tradable_ids)
-
         return None, _commodity_miss_note(name, options, commodities)
 
     def __definition_commodity(self, **kwargs) -> dict[str, any]:
@@ -418,6 +451,9 @@ class Validator:
             shop = await shop_trade_note(self.__helper, name)
             if shop:
                 return None, shop
+            missing = await _place_without_trade_terminal(self.__helper, name)
+            if missing:
+                return None, f"{missing} has no trade terminal"
 
         return None, f"Invalid location name, no match found for '{name}': Did you mean one of those?: {options}"
 
