@@ -17,10 +17,10 @@ def collect_commodity_routes(
     """Load every route for one commodity.
 
     A page shorter than ``cap`` is complete. A page of ``cap`` rows is truncated.
-    Those rows are kept, then merged with one query per origin planet and every
-    available origin orbit that a complete planet page did not already cover
-    (station orbits such as Levski, Nyx stations, and the Gateways). Rows are
-    deduped by route id.
+    Those rows are kept, then merged with one query per origin planet and the
+    off-planet orbits the caller passes. Those are the station orbits that
+    trade this commodity (Levski, Nyx stations, the Gateways), not every orbit.
+    Rows are deduped by route id.
     An origin-orbit page that is itself capped is kept and reported; a finer
     split is deferred.
     """

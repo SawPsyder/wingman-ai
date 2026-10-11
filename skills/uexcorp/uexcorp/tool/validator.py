@@ -228,8 +228,17 @@ class Validator:
     async def __validate_commodity(self, name: str, for_trading: bool = False) -> (str | None, str | None):
         commodity_data_access = CommodityDataAccess()
         if for_trading:
-            commodity_data_access = commodity_data_access.add_filter_has_sell_price().add_filter_has_buy_price()
-        commodities = commodity_data_access.load()
+            # Same terminal-price set the route import uses. Catalog buy/sell
+            # drops Gold and Iron, and the fuzzy matcher then renames them.
+            from skills.uexcorp.uexcorp.tradable import tradable_commodity_ids
+
+            ids = tradable_commodity_ids(self.__helper.get_database())
+            if not ids:
+                commodities = []
+            else:
+                commodities = commodity_data_access.add_filter_by_id(ids).load()
+        else:
+            commodities = commodity_data_access.load()
         commodity_names = []
         for commodity in commodities:
             commodity_names.append(str(commodity))

@@ -20,6 +20,8 @@ MAX_ATTEMPTS = 4
 MAX_BACKOFF_SECONDS = 60.0
 # A limit response has to wait out the per-minute window, not a few seconds.
 RATE_LIMIT_WINDOW_SECONDS = 60.0
+# Spread retries a few seconds past the window so workers do not line up.
+LIMIT_JITTER_SECONDS = 5.0
 OTHER_ERROR_BACKOFF_BASE = 0.5
 
 
@@ -335,9 +337,10 @@ class Uex:
         retry_after = _parse_retry_after(response.headers.get("Retry-After"))
         if retry_after is not None and retry_after > 0:
             return min(MAX_BACKOFF_SECONDS, retry_after)
-        # Wait out the per-minute window. A fraction of a second of jitter
-        # keeps workers from retrying on the same instant. rng 0 stays at 60s.
-        return min(MAX_BACKOFF_SECONDS, RATE_LIMIT_WINDOW_SECONDS + self._rng())
+        # Wait out the per-minute window, then 0–5s. rng 0 stays at 60s.
+        # Do not clamp this back to MAX_BACKOFF_SECONDS: that made the jitter 0.
+        jitter = min(1.0, max(0.0, self._rng())) * LIMIT_JITTER_SECONDS
+        return RATE_LIMIT_WINDOW_SECONDS + jitter
 
     def _backoff_seconds(self, attempt: int) -> float:
         delay = OTHER_ERROR_BACKOFF_BASE * (2 ** max(attempt - 1, 0))

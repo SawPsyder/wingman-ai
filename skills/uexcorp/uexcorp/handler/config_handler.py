@@ -28,7 +28,10 @@ def normalize_api_url(value) -> tuple[str, str | None]:
     parsed = urlparse(text)
     if parsed.scheme not in ("http", "https") or not parsed.netloc:
         return DEFAULT_API_URL, f"Invalid UEX API URL {text!r}. Using {DEFAULT_API_URL}."
-    return text.rstrip("/"), None
+    normalized = text.rstrip("/")
+    if parsed.scheme == "http":
+        return normalized, f"UEX API URL {normalized} uses http://. Traffic is not encrypted."
+    return normalized, None
 
 
 def get_tools() -> tuple[list, bool]:
@@ -193,8 +196,14 @@ class ConfigHandler:
             # delete file after sync
             os.remove(file_path)
 
-        # rewrite file to add possible new commodities
-        commodities = CommodityDataAccess().add_filter_has_sell_price().add_filter_has_buy_price().load()
+        # rewrite file to add possible new commodities. Same terminal-price
+        # set as the route import, so Gold and Iron can be blacklisted.
+        from skills.uexcorp.uexcorp.tradable import tradable_commodity_ids
+
+        traded_ids = tradable_commodity_ids(self.__helper.get_database())
+        commodities = (
+            CommodityDataAccess().add_filter_by_id(traded_ids).load() if traded_ids else []
+        )
         commodity_data = []
         for commodity in commodities:
             commodity_data.append(

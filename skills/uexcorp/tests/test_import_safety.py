@@ -15,6 +15,7 @@ from urllib.parse import parse_qs, urlparse
 
 from skills.uexcorp.uexcorp.api.route_pages import ROUTE_PAGE_CAP, collect_commodity_routes
 from skills.uexcorp.uexcorp.api.uex import (
+    LIMIT_JITTER_SECONDS,
     MAX_ATTEMPTS,
     MAX_WORKERS,
     RATE_LIMIT_WINDOW_SECONDS,
@@ -639,7 +640,44 @@ class UexClientTest(unittest.TestCase):
         self._api.session = _Queue()
         result = self._api.fetch("commodities")
         self.assertTrue(result.ok)
-        self.assertTrue(any(abs(slept - RATE_LIMIT_WINDOW_SECONDS) < 1 for slept in self._clock.sleeps))
+        self.assertIn(RATE_LIMIT_WINDOW_SECONDS, self._clock.sleeps)
+
+    def test_limit_jitter_follows_the_injected_rng(self) -> None:
+        self._api._rng = lambda: 1.0
+        responses = [
+            _Response(200, {"status": "requests_limit_reached"}),
+            _Response(200, {"status": "ok", "data": [{"id": 1}]}),
+        ]
+
+        class _Queue:
+            def get(self, url, params=None, timeout=None, headers=None, stream=None):
+                return responses.pop(0)
+
+        self._api.session = _Queue()
+        result = self._api.fetch("commodities")
+        self.assertTrue(result.ok)
+        self.assertIn(RATE_LIMIT_WINDOW_SECONDS + LIMIT_JITTER_SECONDS, self._clock.sleeps)
+
+        self._clock.sleeps.clear()
+        self._api._rng = lambda: 0.4
+        honoured = [
+            _Response(
+                200,
+                {"status": "requests_limit_reached"},
+                {"content-type": "application/json", "Retry-After": "7"},
+            ),
+            _Response(200, {"status": "ok", "data": [{"id": 2}]}),
+        ]
+
+        class _RetryAfter:
+            def get(self, url, params=None, timeout=None, headers=None, stream=None):
+                return honoured.pop(0)
+
+        self._api.session = _RetryAfter()
+        result = self._api.fetch("commodities")
+        self.assertTrue(result.ok)
+        self.assertIn(7.0, self._clock.sleeps)
+        self.assertNotIn(RATE_LIMIT_WINDOW_SECONDS + 0.4 * LIMIT_JITTER_SECONDS, self._clock.sleeps)
 
     def test_limit_pause_applies_to_all_workers(self) -> None:
         import threading
@@ -1155,6 +1193,152 @@ class DatasetCountTest(_SqliteCase):
         self.assertEqual([row["live"] for row in versions], ["4.10.2"])
 
 
+class TradingCommodityValidationTest(_SqliteCase):
+    def test_gold_and_iron_validate_to_themselves(self) -> None:
+        import asyncio
+
+        from skills.uexcorp.uexcorp.api.llm import Llm
+        from skills.uexcorp.uexcorp.tool.validator import Validator
+
+        # Catalog prices are 0. Terminal prices are what make them tradable.
+        # Fold has the old catalog prices and would be the fuzzy match for Gold.
+        self._db.execute(
+            """
+            INSERT INTO commodity (id, name, price_buy, price_sell) VALUES
+                (1, 'Gold', 0, 0),
+                (2, 'Iron', 0, 0),
+                (3, 'Fold', 10, 12)
+            """
+        )
+        self._db.execute(
+            """
+            INSERT INTO commodity_price (id, id_commodity, id_terminal, price_buy, price_sell)
+            VALUES
+                (1, 1, 10, 5, 0),
+                (2, 1, 11, 0, 8),
+                (3, 2, 12, 4, 0),
+                (4, 2, 13, 0, 9)
+            """
+        )
+        self._db.commit()
+        self._helper.get_llm = lambda: Llm(self._helper)
+        validator = Validator(
+            Validator.VALIDATE_COMMODITY,
+            multiple=True,
+            config={"for_trading": True},
+        )
+
+        accepted = asyncio.run(validator.validate(["Gold", "Iron"]))
+        self.assertEqual(accepted, ["Gold", "Iron"])
+
+        self._helper.get_handler_tool().notes.clear()
+        unknown = asyncio.run(validator.validate(["Xyzzyqqq"]))
+        self.assertIsNone(unknown)
+        notes = " ".join(self._helper.get_handler_tool().notes)
+        self.assertIn("Xyzzyqqq", notes)
+        self.assertIn("Invalid commodity name", notes)
+
+
+class OffPlanetOrbitQueryTest(_SqliteCase):
+    def test_capped_split_queries_trading_stations_not_every_orbit(self) -> None:
+        from skills.uexcorp.uexcorp.handler.import_handler import ImportHandler
+
+        self._db.execute(
+            """
+            INSERT INTO imports (`table`, date_imported, dataset_count, time_taken, last_import_run_id)
+            VALUES
+                ('commodity', ?, 1, 0, 1),
+                ('commodity_price', ?, 1, 0, 1)
+            """,
+            (NOW, NOW),
+        )
+        self._db.execute(
+            """
+            INSERT INTO planet (id, name, is_available) VALUES
+                (1, 'Hurston', 1),
+                (2, 'ArcCorp', 1),
+                (3, 'microTech', 1),
+                (9, 'Hidden', 0)
+            """
+        )
+        orbit_rows = ",".join(f"({orbit_id}, 'Orbit {orbit_id}', 1)" for orbit_id in range(1, 31))
+        self._db.execute(
+            f"INSERT INTO orbit (id, name, is_available) VALUES {orbit_rows}, (550, 'Nyx station', 1), (551, 'Gateway', 1)"
+        )
+        self._db.execute(
+            """
+            INSERT INTO terminal (id, name, id_planet, id_orbit, type, is_available) VALUES
+                (101, 'Lorville', 1, 10, 'commodity', 1),
+                (102, 'Orbituary', NULL, 550, 'commodity', 1),
+                (103, 'Pyro Gateway', 0, 551, 'commodity', 1),
+                (104, 'Unused station', NULL, 552, 'commodity', 1),
+                (105, 'Empty pad', NULL, 553, 'commodity', 1)
+            """
+        )
+        self._db.execute(
+            """
+            INSERT INTO commodity_price (id, id_commodity, id_terminal, price_buy, price_sell) VALUES
+                (1, 44, 101, 5, 0),
+                (2, 44, 102, 0, 8),
+                (3, 44, 103, 4, 0),
+                (4, 99, 104, 3, 0),
+                (5, 44, 105, 0, 0)
+            """
+        )
+        self._db.commit()
+
+        def body_for(url: str):
+            query = parse_qs(urlparse(url).query)
+            if "id_planet_origin" not in query and "id_orbit_origin" not in query:
+                return [{"id": i, "id_orbit_origin": 10} for i in range(1, ROUTE_PAGE_CAP + 1)]
+            if "id_planet_origin" in query:
+                planet = int(query["id_planet_origin"][0])
+                return [{"id": 7000 + planet, "id_orbit_origin": 10, "origin": "planet"}]
+            orbit = int(query["id_orbit_origin"][0])
+            origin = "Nyx" if orbit == 550 else "Gateway" if orbit == 551 else "other"
+            return [{"id": 8000 + orbit, "origin": origin}]
+
+        class _Capped:
+            def __init__(self):
+                self.urls = []
+
+            def get(self, url, params=None, timeout=None, headers=None, stream=None):
+                self.urls.append(url)
+                return _Response(200, {"status": "ok", "data": body_for(url)})
+
+        session = _Capped()
+        handler = ImportHandler(self._helper)
+        self._helper.set_import_handler(handler)
+        clock = _Clock()
+        api = Uex(
+            self._helper,
+            sleeper=clock.sleep,
+            monotonic=clock.monotonic,
+            rng=lambda: 0.0,
+        )
+        api.session = session
+        handler._ImportHandler__api = api
+        imported = handler._ImportHandler__import_data_commodity_route()
+        self.assertGreater(imported, 0)
+
+        planets = []
+        orbits = []
+        for url in session.urls:
+            query = parse_qs(urlparse(url).query)
+            if "id_planet_origin" in query:
+                planets.append(int(query["id_planet_origin"][0]))
+            if "id_orbit_origin" in query:
+                orbits.append(int(query["id_orbit_origin"][0]))
+        self.assertEqual(set(planets), {1, 2, 3})
+        self.assertEqual(len(planets), 3)
+        self.assertEqual(orbits, [550, 551])
+        self.assertNotIn(9, planets)
+        self.assertNotIn(10, orbits)
+        self.assertNotIn(552, orbits)
+        self.assertEqual(len(session.urls), 1 + 3 + 2)
+        self.assertLess(len(session.urls), 1 + 3 + 30)
+
+
 class ApiUrlTest(unittest.TestCase):
     def test_bad_api_url_falls_back_and_warns_once(self) -> None:
         import skills.uexcorp.uexcorp.handler.config_handler as config_handler
@@ -1182,6 +1366,22 @@ class ApiUrlTest(unittest.TestCase):
             url, problem = config_handler.normalize_api_url("   ")
             self.assertEqual(url, config_handler.DEFAULT_API_URL)
             self.assertIsNotNone(problem)
+
+            http_url, http_problem = config_handler.normalize_api_url("  http://api.uexcorp.uk/2.0/ ")
+            self.assertEqual(http_url, "http://api.uexcorp.uk/2.0")
+            self.assertIn("http://", http_problem)
+            secure_url, secure_problem = config_handler.normalize_api_url("https://api.uexcorp.uk/2.0")
+            self.assertEqual(secure_url, "https://api.uexcorp.uk/2.0")
+            self.assertIsNone(secure_problem)
+
+            handler._ConfigHandler__property_retriever = (
+                lambda key, errors: "http://api.uexcorp.uk/2.0"
+            )
+            self.assertEqual(handler.get_api_url(), "http://api.uexcorp.uk/2.0")
+            self.assertEqual(len(warnings), 2)
+            self.assertIn("http://", warnings[1])
+            self.assertEqual(handler.get_api_url(), "http://api.uexcorp.uk/2.0")
+            self.assertEqual(len(warnings), 2)
         finally:
             config_handler.warn = original
             try:

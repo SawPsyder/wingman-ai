@@ -474,22 +474,18 @@ class ImportHandler:
         self.__helper.start_timer("import")
 
         from skills.uexcorp.uexcorp.api.route_pages import collect_commodity_routes
-        from skills.uexcorp.uexcorp.data_access.orbit_data_access import OrbitDataAccess
         from skills.uexcorp.uexcorp.data_access.planet_data_access import PlanetDataAccess
+        from skills.uexcorp.uexcorp.tradable import (
+            off_planet_trade_orbit_ids,
+            tradable_commodity_ids,
+        )
 
         from skills.uexcorp.uexcorp.log import warn
 
-        commodity_ids = self.__tradable_commodity_ids()
+        commodity_ids = tradable_commodity_ids(self.__helper.get_database())
         planet_ids = [
             planet.get_id()
             for planet in PlanetDataAccess().add_filter_by_is_available(True).load()
-        ]
-        # Every available orbit. collect_commodity_routes skips orbits a complete
-        # planet page already covered, and still queries station orbits such as
-        # Levski, Nyx stations, and the Gateways.
-        all_orbit_ids = [
-            orbit.get_id()
-            for orbit in OrbitDataAccess().add_filter_by_is_available(True).load()
         ]
 
         def _fetch_route_page(query: dict):
@@ -498,11 +494,12 @@ class ImportHandler:
         commodity_route_data = []
         seen_route_ids = set()
         for commodity_id in commodity_ids:
+            # Off-planet stations that trade this commodity, not every orbit.
             page = collect_commodity_routes(
                 _fetch_route_page,
                 commodity_id,
                 planet_ids,
-                all_orbit_ids,
+                off_planet_trade_orbit_ids(self.__helper.get_database(), commodity_id),
                 warn=warn,
             )
             if not page.ok:
@@ -533,23 +530,6 @@ class ImportHandler:
             f"Commodity Route data imported: {commodity_route_import.get_dataset_count()} record(s) in {commodity_route_import.get_time_taken()}s"
         )
         return len(commodity_route_data)
-
-    def __tradable_commodity_ids(self) -> list[int]:
-        """Commodities with a terminal buy price and a terminal sell price.
-
-        Catalog price_buy / price_sell miss commodities such as Gold and Iron,
-        which are bought and sold at terminals while the catalog buy price is 0.
-        """
-        rows = self.__helper.get_database().execute_fetchall(
-            """
-            SELECT id_commodity FROM commodity_price
-            WHERE price_buy > 0
-            INTERSECT
-            SELECT id_commodity FROM commodity_price
-            WHERE price_sell > 0
-            """
-        )
-        return [row["id_commodity"] for row in rows]
 
     def __import_data_company(self) -> bool | int:
         from skills.uexcorp.uexcorp.model.import_data import ImportData
