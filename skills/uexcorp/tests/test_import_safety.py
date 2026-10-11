@@ -16,6 +16,7 @@ from urllib.parse import parse_qs, urlparse
 
 from skills.uexcorp.uexcorp.api.route_pages import ROUTE_PAGE_CAP, collect_commodity_routes
 from skills.uexcorp.uexcorp.api.uex import (
+    COLD_IMPORT_REQUESTS,
     CONNECT_TIMEOUT_SECONDS,
     IMPORT_DEADLINE_SECONDS,
     LARGE_READ_TIMEOUT_SECONDS,
@@ -27,8 +28,9 @@ from skills.uexcorp.uexcorp.api.uex import (
     REQUESTS_PER_MINUTE,
     FetchResult,
     Uex,
-    skill_user_agent,
+    all_timeouts_worst_case,
     healthy_run_seconds,
+    skill_user_agent,
     timeout_budget,
     timeout_budget_message,
 )
@@ -233,6 +235,28 @@ def _cold_import_body(endpoint: str):
     if endpoint == "commodities":
         return [{"id": 1, "name": "Laranite"}]
     return [{"id": 1, "name": endpoint}]
+
+
+class _OneSlowEndpoint:
+    """One endpoint sleeps past the read timeout. Every other read answers."""
+
+    def __init__(self, clock: _Clock, slow_endpoint: str, body_seconds: float):
+        self._clock = clock
+        self._slow = slow_endpoint
+        self._body_seconds = body_seconds
+        self.urls: list[str] = []
+
+    def get(self, url, params=None, timeout=None, headers=None, stream=None):
+        import requests
+
+        self.urls.append(url)
+        endpoint = urlparse(url).path.rstrip("/").split("/")[-1]
+        if endpoint == self._slow:
+            # Just over the large read timeout, on every attempt.
+            self._clock.sleep(LARGE_READ_TIMEOUT_SECONDS + 1)
+            raise requests.exceptions.ReadTimeout("Read timed out. (read timeout=60)")
+        self._clock.sleep(self._body_seconds)
+        return _Response(200, {"status": "ok", "data": _cold_import_body(endpoint)})
 
 
 class _SlowAnswerSession:
@@ -868,8 +892,12 @@ class UexClientTest(unittest.TestCase):
         self.assertLess(budget["deadline"], budget["uncapped"])
         self.assertAlmostEqual(budget["uncapped"], 491.6666666666667)
         self.assertEqual(budget["deadline"], IMPORT_DEADLINE_SECONDS)
-        self.assertIn("491.7s", timeout_budget_message())
-        self.assertIn("Deadline 270s after the first read timeout.", timeout_budget_message())
+        message = timeout_budget_message()
+        worst = all_timeouts_worst_case(COLD_IMPORT_REQUESTS, LARGE_READ_TIMEOUT_SECONDS)
+        self.assertIn("491.7s", message)
+        self.assertIn("270s of timed-out reads and retry backoff", message)
+        self.assertIn(f"the worst case is {worst['wait']:.1f}s", message)
+        self.assertIn(f"({worst['attempts']} attempts)", message)
 
         class _Pages:
             def __init__(self):
@@ -900,6 +928,8 @@ class UexClientTest(unittest.TestCase):
 
             def get(self, url, params=None, timeout=None, headers=None, stream=None):
                 self.urls.append(url)
+                if url.endswith("/cities"):
+                    return _Response(200, {"status": "ok", "data": [{"id": 1, "name": "Area18"}]})
                 read = timeout[1] if isinstance(timeout, tuple) else float(timeout or 0)
                 self_clock.sleep(read)
                 raise requests.exceptions.ReadTimeout(f"Read timed out. (read timeout={read})")
@@ -913,15 +943,21 @@ class UexClientTest(unittest.TestCase):
         self.assertFalse(self._api._is_blocked())
         second = self._api.fetch("commodities_prices_all")
         self.assertFalse(second.ok)
-        self.assertTrue(self._api._is_blocked())
-        self.assertIsNotNone(self._api._timeout_started)
-        # The old cap measured from run start. Absolute time can pass it.
-        # What is bounded is the wait after the first timeout.
-        self.assertGreater(self._clock.now, IMPORT_DEADLINE_SECONDS)
-        elapsed = self._clock.now - self._api._timeout_started
-        self.assertLessEqual(elapsed, IMPORT_DEADLINE_SECONDS)
-        self.assertLess(self._clock.now, timeout_budget()["uncapped"])
-        self.assertGreaterEqual(len(session.urls), MAX_ATTEMPTS + 1)
+        # The budget stops the second endpoint's retries. It does not open
+        # the breaker, so a later healthy request still goes out.
+        self.assertFalse(self._api._is_blocked())
+        self.assertEqual(second.error, "timeout_budget")
+        self.assertGreaterEqual(self._api._timeout_spent, IMPORT_DEADLINE_SECONDS)
+        bound = all_timeouts_worst_case(2, LARGE_READ_TIMEOUT_SECONDS)
+        self.assertLessEqual(self._clock.now, bound["wait"])
+        self.assertLessEqual(len(session.urls), bound["attempts"])
+        self.assertEqual(
+            sum(url.endswith("/commodities_prices_all") for url in session.urls),
+            1,
+        )
+        healthy = self._api.fetch("cities")
+        self.assertTrue(healthy.ok)
+        self.assertFalse(self._api._is_blocked())
 
     def test_short_configured_read_uses_the_large_timeout(self) -> None:
         class _Short(_FakeConfig):
@@ -978,6 +1014,7 @@ class UexClientTest(unittest.TestCase):
         count += available_star_systems + route_gets
         self.assertEqual(route_gets, 147)
         self.assertEqual(count, 295)
+        self.assertEqual(count, COLD_IMPORT_REQUESTS)
         self.assertAlmostEqual(healthy_run_seconds(count), 196.0)
 
         class _Fast:
@@ -1003,9 +1040,96 @@ class UexClientTest(unittest.TestCase):
             self.assertNotEqual(result.error, "import_deadline")
         self.assertEqual(len(session.urls), count)
         self.assertFalse(self._api._is_blocked())
-        self.assertIsNone(self._api._timeout_started)
+        self.assertEqual(self._api._timeout_spent, 0.0)
         self.assertGreater(self._clock.now, IMPORT_DEADLINE_SECONDS)
         self.assertAlmostEqual(self._clock.now - started, healthy_run_seconds(count))
+
+    def test_one_transient_timeout_does_not_fail_later_healthy_requests(self) -> None:
+        import requests
+
+        for body_seconds in (1.0, 3.0):
+            self._clock.now = 0.0
+            self._clock.sleeps.clear()
+            self._api._next_request_at = 0.0
+            self._api.begin_run()
+
+            class _Once:
+                def __init__(self):
+                    self.calls = 0
+
+                def get(self, url, params=None, timeout=None, headers=None, stream=None):
+                    self.calls += 1
+                    if self.calls == 1:
+                        read = timeout[1] if isinstance(timeout, tuple) else LARGE_READ_TIMEOUT_SECONDS
+                        clock.sleep(read)
+                        raise requests.exceptions.ReadTimeout("Read timed out. (read timeout=60)")
+                    clock.sleep(body_seconds)
+                    return _Response(200, {"status": "ok", "data": [{"id": 1}]})
+
+            clock = self._clock
+            self._api.session = _Once()
+            failures = 0
+            for index in range(COLD_IMPORT_REQUESTS):
+                result = self._api.fetch("star_systems", {"n": index})
+                if not result.ok:
+                    failures += 1
+            self.assertEqual(failures, 0, body_seconds)
+            self.assertFalse(self._api._is_blocked())
+            self.assertLess(self._api._timeout_spent, IMPORT_DEADLINE_SECONDS)
+            # Body time after the one timeout is past the old wall-clock cap.
+            self.assertGreater(self._clock.now, IMPORT_DEADLINE_SECONDS)
+
+    def test_every_request_timing_out_stays_inside_the_worst_case(self) -> None:
+        import requests
+
+        self._clock.now = 0.0
+        self._clock.sleeps.clear()
+        self._api._next_request_at = 0.0
+        self._api.begin_run()
+
+        class _All:
+            def __init__(self):
+                self.urls = []
+
+            def get(self, url, params=None, timeout=None, headers=None, stream=None):
+                self.urls.append(url)
+                read = timeout[1] if isinstance(timeout, tuple) else LARGE_READ_TIMEOUT_SECONDS
+                clock.sleep(read)
+                raise requests.exceptions.ReadTimeout(f"Read timed out. (read timeout={read})")
+
+        clock = self._clock
+        session = _All()
+        self._api.session = session
+        names = (
+            "star_systems",
+            "planets",
+            "terminals",
+            "commodities",
+            "items_prices_all",
+        )
+        for index in range(COLD_IMPORT_REQUESTS):
+            result = self._api.fetch(names[index % len(names)])
+            self.assertFalse(result.ok)
+        self.assertFalse(self._api._is_blocked())
+        worst = all_timeouts_worst_case(COLD_IMPORT_REQUESTS, LARGE_READ_TIMEOUT_SECONDS)
+        actual = all_timeouts_worst_case(
+            COLD_IMPORT_REQUESTS,
+            LARGE_READ_TIMEOUT_SECONDS,
+            backoff_factor=0.5,
+        )
+        self.assertEqual(len(session.urls), actual["attempts"])
+        self.assertAlmostEqual(self._clock.now, actual["wait"])
+        self.assertLessEqual(self._clock.now, worst["wait"])
+        self.assertGreaterEqual(self._api._timeout_spent, IMPORT_DEADLINE_SECONDS)
+        self._api.session = _ResponseOk()
+        followed = self._api.fetch("cities")
+        self.assertTrue(followed.ok)
+        self.assertFalse(self._api._is_blocked())
+
+
+class _ResponseOk:
+    def get(self, url, params=None, timeout=None, headers=None, stream=None):
+        return _Response(200, {"status": "ok", "data": [{"id": 1, "name": "Area18"}]})
 
 
 class SellVolumeAndProfitTest(_SqliteCase):
@@ -2091,7 +2215,7 @@ class ConnectionErrorBreakerTest(_SqliteCase):
         self.assertLess(len(session.urls), 30)
         self.assertTrue(all("uex-r3-failure.invalid" in url for url in session.urls))
         self.assertTrue(all(url.endswith("/star_systems") for url in session.urls))
-        self.assertIsNone(api._timeout_started)
+        self.assertEqual(api._timeout_spent, 0.0)
         self.assertEqual(self._route_ids(), [7])
         stamp = self._db.execute_fetchall(
             "SELECT date_imported, dataset_count FROM imports WHERE `table` = ?",
@@ -2302,7 +2426,7 @@ class ConnectionErrorBreakerTest(_SqliteCase):
         handler.import_data(True)
 
         self.assertFalse(api._is_blocked())
-        self.assertIsNone(api._timeout_started)
+        self.assertEqual(api._timeout_spent, 0.0)
         self.assertFalse(handler.import_failed)
         self.assertGreater(self._clock.now, IMPORT_DEADLINE_SECONDS)
         total = 0
@@ -2366,6 +2490,68 @@ class ConnectionErrorBreakerTest(_SqliteCase):
             url for url in session.urls if url.endswith("/categories") or url.endswith("/companies")
         ]
         self.assertEqual(len(timed_out), MAX_ATTEMPTS * 2)
+
+    def _assert_one_slow_endpoint(self, slow_endpoint: str, empty: set[str]) -> None:
+        handler, api = self._handler(None)
+        session = _OneSlowEndpoint(self._clock, slow_endpoint, body_seconds=3.0)
+        api.session = session
+        handler.import_data(True)
+
+        self.assertFalse(api._is_blocked())
+        self.assertIsNone(api._blocked_error)
+        self.assertTrue(handler.import_failed)
+        self.assertGreater(self._count("commodity_route"), 0)
+        self.assertTrue(any("/commodities_routes" in url for url in session.urls))
+        for table in handler._ImportHandler__importers:
+            count = self._count(table)
+            if table in empty:
+                self.assertEqual(count, 0, table)
+            else:
+                self.assertGreater(count, 0, table)
+
+    def test_always_slow_categories_still_fill_the_other_tables(self) -> None:
+        # item and item_attribute call categories again and inherit that failure.
+        self._assert_one_slow_endpoint(
+            "categories",
+            {"category", "item", "item_attribute"},
+        )
+
+    def test_always_slow_item_prices_still_fill_the_other_tables(self) -> None:
+        self._assert_one_slow_endpoint("items_prices_all", {"item_price"})
+
+    def test_every_endpoint_timing_out_stays_bounded(self) -> None:
+        import requests
+
+        self._seed_stale_route()
+
+        class _Burn:
+            def __init__(self, clock: _Clock):
+                self._clock = clock
+                self.urls = []
+
+            def get(self, url, params=None, timeout=None, headers=None, stream=None):
+                self.urls.append(url)
+                read = timeout[1] if isinstance(timeout, tuple) else LARGE_READ_TIMEOUT_SECONDS
+                self._clock.sleep(read)
+                raise requests.exceptions.ReadTimeout(f"Read timed out. (read timeout={read})")
+
+        handler, api = self._handler(None)
+        session = _Burn(self._clock)
+        api.session = session
+        handler.import_data(True)
+
+        self.assertTrue(handler.import_failed)
+        self.assertEqual(handler.get_imported_percent(), 100)
+        self.assertFalse(api._is_blocked())
+        self.assertGreaterEqual(api._timeout_spent, IMPORT_DEADLINE_SECONDS)
+        worst = all_timeouts_worst_case(COLD_IMPORT_REQUESTS, LARGE_READ_TIMEOUT_SECONDS)
+        self.assertLessEqual(len(session.urls), worst["attempts"])
+        self.assertLessEqual(self._clock.now, worst["wait"])
+        self.assertEqual(self._route_ids(), [7])
+        systems = [url for url in session.urls if url.endswith("/star_systems")]
+        versions = [url for url in session.urls if url.endswith("/game_versions")]
+        self.assertGreaterEqual(len(systems), MAX_ATTEMPTS)
+        self.assertEqual(len(versions), 1)
 
     def test_unexpected_importer_error_resets_percent_and_allows_the_next_run(self) -> None:
         handler, _api = self._handler(_ScriptedSession())

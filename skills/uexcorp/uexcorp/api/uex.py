@@ -39,11 +39,14 @@ LARGE_READ_TIMEOUT_MAX = 90
 # Read timeouts open the breaker only after this many different endpoints
 # have each used every attempt. One slow list must not wipe the run.
 TIMEOUT_ENDPOINTS_BEFORE_BREAK = 2
-# Two large endpoints at 60s x 4 attempts is about 8 minutes before backoff.
-# One large endpoint still fits (4 x 60s + backoff). The rest is cut here.
-# The clock starts at the first read timeout, not at run start. A healthy
-# run, however slow, does not start it and is not capped.
+# Accumulated time spent in attempts that timed out, plus their retry backoff.
+# Healthy reads are not charged and are not refused. Once this is spent, only
+# further retries stop. The next endpoint's first attempt still goes out.
+# One large endpoint (4 x 60s + backoff) still fits, so it can use every retry.
 IMPORT_DEADLINE_SECONDS = 270
+# Healthy cold-import GETs measured 2026-10-11 (api.uexcorp.uk/2.0). The
+# all-timeout worst case in the import log uses this count. The test pins it.
+COLD_IMPORT_REQUESTS = 295
 # Lists that the large-read setting was added for. commodities_routes counts
 # as one endpoint even though its pages are separate GETs. Every endpoint
 # waits at least this long; the set is what the timeout budget assumes.
@@ -77,20 +80,24 @@ def clamp_timeout(value, default: int, low: int, high: int) -> int:
     return number
 
 
+def _backoff_delay(attempt: int) -> float:
+    """Retry backoff before the jitter factor. Attempt 1 is the first try."""
+    delay = OTHER_ERROR_BACKOFF_BASE * (2 ** max(attempt - 1, 0))
+    return min(MAX_BACKOFF_SECONDS, delay)
+
+
 def _retry_backoff_worst() -> float:
     """Backoff after attempts 1..MAX_ATTEMPTS-1 when the jitter factor is 1."""
-    total = 0.0
-    for attempt in range(1, MAX_ATTEMPTS):
-        delay = OTHER_ERROR_BACKOFF_BASE * (2 ** max(attempt - 1, 0))
-        total += min(MAX_BACKOFF_SECONDS, delay)
-    return total
+    return sum(_backoff_delay(attempt) for attempt in range(1, MAX_ATTEMPTS))
 
 
 def timeout_budget(large_read: float | None = None) -> dict:
-    """Worst wait if the timeout endpoints each burn every read attempt.
+    """What two endpoints cost if each burns every read attempt.
 
-    Throttle gaps are added on top of the reads. A slow read already covers
-    the spacing interval, so this sum is an upper bound, not a stopwatch.
+    ``uncapped`` adds throttle on top of the reads. A slow read already covers
+    the spacing interval, so that sum is an upper bound on the breaker path,
+    not the timeout budget. The budget itself is ``deadline`` seconds of
+    timed-out waits and retry backoff.
     """
     read = float(LARGE_READ_TIMEOUT_SECONDS if large_read is None else large_read)
     endpoints = TIMEOUT_ENDPOINTS_BEFORE_BREAK
@@ -112,6 +119,46 @@ def timeout_budget(large_read: float | None = None) -> dict:
     }
 
 
+def all_timeouts_worst_case(
+    request_count: int,
+    read: float | None = None,
+    backoff_factor: float = 1.0,
+) -> dict:
+    """Time if every request times out and only retries are budget-capped.
+
+    First attempts always run. A retry runs only while charged timeout time
+    is still under the budget. The attempt that crosses the budget is kept.
+    ``backoff_factor`` 1 is the worst jitter. Charged time counts timed-out
+    reads and the backoff of retries that actually run. Throttle does not.
+    """
+    read = float(LARGE_READ_TIMEOUT_SECONDS if read is None else read)
+    factor = min(1.0, max(0.0, backoff_factor))
+    spent = 0.0
+    wait = 0.0
+    attempts = 0
+    for _ in range(max(int(request_count), 0)):
+        for attempt in range(1, MAX_ATTEMPTS + 1):
+            if attempt > 1 and spent >= IMPORT_DEADLINE_SECONDS:
+                break
+            wait += read
+            spent += read
+            attempts += 1
+            if attempt < MAX_ATTEMPTS and spent < IMPORT_DEADLINE_SECONDS:
+                backoff = _backoff_delay(attempt) * factor
+                wait += backoff
+                spent += backoff
+            else:
+                break
+    return {
+        "wait": wait,
+        "charged": spent,
+        "attempts": attempts,
+        "budget": float(IMPORT_DEADLINE_SECONDS),
+        "requests": max(int(request_count), 0),
+        "read": read,
+    }
+
+
 def healthy_run_seconds(request_count: int) -> float:
     """Throttle wait for a cold import whose responses are instantaneous.
 
@@ -127,13 +174,16 @@ def healthy_run_seconds(request_count: int) -> float:
 
 def timeout_budget_message(large_read: float | None = None) -> str:
     budget = timeout_budget(large_read)
+    worst = all_timeouts_worst_case(COLD_IMPORT_REQUESTS, budget["large_read"])
     return (
         "UEX import timeout budget: "
-        f"uncapped {budget['uncapped']:.1f}s "
-        f"({budget['endpoints']} endpoints x {budget['attempts']} attempts x "
-        f"{budget['large_read']:.0f}s read + {budget['backoff_total']:.1f}s backoff + "
-        f"{budget['throttle']:.1f}s throttle). "
-        f"Deadline {budget['deadline']:.0f}s after the first read timeout."
+        f"{budget['deadline']:.0f}s of timed-out reads and retry backoff. "
+        "Healthy requests are not counted and are not refused. "
+        "Retries stop once that is spent; the next endpoint's first attempt still goes out. "
+        f"Two endpoints that each use every attempt still open the breaker "
+        f"(uncapped {budget['uncapped']:.1f}s before the breaker). "
+        f"If all {COLD_IMPORT_REQUESTS} cold-import requests time out, "
+        f"the worst case is {worst['wait']:.1f}s ({worst['attempts']} attempts)."
     )
 
 
@@ -212,8 +262,8 @@ class Uex:
         self._blocked = False
         self._blocked_error: str | None = None
         self._timeout_endpoints: set[str] = set()
-        # Set on the first read timeout. None for a run that has not timed out.
-        self._timeout_started: float | None = None
+        # Seconds spent in timed-out attempts and their retry backoff.
+        self._timeout_spent: float = 0.0
         self._min_interval = 60.0 / REQUESTS_PER_MINUTE
 
     def _get_headers(self) -> dict[str, str]:
@@ -234,7 +284,7 @@ class Uex:
             self._blocked_error = None
             self._pause_until = 0.0
             self._timeout_endpoints = set()
-            self._timeout_started = None
+            self._timeout_spent = 0.0
         self.helper.get_handler_debug().write(timeout_budget_message(self._read_timeout("items_prices_all")))
 
     def _is_blocked(self) -> bool:
@@ -350,12 +400,14 @@ class Uex:
         last_error = "request failed"
         connect, read = self._timeouts(endpoint)
         for attempt in range(1, MAX_ATTEMPTS + 1):
-            if self._would_pass_deadline(read):
-                self._trip_breaker("import_deadline")
-                return FetchResult(False, error=self._blocked_error or "import_deadline")
+            # The budget refuses retries only. A first attempt always goes out,
+            # including after the budget is spent and on every other endpoint.
+            if attempt > 1 and self._timeout_budget_exhausted():
+                return FetchResult(False, error="timeout_budget")
             if not self._acquire_rate_limit():
                 return FetchResult(False, error=self._blocked_error or "blocked")
             self.helper.get_handler_debug().write(f"Fetching data (request {attempt}/{MAX_ATTEMPTS}) from {url} ...")
+            started_attempt = self._monotonic()
             try:
                 response = self.session.get(
                     url,
@@ -368,7 +420,9 @@ class Uex:
                 # ReadTimeout, and ConnectTimeout (it subclasses Timeout too).
                 # DNS failure and connection refused are ConnectionError only
                 # and take the fast path below.
-                failed = self._exhausted_read_timeout(attempt, e, url, endpoint)
+                failed = self._exhausted_read_timeout(
+                    attempt, e, url, endpoint, started_attempt
+                )
                 if failed is not None:
                     return failed
                 continue
@@ -412,7 +466,9 @@ class Uex:
                     response.close()
                 except Exception:
                     pass
-                failed = self._exhausted_read_timeout(attempt, e, url, endpoint)
+                failed = self._exhausted_read_timeout(
+                    attempt, e, url, endpoint, started_attempt
+                )
                 if failed is not None:
                     return failed
                 continue
@@ -506,24 +562,15 @@ class Uex:
     def _read_timeout(self, endpoint: str) -> int:
         return self._timeouts(endpoint)[1]
 
-    def _note_read_timeout(self) -> None:
-        """Start the deadline clock on the first read timeout of the run."""
+    def _charge_timeout(self, seconds: float) -> None:
+        if seconds <= 0:
+            return
         with self._rate_lock:
-            if self._timeout_started is None:
-                self._timeout_started = self._monotonic()
+            self._timeout_spent += float(seconds)
 
-    def _would_pass_deadline(self, read_timeout: float) -> bool:
-        """True when another timeout wait would pass the deadline.
-
-        The clock starts at the first read timeout. A healthy run never
-        starts it, so a long import of successful reads is not capped.
-        Fetches before that first timeout are not capped either.
-        """
+    def _timeout_budget_exhausted(self) -> bool:
         with self._rate_lock:
-            started = self._timeout_started
-        if started is None:
-            return False
-        return self._monotonic() + read_timeout > started + IMPORT_DEADLINE_SECONDS
+            return self._timeout_spent >= IMPORT_DEADLINE_SECONDS
 
     def _exhausted_read_timeout(
         self,
@@ -531,21 +578,30 @@ class Uex:
         error: BaseException,
         url: str,
         endpoint: str,
+        started_attempt: float,
     ) -> FetchResult | None:
-        """Retry a read timeout like a 5xx.
+        """Retry a read timeout like a 5xx, until the timeout budget is spent.
 
-        The breaker opens only after two different endpoints have each used
-        their attempts. Return None when the caller should try again.
+        Charged time is the wait that just timed out, plus the backoff of a
+        retry that will actually run. A spent budget fails this endpoint and
+        leaves the breaker alone, so the next endpoint's first attempt still
+        goes out. The breaker opens only after two different endpoints have
+        each used every attempt. Return None when the caller should try again.
         """
         message = str(error) or "read_timeout"
-        self._note_read_timeout()
+        waited = max(0.0, self._monotonic() - started_attempt)
+        self._charge_timeout(waited)
         self.helper.get_handler_debug().write(
             f"Error while retrieving data from {url}: {error}",
             attempt == MAX_ATTEMPTS,
         )
         self.helper.get_handler_error().write("Api.fetch", [url], error)
         if attempt < MAX_ATTEMPTS:
-            self._sleeper(self._backoff_seconds(attempt))
+            if self._timeout_budget_exhausted():
+                return FetchResult(False, error="timeout_budget")
+            backoff = self._backoff_seconds(attempt)
+            self._charge_timeout(backoff)
+            self._sleeper(backoff)
             return None
         with self._rate_lock:
             self._timeout_endpoints.add(endpoint)
