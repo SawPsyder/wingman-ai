@@ -60,7 +60,9 @@ class ExactCodeAndSlugTest(_SqliteCase):
                 (45, 'Iron (Ore)', 'IRONO', 'iron-ore', 1, 0),
                 (47, 'Laranite', 'LARA', 'laranite', 0, 1),
                 (48, 'Laranite (Raw)', 'LARA', 'laranite-raw', 1, 0),
+                (85, 'Ammonia', 'AMMO', 'ammonia', 0, 0),
                 (136, 'Lycara', 'LYCA', 'lycara', 0, 0),
+                (156, 'Freeze', 'FREE', 'freeze', 0, 0),
                 (214, 'Caranite', 'CARA', 'caranite', 0, 1),
                 (213, 'Caranite (Raw)', 'CARW', 'caranite-raw', 1, 0),
                 (153, 'Tritium', 'TRIT', 'tritium', 0, 0),
@@ -118,12 +120,10 @@ class ExactCodeAndSlugTest(_SqliteCase):
             "IRON": "Iron",
             "iron": "Iron",
             "LARA": "Laranite",
-            "lara": "Laranite",
             "CARA": "Caranite",
             "TRIT": "Tritium",
             "POTA": "Potassium",
             "IRONO": "Iron (Ore)",
-            "irono": "Iron (Ore)",
             "iron-ore": "Iron (Ore)",
         }
         for system_one in (False, True):
@@ -137,6 +137,37 @@ class ExactCodeAndSlugTest(_SqliteCase):
                 self.assertNotIn("Did you mean", notes, query)
             if picker is not None:
                 self.assertEqual(picker.decisions, 0)
+
+    def test_lowercase_words_do_not_use_the_code_field(self) -> None:
+        self._commodities()
+        self._llm(None)
+        for query, forbidden in (("lara", "Laranite"), ("ammo", "Ammonia"), ("free", "Freeze")):
+            self._helper.get_handler_tool().notes.clear()
+            self.assertNotEqual(self._commodity(query), forbidden, query)
+
+    def test_explicit_code_field_matches_without_all_caps(self) -> None:
+        from skills.uexcorp.uexcorp.api.llm import Llm
+
+        self._commodities()
+        self._llm(None)
+        llm = Llm(self._helper)
+
+        async def _no_model(*args, **kwargs):
+            return None
+
+        llm.call = _no_model
+        records = [
+            {"key": "Ammonia", "name": "Ammonia", "aliases": ["ammonia"], "codes": ["AMMO"], "is_raw": False},
+            {"key": "Freeze", "name": "Freeze", "aliases": ["freeze"], "codes": ["FREE"], "is_raw": False},
+        ]
+        options = {row["key"]: row["name"] for row in records}
+        missed = asyncio.run(llm.find_closest_key("ammo", options, records=records))
+        self.assertNotEqual(missed.key, "Ammonia")
+        forced = asyncio.run(
+            llm.find_closest_key("ammo", options, records=records, match_code=True)
+        )
+        self.assertEqual(forced.key, "Ammonia")
+        self.assertEqual(forced.method, "alias")
 
     def test_shared_refined_code_is_not_guessed(self) -> None:
         self._commodities()

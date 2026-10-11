@@ -190,6 +190,7 @@ class Llm:
         ask_system_one: bool = True,
         system_one_min_confidence: float | None = None,
         records: list[dict] | None = None,
+        match_code: bool = False,
     ):
         """Pick one key from ``options`` (key -> unique label).
 
@@ -198,18 +199,25 @@ class Llm:
         llm, or dumb), ``candidates`` (key, label, score, description), and
         ``note``. An empty shortlist sets ``note`` and does not ask System One.
 
-        This is one ranker with two profiles. System One and the main model
-        share the prompts below. A name list with no scope uses the plain
-        profile: boosts off, a 0.4 floor, 10 fuzzy results, a substring
-        pass, and the 0.8 dumb fallback. Scoped place rows use the place
-        profile: boosts, alias, scope-word, collapse, and prefix-station
-        rules, a 0.6 floor, and 5 results.
+        One entry point, one exact step, shared prompts, and profile-specific
+        scoring for places versus plain names. The two profiles do not share
+        a scorer: places rank with place rules, and plain names rank with
+        close-string matching. System One and the main model share the
+        prompts below. A name list with no scope uses the plain profile:
+        boosts off, a 0.4 floor, 10 fuzzy results, a substring pass, and the
+        0.8 dumb fallback. Scoped place rows use the place profile: boosts,
+        alias, scope-word, collapse, and prefix-station rules, a 0.6 floor,
+        and 5 results.
 
-        The exact step is the same for both. A query that equals one stored
-        name, including a difference only in case, is method ``exact``. When
-        two stored names differ only by case, the query picks one only if it
-        matches that spelling exactly; any other casing stays a list of
-        candidates and is not sent to a model.
+        The exact step is the same for both, and it runs before either
+        scorer. Names come first, then aliases the caller put on each
+        record: codes, slugs, vehicle short names, and place aliases. A
+        code is only tried for a code-shaped query (one token, all caps,
+        at most five characters) or when ``match_code`` is set. A query
+        that equals one stored name, including a difference only in case,
+        is method ``exact``. When two stored names differ only by case, the
+        query picks one only if it matches that spelling exactly; any other
+        casing stays a list of candidates and is not sent to a model.
 
         ``allow_llm`` and ``allow_dumb`` stay off for a blocklist write;
         ``system_one_min_confidence`` is the write threshold.
@@ -231,6 +239,7 @@ class Llm:
             allow_dumb=allow_dumb,
             ask_system_one=ask_system_one,
             system_one_min_confidence=system_one_min_confidence,
+            match_code=match_code,
         )
 
     async def _rank(
@@ -245,12 +254,15 @@ class Llm:
         allow_dumb: bool,
         ask_system_one: bool,
         system_one_min_confidence: float | None,
+        match_code: bool = False,
     ):
-        """One ranker. The profile is the only difference between the two lists.
+        """One entry point. Scoring stays profile-specific.
 
-        Plain: boosts off, floor 0.4, 10 results, substring pass on, the
-        0.8 dumb fallback. Places: boosts and the place rules on, floor
-        0.6, 5 results. Both use the same exact step.
+        The exact step above the branch is shared. Plain scoring is the
+        close-string list: floor 0.4, 10 results, substring pass on, the
+        0.8 dumb fallback. Place scoring is the place rules: floor 0.6,
+        5 results. These are two scorers selected by the profile, not one
+        scorer with a boost switch.
         """
         def dumb_plain(search: str, close_labels: list[str]) -> str | None:
             """The 0.8 dumb pick, with the two known case fixes applied on top.
@@ -292,6 +304,11 @@ class Llm:
                         best_key = key
                         best = label
             return best
+
+        rows = list(records) if records is not None else _rows_from_options(options)
+        decided = _decide_exact(rows, search, descriptions, match_code=match_code)
+        if decided is not None:
+            return decided
 
         if profile.boosts:
             result = _KeyMatch()
@@ -402,36 +419,6 @@ class Llm:
                 by_label.setdefault(str(label), []).append(str(key))
             labels = list(by_label.keys())
 
-            # A typed spelling wins even when another option differs only by case.
-            for key, label in options.items():
-                if search == label or search == key:
-                    result.key = str(key)
-                    result.keys = [str(key)]
-                    result.score = 1.0
-                    result.method = "exact"
-                    result.candidates = [
-                        _candidate(str(key), str(label), 1.0, descriptions)
-                    ]
-                    return result
-
-            spellings = _spellings_for(labels, search)
-            if len(spellings) > 1:
-                result.candidates = [
-                    _candidate(by_label[label][0], label, 1.0, descriptions)
-                    for label in spellings
-                ]
-                result.note = ", ".join(spellings[:3])
-                return result
-            if len(spellings) == 1:
-                label = spellings[0]
-                key = by_label[label][0]
-                result.key = key
-                result.keys = [key]
-                result.score = 1.0
-                result.method = "exact"
-                result.candidates = [_candidate(key, label, 1.0, descriptions)]
-                return result
-
             close_labels = difflib.get_close_matches(search, labels, n=profile.limit, cutoff=profile.floor)
             if profile.substring:
                 close_labels.extend(
@@ -465,7 +452,7 @@ class Llm:
                 if (
                     picked is not None
                     and picked in by_label
-                    and (not profile.guard_model or _plain_model_pick_ok(search, picked))
+                    and _system_one_pick_ok(search, picked)
                 ):
                     key = by_label[picked][0]
                     result.key = key
@@ -586,6 +573,192 @@ class _KeyMatch:
         self.note = None
 
 
+def _is_code_shaped(query: str) -> bool:
+    """One token, every letter uppercase, at most five characters."""
+    text = (query or "").strip()
+    if not text or any(char.isspace() for char in text) or len(text) > 5:
+        return False
+    letters = [char for char in text if char.isalpha()]
+    return bool(letters) and all(char.isupper() for char in letters)
+
+
+def _system_one_pick_ok(query: str, label: str) -> bool:
+    """Plausibility guard for code-shaped queries only.
+
+    Other queries keep a System One pick that is already on the shortlist,
+    including manufacturer prefixes and word swaps. A code-shaped lookalike
+    such as ``LARA`` to ``Lycara`` still has to pass
+    :func:`_plain_model_pick_ok`. ``FOAM`` to ``Thermalfoam`` stays because
+    its casefold score is under 0.8; the pinned lookalikes sit at 0.8 or above.
+    """
+    if not _is_code_shaped(query):
+        return True
+    if _plain_model_pick_ok(query, label):
+        return True
+    return _plain_casefold_ratio(label, query) < 0.8
+
+
+def _rows_from_options(options: dict[str, str] | None) -> list[dict]:
+    rows = []
+    for key, label in (options or {}).items():
+        rows.append({
+            "key": str(key),
+            "name": str(label),
+            "aliases": [],
+            "codes": [],
+        })
+    return rows
+
+
+def _whole_word_name(query: str, name: str) -> bool:
+    """True when ``name`` starts with ``query``, or contains it, as a word."""
+    folded = (query or "").casefold().strip()
+    text = (name or "").casefold().strip()
+    if not folded or not text:
+        return False
+    if text.startswith(folded) and (len(text) == len(folded) or not text[len(folded)].isalnum()):
+        return True
+    words = [word for word in text.replace("-", " ").replace("(", " ").replace(")", " ").split() if word]
+    return folded in words
+
+
+def _prefer_refined(rows: list[dict]) -> list[dict]:
+    refined = [
+        row for row in rows
+        if not row.get("is_raw")
+        and "(Ore)" not in str(row.get("name") or "")
+        and "(Raw)" not in str(row.get("name") or "")
+    ]
+    return refined or rows
+
+
+def _unique_row_names(rows: list[dict]) -> list[str]:
+    names = []
+    for row in rows:
+        name = str(row.get("name") or "")
+        if name and name not in names:
+            names.append(name)
+    return names
+
+
+def _exact_result(row: dict, descriptions: dict | None, method: str) -> "_KeyMatch":
+    result = _KeyMatch()
+    key = str(row.get("key"))
+    label = str(row.get("name") or key)
+    result.key = key
+    result.keys = [key]
+    result.score = 1.0 if method == "exact" else row.get("score") or 1.0
+    result.method = method
+    item = _candidate(key, label, result.score, descriptions)
+    item["name"] = label
+    if row.get("scope"):
+        item["scope"] = row.get("scope")
+    result.candidates = [item]
+    return result
+
+
+def _unpicked_result(rows: list[dict], descriptions: dict | None) -> "_KeyMatch":
+    """Several exact aliases. List them and do not ask a model."""
+    result = _KeyMatch()
+    seen = []
+    for row in rows:
+        label = str(row.get("name") or row.get("key") or "")
+        if not label or label in seen:
+            continue
+        seen.append(label)
+        key = str(row.get("key"))
+        item = _candidate(key, label, 1.0, descriptions)
+        item["name"] = label
+        result.candidates.append(item)
+    result.note = ", ".join(seen[:3])
+    return result
+
+
+def _terminal_alias_deferred(alias_hits: list[dict], records: list[dict], query: str) -> bool:
+    """A shop nickname must not hide the station whose name uses that word."""
+    if not alias_hits or any(hit.get("scope") != "terminal" for hit in alias_hits):
+        return False
+    alias_keys = {hit.get("key") for hit in alias_hits}
+    for row in records:
+        if row.get("key") in alias_keys or row.get("scope") in (None, "", "terminal"):
+            continue
+        if _whole_word_name(query, str(row.get("name") or "")):
+            return True
+    return False
+
+
+def _decide_exact(records: list[dict], search: str | None, descriptions: dict | None, *, match_code: bool) -> "_KeyMatch | None":
+    """Names, then aliases. None means the profile scorer still has to run.
+
+    Two scoped rows that share one spelling are left to place scoring so
+    orbit collapse can drop the orbit before the candidate list is built.
+    """
+    text = (search or "").strip()
+    if not text or text == "None" or not records:
+        return None
+
+    typed_names = []
+    typed_rows = []
+    for row in records:
+        name = str(row.get("name") or "")
+        key = str(row.get("key") or "")
+        typed = name == text or (not row.get("scope") and key == text and key != name)
+        if not typed:
+            continue
+        typed_rows.append(row)
+        if name not in typed_names:
+            typed_names.append(name)
+    if len(typed_names) == 1:
+        chosen = [row for row in typed_rows if str(row.get("name") or "") == typed_names[0]]
+        if len(chosen) == 1 or not any(row.get("scope") for row in chosen):
+            return _exact_result(chosen[0], descriptions, "exact")
+        return None
+    if len(typed_names) > 1:
+        return _unpicked_result(typed_rows, descriptions)
+
+    spellings = []
+    spelling_rows = []
+    folded = text.casefold()
+    for row in records:
+        name = str(row.get("name") or "")
+        if name.casefold() != folded:
+            continue
+        spelling_rows.append(row)
+        if name not in spellings:
+            spellings.append(name)
+    if len(spellings) > 1:
+        return _unpicked_result(spelling_rows, descriptions)
+    if len(spellings) == 1:
+        chosen = [row for row in spelling_rows if str(row.get("name") or "") == spellings[0]]
+        if len(chosen) == 1 or not any(row.get("scope") for row in chosen):
+            return _exact_result(chosen[0], descriptions, "exact")
+        return None
+
+    code_hits = []
+    alias_hits = []
+    if match_code or _is_code_shaped(text):
+        for row in records:
+            for code in row.get("codes") or []:
+                if str(code).casefold() == folded:
+                    code_hits.append(row)
+                    break
+    for row in records:
+        for alias in row.get("aliases") or []:
+            if str(alias).casefold() == folded:
+                alias_hits.append(row)
+                break
+    if code_hits:
+        chosen = _prefer_refined(code_hits)
+        if len(_unique_row_names(chosen)) == 1:
+            return _exact_result(chosen[0], descriptions, "alias")
+        return None
+    if alias_hits and not _terminal_alias_deferred(alias_hits, records, text):
+        if len(_unique_row_names(alias_hits)) == 1:
+            return _exact_result(alias_hits[0], descriptions, "alias")
+        return _unpicked_result(alias_hits, descriptions)
+    return None
+
+
 def _spellings_for(labels: list[str], query: str) -> list[str]:
     """Labels that equal ``query`` ignoring case, in list order."""
     folded = query.casefold()
@@ -688,10 +861,10 @@ def _place_sort_key(hit: dict):
 
 
 class _RankProfile:
-    """The two settings bags for :meth:`Llm._rank`.
+    """Settings for one of the two scorers behind :meth:`Llm._rank`.
 
-    Plain leaves boosts off. Places turn boosts on and, with them, alias
-    matching, scope-word stripping, orbit collapse, and prefix stations.
+    ``boosts`` selects the place scorer. It does not toggle boosts inside
+    a shared scoring function. Plain scoring leaves that flag off.
     """
 
     def __init__(

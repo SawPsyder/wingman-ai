@@ -11,42 +11,63 @@ from skills.uexcorp.uexcorp.helper import Helper
 _NO_PLACE_MATCH = "No approximate matches found, given name too abstract."
 
 
-def _unique_coded_name(rows, query: str, *, prefer_refined: bool = False) -> str | None:
-    """The one row whose code or slug equals the query, ignoring case.
+def _commodity_records(commodities) -> list[dict]:
+    """Names, plus code and slug aliases, for the shared exact step."""
+    records = []
+    for commodity in commodities:
+        name = str(commodity)
+        code = commodity.get_code() if hasattr(commodity, "get_code") else None
+        slug = commodity.get_slug() if hasattr(commodity, "get_slug") else None
+        raw = bool(commodity.get_is_raw()) if hasattr(commodity, "get_is_raw") else False
+        records.append({
+            "key": name,
+            "name": name,
+            "aliases": [str(slug)] if slug else [],
+            "codes": [str(code)] if code else [],
+            "is_raw": raw or "(Ore)" in name or "(Raw)" in name,
+        })
+    return records
 
-    A shared code prefers the refined commodity over its ore or raw twin.
-    When only the raw row exists, that row is the match. Two refined rows
-    that share a code stay unresolved so ranking can list them.
-    """
-    folded = (query or "").strip().casefold()
-    if not folded:
-        return None
-    hits = []
-    for row in rows:
-        code = str(row.get_code() or "").casefold() if hasattr(row, "get_code") else ""
-        slug = str(row.get_slug() or "").casefold() if hasattr(row, "get_slug") else ""
-        if folded == code or folded == slug:
-            hits.append(row)
-    if not hits:
-        return None
-    chosen = hits
-    if prefer_refined:
-        refined = [
-            row
-            for row in hits
-            if not row.get_is_raw()
-            and "(Ore)" not in str(row)
-            and "(Raw)" not in str(row)
-        ]
-        chosen = refined or hits
-    names = []
-    for row in chosen:
-        name = str(row)
-        if name not in names:
-            names.append(name)
-    if len(names) == 1:
-        return names[0]
-    return None
+
+def _vehicle_records(vehicles) -> list[dict]:
+    """Full names, plus the short name and slug as aliases."""
+    records = []
+    for vehicle in vehicles:
+        full = str(vehicle)
+        aliases = []
+        short = vehicle.get_name() if hasattr(vehicle, "get_name") else None
+        if short and str(short) != full:
+            aliases.append(str(short))
+        slug = vehicle.get_slug() if hasattr(vehicle, "get_slug") else None
+        if slug:
+            aliases.append(str(slug))
+        records.append({"key": full, "name": full, "aliases": aliases, "codes": []})
+    return records
+
+
+def _item_records(items) -> list[dict]:
+    records = []
+    for item in items:
+        name = str(item)
+        slug = item.get_slug() if hasattr(item, "get_slug") else None
+        records.append({
+            "key": name,
+            "name": name,
+            "aliases": [str(slug)] if slug else [],
+            "codes": [],
+        })
+    return records
+
+
+async def _closest_record(helper, query: str, records: list[dict]):
+    """``(key, note)`` from the shared exact step and the plain scorer."""
+    if not records:
+        return None, "No approximate matches found, given name too abstract."
+    options = {row["key"]: row["name"] for row in records}
+    found = await helper.get_llm().find_closest_key(query, options, records=records)
+    if found.key:
+        return found.key, None
+    return None, found.note
 
 
 def _raw_variant_names(commodities, query: str) -> list[str]:
@@ -91,47 +112,6 @@ def _commodity_miss_note(name: str, options: str | None, commodities) -> str:
         f"Invalid commodity name, no match found for '{name}': "
         f"Did you mean one of those?: {shown}"
     )
-
-
-def _short_vehicle_names(vehicles, query: str) -> list[str] | None:
-    """Distinct full names for an exact short ``name``, ignoring case.
-
-    None means the short name is not in the list, so ranking still runs.
-    Two rows that share one full name are one vehicle. Several different
-    full names stay a candidate list and are not sent to a model.
-    """
-    folded = (query or "").strip().casefold()
-    if not folded:
-        return None
-    fulls = []
-    for vehicle in vehicles:
-        if str(vehicle.get_name() or "").casefold() != folded:
-            continue
-        full = str(vehicle)
-        if full not in fulls:
-            fulls.append(full)
-    if not fulls:
-        return None
-    return fulls
-
-
-def _query_names_a_listed_place(query: str, options: str | None) -> bool:
-    """True when a listed place name actually starts with the query or contains it.
-
-    A fuzzy stranger such as Teach's -> Teasa does not count, so the shop
-    hint can still explain that terminal. Ruin -> Ruin Station does count.
-    """
-    if not options or options == _NO_PLACE_MATCH:
-        return False
-    folded = (query or "").casefold().strip()
-    if not folded:
-        return False
-    for part in options.split(","):
-        label = part.strip()
-        name = label.split(" (")[0].casefold()
-        if name.startswith(folded) or folded in name.split():
-            return True
-    return False
 
 
 class Validator:
@@ -273,21 +253,7 @@ class Validator:
 
     async def __validate_ship(self, name: str) -> (str | None, str | None):
         ships = VehicleDataAccess().add_filter_by_is_spaceship(True).load()
-        short = _short_vehicle_names(ships, name)
-        if short is not None:
-            if len(short) == 1:
-                return short[0], None
-            listed = ", ".join(short)
-            return None, (
-                f"Invalid ship name, no match found for '{name}': "
-                f"Did you mean one of those?: {listed}"
-            )
-
-        ship_names = []
-        for ship in ships:
-            ship_names.append(str(ship))
-
-        closest_match, options = await self.__helper.get_llm().find_closest_match(name, ship_names)
+        closest_match, options = await _closest_record(self.__helper, name, _vehicle_records(ships))
         if closest_match:
             return closest_match, None
 
@@ -298,21 +264,7 @@ class Validator:
 
     async def __validate_vehicle(self, name: str) -> (str | None, str | None):
         vehicles = VehicleDataAccess().load()
-        short = _short_vehicle_names(vehicles, name)
-        if short is not None:
-            if len(short) == 1:
-                return short[0], None
-            listed = ", ".join(short)
-            return None, (
-                f"Invalid vehicle name, no match found for '{name}': "
-                f"Did you mean one of those?: {listed}"
-            )
-
-        vehicle_names = []
-        for vehicle in vehicles:
-            vehicle_names.append(str(vehicle))
-
-        closest_match, options = await self.__helper.get_llm().find_closest_match(name, vehicle_names)
+        closest_match, options = await _closest_record(self.__helper, name, _vehicle_records(vehicles))
         if closest_match:
             return closest_match, None
 
@@ -376,15 +328,9 @@ class Validator:
                 commodities = commodity_data_access.add_filter_by_id(ids).load()
         else:
             commodities = commodity_data_access.load()
-        coded = _unique_coded_name(commodities, name, prefer_refined=True)
-        if coded:
-            return coded, None
-
-        commodity_names = []
-        for commodity in commodities:
-            commodity_names.append(str(commodity))
-
-        closest_match, options = await self.__helper.get_llm().find_closest_match(name, commodity_names)
+        closest_match, options = await _closest_record(
+            self.__helper, name, _commodity_records(commodities)
+        )
         if closest_match:
             return closest_match, None
 
@@ -403,14 +349,13 @@ class Validator:
             return closest_match, None
 
         # Route start, destination, and location blacklist pass for_trading.
-        # A shop is a real terminal, so say that instead of "not recognized".
-        # Keep a listed station when the query names it. A fuzzy stranger
-        # does not hide the shop hint.
+        # A listed place is already returned above. This only runs when that
+        # lookup missed, so a shop can say what it is instead of "not recognized".
         if for_trading:
             from skills.uexcorp.uexcorp.resolver import shop_trade_note
 
             shop = await shop_trade_note(self.__helper, name)
-            if shop and not _query_names_a_listed_place(name, options):
+            if shop:
                 return None, shop
 
         return None, f"Invalid location name, no match found for '{name}': Did you mean one of those?: {options}"
@@ -480,18 +425,8 @@ class Validator:
         return {"type": "string", "enum": category_names}
 
     async def __validate_item(self, name: str) -> (str | None, str | None):
-        item_data_access = ItemDataAccess()
-        items = item_data_access.load()
-
-        coded = _unique_coded_name(items, name)
-        if coded:
-            return coded, None
-
-        item_names = []
-        for item in items:
-            item_names.append(str(item))
-
-        closest_match, options = await self.__helper.get_llm().find_closest_match(name, item_names)
+        items = ItemDataAccess().load()
+        closest_match, options = await _closest_record(self.__helper, name, _item_records(items))
 
         if closest_match:
             return closest_match, None
