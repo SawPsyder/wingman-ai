@@ -212,8 +212,9 @@ class Llm:
         The exact step is the same for both, and it runs before either
         scorer. Names come first, then aliases the caller put on each
         record: codes, slugs, vehicle short names, and place aliases. A
-        code is only tried for a code-shaped query (one token, all caps,
-        at most five characters) or when ``match_code`` is set. A query
+        code matches in any letter case. The lowercase words ``ammo`` and
+        ``free`` stay candidates instead of a pick. ``match_code`` forces
+        that pick. A query
         that equals one stored name, including a difference only in case,
         is method ``exact``. When two stored names differ only by case, the
         query picks one only if it matches that spelling exactly; any other
@@ -358,15 +359,25 @@ class Llm:
 
             # Read filters only. A blocklist write leaves allow_dumb off, so
             # a non-exact station still previews instead of being saved.
+            # The whole-word hit has to be unique in the full ranked set.
+            # The 5-row shortlist is only what gets shown.
             if allow_dumb:
-                winner = _single_whole_word_place(text, shown)
+                winner = _single_whole_word_place(text, ranked)
                 if winner is not None:
+                    if not any(hit.get("key") == winner.get("key") for hit in shown):
+                        shown = [winner, *shown]
                     use(shown)
                     result.key = winner["key"]
                     result.keys = [winner["key"]]
                     result.method = "prefix"
                     result.score = winner.get("score")
                     return result
+
+            def hit_for(key):
+                for hit in ranked:
+                    if hit.get("key") == key:
+                        return hit
+                return None
 
             if ask_system_one and shown:
                 by_label = _choice_labels(shown)
@@ -377,35 +388,38 @@ class Llm:
                 )
                 if picked is not None and picked in by_label:
                     key = by_label[picked]
-                    use(shown)
-                    result.key = key
-                    result.keys = [key]
-                    result.method = "system_one"
-                    result.score = next(
-                        (hit.get("score") for hit in shown if hit["key"] == key),
-                        None,
-                    )
-                    return result
+                    hit = hit_for(key)
+                    if _ambiguous_word_pick_ok(text, ranked, hit):
+                        use(shown)
+                        result.key = key
+                        result.keys = [key]
+                        result.method = "system_one"
+                        result.score = next(
+                            (item.get("score") for item in shown if item["key"] == key),
+                            None,
+                        )
+                        return result
 
             names = _unique_names(shown)
             if allow_llm and names:
                 answer = await self._llm_name(text, names)
                 if answer is not None:
                     key = _key_for_name(shown, answer)
-                    if key is not None:
+                    hit = hit_for(key) if key is not None else None
+                    if key is not None and _ambiguous_word_pick_ok(text, ranked, hit):
                         use(shown)
                         result.key = key
                         result.keys = [key]
                         result.method = "llm"
                         result.score = next(
-                            (hit.get("score") for hit in shown if hit["key"] == key),
+                            (item.get("score") for item in shown if item["key"] == key),
                             None,
                         )
                         return result
 
             if allow_dumb:
                 dumb = best_name_match(text, ranked, cutoff=profile.dumb_cutoff)
-                if dumb is not None:
+                if dumb is not None and _ambiguous_word_pick_ok(text, ranked, dumb):
                     use(shown)
                     result.key = dumb["key"]
                     result.keys = [dumb["key"]]
@@ -457,7 +471,10 @@ class Llm:
                     result.candidates.append(_candidate(key, label, ratio, descriptions))
             result.candidates.sort(key=lambda item: (-item["score"], item["key"]))
 
-            if ask_system_one:
+            # A query that is some commodity's code must not fall through to
+            # a lookalike. The exact step already kept the code's own row.
+            code_locked = _query_equals_code(rows, search)
+            if ask_system_one and not code_locked:
                 picked = await self.__system_one_match(
                     search, close_labels, min_confidence=system_one_min_confidence
                 )
@@ -476,7 +493,7 @@ class Llm:
                     )
                     return result
 
-            if allow_llm:
+            if allow_llm and not code_locked:
                 answer = await self._llm_name(search, close_labels)
                 if answer is not None:
                     key = by_label[answer][0]
@@ -489,7 +506,7 @@ class Llm:
                     )
                     return result
 
-            if allow_dumb:
+            if allow_dumb and not code_locked:
                 dumb_match = dumb_plain(search, close_labels)
                 if dumb_match:
                     if allow_llm:
@@ -541,13 +558,17 @@ class Llm:
         return answer
 
     async def find_closest_match(
-        self, search: str | None, lst: list[str] | set[str]
+        self,
+        search: str | None,
+        lst: list[str] | set[str],
+        records: list[dict] | None = None,
     ) -> (str | None, list[str] | set[str]):
         """Name-list wrapper around :meth:`find_closest_key`.
 
         The list has no place scope, so the ranker uses the plain profile:
         boosts off, a 0.4 floor, 10 results, the substring pass, and the
-        0.8 dumb fallback. The empty-shortlist note and the System One
+        0.8 dumb fallback. ``records`` carry codes and aliases into the
+        same exact step. The empty-shortlist note and the System One
         length cap stay as they were. Cache and context notes still apply
         only to a System One or main-model pick.
         """
@@ -564,7 +585,7 @@ class Llm:
             return match, None
 
         options = {str(item): str(item) for item in lst}
-        found = await self.find_closest_key(search, options)
+        found = await self.find_closest_key(search, options, records=records)
         if found.key:
             if found.method in ("system_one", "llm"):
                 self.__helper.add_context(
@@ -592,6 +613,103 @@ def _is_code_shaped(query: str) -> bool:
         return False
     letters = [char for char in text if char.isalpha()]
     return bool(letters) and all(char.isupper() for char in letters)
+
+
+# Spoken English that collides with a commodity code. Any letter case of
+# these stays a candidate; LARA and the other pinned codes are not in here.
+_COMMON_CODE_WORDS = frozenset({"ammo", "free"})
+
+
+def _lowercase_common_word(query: str) -> bool:
+    """True for ``ammo`` and ``free``, not for ``AMMO``, ``Free``, or ``lara``."""
+    text = (query or "").strip()
+    return bool(text) and text == text.casefold() and text in _COMMON_CODE_WORDS
+
+
+def _query_equals_code(records: list[dict] | None, query: str | None) -> bool:
+    folded = (query or "").strip().casefold()
+    if not folded:
+        return False
+    for row in records or []:
+        for code in row.get("codes") or []:
+            if str(code).casefold() == folded:
+                return True
+    return False
+
+
+def _alnum_key(text: str) -> str:
+    return "".join(char for char in (text or "").casefold() if char.isalnum())
+
+
+def _place_shares_query(place: dict, query: str) -> bool:
+    """The place nickname matches once spaces and punctuation are ignored.
+
+    ``Grim HEX`` and ``GrimHEX`` are the same station nickname.
+    ``Ruin Station`` does not share the query ``Ruin``.
+    """
+    key = _alnum_key(query)
+    if not key:
+        return False
+    if _alnum_key(str(place.get("name") or "")) == key:
+        return True
+    for alias in place.get("aliases") or []:
+        if _alnum_key(str(alias)) == key:
+            return True
+    return False
+
+
+_PARENT_PREFERENCE = ("station", "outpost", "poi", "city", "moon", "planet", "orbit", "system")
+
+
+def _collapse_terminal_alias_hits(alias_hits: list[dict], records: list[dict], query: str) -> list[dict]:
+    """Replace a terminal that repeats its parent's nickname with that parent.
+
+    This runs before the alias step decides the list is ambiguous. Seraphim
+    Station and Admin - Seraphim share one nickname, so the station is the
+    only candidate. A terminal with no parent link is dropped when a place
+    already owns that nickname, which is S4DC05's fuel pad.
+    """
+    if not alias_hits or not any(hit.get("scope") for hit in alias_hits):
+        return alias_hits
+    places = {
+        (row.get("scope"), row.get("id")): row
+        for row in records
+        if row.get("scope") not in (None, "", "terminal") and row.get("id") is not None
+    }
+    collapsed = []
+    seen = set()
+
+    def add(row: dict) -> None:
+        key = row.get("key")
+        if key in seen:
+            return
+        seen.add(key)
+        collapsed.append(row)
+
+    for hit in alias_hits:
+        if hit.get("scope") != "terminal":
+            add(hit)
+    for hit in alias_hits:
+        if hit.get("scope") != "terminal":
+            continue
+        parents = hit.get("parents") or {}
+        parent = None
+        for scope in _PARENT_PREFERENCE:
+            if scope not in parents:
+                continue
+            candidate = places.get((scope, parents[scope]))
+            if candidate is None:
+                continue
+            if candidate.get("key") in seen or _place_shares_query(candidate, query):
+                parent = candidate
+                break
+        if parent is not None:
+            add(parent)
+            continue
+        if any(row.get("scope") not in (None, "", "terminal") for row in collapsed):
+            continue
+        add(hit)
+    return collapsed
 
 
 def _system_one_pick_ok(query: str, label: str) -> bool:
@@ -681,6 +799,10 @@ def _unpicked_result(rows: list[dict], descriptions: dict | None) -> "_KeyMatch"
         key = str(row.get("key"))
         item = _candidate(key, label, 1.0, descriptions)
         item["name"] = label
+        if row.get("scope"):
+            item["scope"] = row.get("scope")
+        if row.get("id") is not None:
+            item["id"] = row.get("id")
         result.candidates.append(item)
     result.note = ", ".join(seen[:3])
     return result
@@ -748,12 +870,11 @@ def _decide_exact(records: list[dict], search: str | None, descriptions: dict | 
 
     code_hits = []
     alias_hits = []
-    if match_code or _is_code_shaped(text):
-        for row in records:
-            for code in row.get("codes") or []:
-                if str(code).casefold() == folded:
-                    code_hits.append(row)
-                    break
+    for row in records:
+        for code in row.get("codes") or []:
+            if str(code).casefold() == folded:
+                code_hits.append(row)
+                break
     for row in records:
         for alias in row.get("aliases") or []:
             if str(alias).casefold() == folded:
@@ -761,9 +882,13 @@ def _decide_exact(records: list[dict], search: str | None, descriptions: dict | 
                 break
     if code_hits:
         chosen = _prefer_refined(code_hits)
-        if len(_unique_row_names(chosen)) == 1:
+        unique = len(_unique_row_names(chosen)) == 1
+        # Lowercase everyday words stay a candidate list. Title case and
+        # all caps still pick the commodity, and match_code forces it.
+        if unique and (match_code or not _lowercase_common_word(text)):
             return _exact_result(chosen[0], descriptions, "alias")
-        return None
+        return _unpicked_result(chosen, descriptions)
+    alias_hits = _collapse_terminal_alias_hits(alias_hits, records, text)
     if alias_hits and not _terminal_alias_deferred(alias_hits, records, text):
         if len(_unique_row_names(alias_hits)) == 1:
             return _exact_result(alias_hits[0], descriptions, "alias")
@@ -771,12 +896,43 @@ def _decide_exact(records: list[dict], search: str | None, descriptions: dict | 
     return None
 
 
+def _ambiguous_word_pick_ok(query: str, ranked: list[dict], picked: dict | None) -> bool:
+    """Whether a later picker may choose ``picked`` after the whole-word check.
+
+    One place that uses the query as a word is already the read-filter pick.
+    When several places use it, System One, the main model, and the dumb
+    fallback may still choose one of those places if the query is more than
+    half of that name. Olisar is most of Port Olisar, so that dumb pick
+    stays. They may not choose a lookalike that does not use the word
+    (Start for Star) or a longer name that only contains it (Hurston Fuel,
+    Ajax Mine, Old Star).
+    """
+    if picked is None:
+        return False
+    whole_keys = []
+    for hit in ranked:
+        if not _whole_word_name(query, str(hit.get("name") or "")):
+            continue
+        key = hit.get("key")
+        if key not in whole_keys:
+            whole_keys.append(key)
+    if len(whole_keys) <= 1:
+        return True
+    if picked.get("key") not in whole_keys:
+        return False
+    name = str(picked.get("name") or "").casefold().strip()
+    left = (query or "").casefold().strip()
+    return bool(name) and len(left) * 2 > len(name)
+
+
 def _single_whole_word_place(query: str, hits: list[dict]) -> dict | None:
     """The one place whose name uses the query as a word, among fuzzy hits.
 
-    ``Ruin`` lists Ruin Station ahead of Corin and Crion. Those others are
-    only fuzzy, so the station is the read-filter pick. Two such places, or
-    a terminal alias that is still on the list, stay unresolved.
+    ``hits`` is the full ranked set, not the 5-row shortlist. ``Ruin`` lists
+    Ruin Station ahead of Corin and Crion. Those others are only fuzzy, so
+    the station is the read-filter pick. ``Star`` has more than one such
+    place, so it stays a candidate list. A terminal alias that is still on
+    the list stays unresolved too.
     """
     strong = [hit for hit in hits if _whole_word_name(query, str(hit.get("name") or ""))]
     if len(strong) != 1:

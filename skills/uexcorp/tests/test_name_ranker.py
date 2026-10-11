@@ -495,6 +495,82 @@ def test_names_that_differ_only_by_case_stay_candidates():
     assert calls["decide"] == 0
 
 
+def test_generic_words_stay_candidates_across_the_full_place_list():
+    """One whole-word hit in the shortlist is not enough when another exists."""
+    from skills.uexcorp.uexcorp.api.llm import (
+        _single_whole_word_place,
+        rank_places,
+        shortlist_places,
+    )
+
+    def place(scope, row_id, name):
+        return {
+            "key": f"{scope}:{row_id}",
+            "name": name,
+            "scope": scope,
+            "id": row_id,
+            "aliases": [],
+            "parents": {},
+            "label": name,
+        }
+
+    rows = [
+        place("station", 1, "Start"),
+        place("station", 2, "Stark"),
+        place("station", 3, "Stars"),
+        place("station", 4, "Starr"),
+        place("station", 5, "Old Star"),
+        place("station", 6, "Port Star"),
+        place("station", 7, "Fuel Depot"),
+        place("station", 8, "Hurston Fuel"),
+        place("station", 9, "Shubin Mine"),
+        place("station", 10, "Ajax Mine"),
+    ]
+    llm, _calls = _offline_llm()
+    for query in ("Star", "Fuel", "Mine"):
+        ranked = rank_places(rows, query)
+        shown = shortlist_places(ranked, query, 5)
+        whole = [hit for hit in ranked if _single_whole_word_place(query, [hit])]
+        assert len(whole) >= 2, query
+        found = asyncio.run(
+            llm.find_closest_key(
+                query,
+                {row["key"]: row["name"] for row in rows},
+                records=rows,
+            )
+        )
+        assert found.key is None, query
+        assert found.candidates, query
+        assert len([hit for hit in shown if _single_whole_word_place(query, [hit])]) < len(whole) or query != "Star"
+
+
+def test_unpicked_place_aliases_keep_their_scope():
+    llm, _calls = _offline_llm()
+    rows = [
+        {
+            "key": "station:1",
+            "name": "North Pad",
+            "scope": "station",
+            "id": 1,
+            "aliases": ["twin"],
+            "parents": {},
+        },
+        {
+            "key": "station:2",
+            "name": "South Pad",
+            "scope": "station",
+            "id": 2,
+            "aliases": ["twin"],
+            "parents": {},
+        },
+    ]
+    found = asyncio.run(
+        llm.find_closest_key("twin", {row["key"]: row["name"] for row in rows}, records=rows)
+    )
+    assert found.key is None
+    assert {item.get("scope") for item in found.candidates} == {"station"}
+
+
 def test_hornet_stays_a_list_of_candidates():
     """Several Hornet variants fit, so the ranker does not guess one of them."""
     llm, _calls = _offline_llm()

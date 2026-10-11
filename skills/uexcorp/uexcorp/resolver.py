@@ -234,24 +234,6 @@ def _parent_place(row: dict) -> str | None:
     return None
 
 
-def _casefold_spellings(rows: list[dict], text: str) -> list[str]:
-    """Stored names equal to ``text`` ignoring case, in first-seen order.
-
-    One spelling is an exact name. Two spellings that differ only by case
-    are a collision: the caller must not pick one of them.
-    """
-    folded = text.casefold()
-    seen: list[str] = []
-    known: set[str] = set()
-    for row in rows:
-        name = str(row.get("name") or "")
-        if name.casefold() != folded or name in known:
-            continue
-        known.add(name)
-        seen.append(name)
-    return seen
-
-
 def shop_sentence(name: str, parent: str | None) -> str:
     """``Casaba Outlet is a shop, not a trade terminal. Try Everus Harbor.``"""
     text = f"{name} is a shop, not a trade terminal"
@@ -315,14 +297,6 @@ async def shop_trade_note(helper, name: str) -> str | None:
     shops = _shop_records(helper)
     if not shops:
         return None
-    spellings = _casefold_spellings(shops, text)
-    if len(spellings) > 1:
-        return None
-    exact = [row for row in shops if row["name"] == spellings[0]] if spellings else []
-    if exact:
-        parents = {row.get("parent_name") for row in exact}
-        parent = next(iter(parents)) if len(parents) == 1 else None
-        return shop_sentence(_shop_spoken_name(text, exact[0]["name"]), parent)
     found = await _llm(helper).find_closest_key(
         text,
         {row["key"]: row["name"] for row in shops},
@@ -332,12 +306,49 @@ async def shop_trade_note(helper, name: str) -> str | None:
         allow_dumb=True,
         ask_system_one=True,
     )
-    if not found.key:
+    chosen = _rows_for_keys(shops, found)
+    decided = _decided_name(text, chosen, found)
+    if decided is None:
         return None
-    match = next((row for row in shops if row["key"] == found.key), None)
-    if match is None:
+    parents = {row.get("parent_name") for row in chosen if row["name"] == decided}
+    parent = next(iter(parents)) if len(parents) == 1 else None
+    return shop_sentence(_shop_spoken_name(text, decided), parent)
+
+
+def _decided_name(query: str, chosen: list[dict], found) -> str | None:
+    """One spelling the shared step actually decided.
+
+    A pick keeps its stored name, including a prefix such as Cubby Blast.
+    Rows that only share the query's own spelling still return that
+    spelling, which is how two Pyro Gateways stay one name. A lone fuzzy
+    candidate such as Teasa for Teach's does not.
+    """
+    names = []
+    for row in chosen:
+        name = row.get("name")
+        if name and name not in names:
+            names.append(name)
+    if len(names) != 1:
         return None
-    return shop_sentence(_shop_spoken_name(text, match["name"]), match.get("parent_name"))
+    if getattr(found, "key", None):
+        return names[0]
+    if names[0].casefold() == (query or "").casefold():
+        return names[0]
+    return None
+
+
+def _rows_for_keys(rows: list[dict], found) -> list[dict]:
+    """Rows the shared exact step kept: the pick, or every candidate."""
+    by_key = {row["key"]: row for row in rows}
+    if found.key:
+        match = by_key.get(found.key)
+        return [match] if match is not None else []
+    chosen = []
+    for item in found.candidates or []:
+        match = by_key.get(item.get("key"))
+        if match is not None and match not in chosen:
+            chosen.append(match)
+    return chosen
 
 
 def _shop_spoken_name(query: str, stored: str) -> str:
@@ -366,23 +377,16 @@ def place_by_key(helper, key: str | None) -> dict | None:
 async def resolve_location_name(helper, name: str, for_trading: bool = False):
     """Validator entry. Returns ``(canonical name, note)``.
 
-    One stored spelling, ignoring case, returns that spelling before any
-    model call. Two places that share one spelling still return it. When
+    Names and aliases go through one :meth:`Llm.find_closest_key` call.
+    Two places that share one spelling still return that spelling. When
     two stored spellings differ only by case, a query that copies one of
     them exactly keeps that spelling; any other casing is not a pick.
-    Anything fuzzier goes through one :meth:`Llm.find_closest_key` call that matches names
-    and aliases. Display labels are not the match corpus.
+    Display labels are not the match corpus.
     """
     text = strip_type_tag((name or "").strip())
     if not text or text == "None":
         return None, None
     rows = collect_locations(helper, for_trading=for_trading, available_only=True)
-    spellings = _casefold_spellings(rows, text)
-    typed = [name for name in spellings if name == text]
-    if len(typed) == 1:
-        return typed[0], None
-    if len(spellings) == 1:
-        return spellings[0], None
     found = await _llm(helper).find_closest_key(
         text,
         {row["key"]: row["name"] for row in rows},
@@ -392,10 +396,10 @@ async def resolve_location_name(helper, name: str, for_trading: bool = False):
         allow_dumb=True,
         ask_system_one=True,
     )
-    if found.key:
-        match = next((row for row in rows if row["key"] == found.key), None)
-        if match:
-            return match["name"], None
+    chosen = _rows_for_keys(rows, found)
+    decided = _decided_name(text, chosen, found)
+    if decided is not None:
+        return decided, None
     if not found.note:
         return None, "No approximate matches found, given name too abstract."
     return None, found.note

@@ -60,14 +60,20 @@ def _item_records(items) -> list[dict]:
 
 
 async def _closest_record(helper, query: str, records: list[dict]):
-    """``(key, note)`` from the shared exact step and the plain scorer."""
+    """``(key, note)`` through :meth:`Llm.find_closest_match`.
+
+    The name list keeps the search cache and the ``Use X instead of Y``
+    note. ``records`` still carry codes, slugs, and short names into the
+    one exact step.
+    """
     if not records:
         return None, "No approximate matches found, given name too abstract."
-    options = {row["key"]: row["name"] for row in records}
-    found = await helper.get_llm().find_closest_key(query, options, records=records)
-    if found.key:
-        return found.key, None
-    return None, found.note
+    names = []
+    for row in records:
+        name = str(row.get("name") or "")
+        if name and name not in names:
+            names.append(name)
+    return await helper.get_llm().find_closest_match(query, names, records=records)
 
 
 def _price_sides(helper, commodity_id: int) -> tuple[bool, bool]:
@@ -154,7 +160,7 @@ def _tradable_miss_note(name: str, options: str | None, commodities, tradable_id
             extras.append(sentence)
     if not extras:
         return note
-    return note + " " + " ".join(extras)
+    return note.rstrip(".") + ". Note: " + " ".join(extras)
 
 
 class Validator:

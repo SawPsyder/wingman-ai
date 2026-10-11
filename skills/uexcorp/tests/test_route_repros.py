@@ -292,5 +292,110 @@ class RouteReproTest(_SqliteCase):
                 {"filter_commodity_whitelist": ["Ice"]},
             )
         )
-        self.assertIn("Ice (Raw) exists but isn't tradable", text)
+        self.assertIn(
+            "Pressurized Ice. Note: Ice (Raw) exists but isn't tradable",
+            text,
+        )
+        self.assertNotIn("Pressurized Ice Ice", text)
         self.assertNotIn("too abstract", text)
+
+    def _seed_shared_nicknames(self) -> None:
+        """Stations and the terminals that repeat the station nickname.
+
+        The shared trade seed has a commodity pad whose name is Checkmate.
+        That exact name would hide the station nickname this test is about,
+        so the pad is renamed before the catalog-shaped rows are inserted.
+        """
+        self._seed_trade()
+        self._db.execute("UPDATE terminal SET name = 'Pyro Commodity' WHERE name = 'Checkmate'")
+        self._db.execute(
+            """
+            INSERT INTO space_station (
+                id, name, nickname, id_star_system, star_system_name,
+                is_available, is_available_live, has_trade_terminal
+            ) VALUES
+                (6, 'Baijini Point', 'Baijini', 1, 'Stanton', 1, 1, 1),
+                (11, 'Green Imperial Housing Exchange', 'Grim HEX', 1, 'Stanton', 1, 1, 1),
+                (27, 'Seraphim Station', 'Seraphim', 1, 'Stanton', 1, 1, 1),
+                (31, 'Checkmate Station', 'Checkmate', 3, 'Pyro', 1, 1, 1)
+            """
+        )
+        self._db.execute(
+            """
+            INSERT INTO poi (
+                id, name, nickname, id_star_system, star_system_name,
+                is_available, is_available_live, has_trade_terminal
+            ) VALUES (
+                89, 'Covalex Distribution Center S4DC05', 'S4DC05', 1, 'Stanton', 1, 1, 1
+            )
+            """
+        )
+        self._db.execute(
+            """
+            INSERT INTO terminal (
+                id, name, nickname, code, type, is_available,
+                id_space_station, space_station_name, id_poi, star_system_name
+            ) VALUES
+                (259, 'Admin - Seraphim', 'Seraphim', 'SERAP', 'commodity', 1, 27, 'Seraphim Station', NULL, 'Stanton'),
+                (436, 'Admin - Checkmate', 'Checkmate', 'CHECK', 'commodity', 1, 31, 'Checkmate Station', NULL, 'Pyro'),
+                (27, 'Admin - GrimHEX', 'GrimHEX', 'GRIMX', 'commodity', 1, 11, 'Green Imperial Housing Exchange', NULL, 'Stanton'),
+                (372, 'Landing Services - GrimHEX', 'GrimHEX', 'LSGRI', 'fuel', 1, 11, 'Green Imperial Housing Exchange', NULL, 'Stanton'),
+                (13, 'Admin - Baijini Point', 'Baijini Point', 'BAIJI', 'commodity', 1, 6, 'Baijini Point', NULL, 'Stanton'),
+                (673, 'Ellroy''s - Baijini Point', 'Ellroy''s Baijini', 'BAIJINI', 'item', 1, 6, 'Baijini Point', NULL, 'Stanton'),
+                (801, 'Admin - S4DC05', 'S4DC05', 'S4ADM', 'commodity', 1, NULL, NULL, 89, 'Stanton'),
+                (725, 'Landing Services - Covalex Distribution Centre S4DC05', 'S4DC05', 'LSCMT', 'fuel', 1, NULL, NULL, NULL, 'Stanton')
+            """
+        )
+        self._db.commit()
+
+    def test_shared_station_nicknames_resolve_to_the_place(self) -> None:
+        from skills.uexcorp.uexcorp.resolver import resolve_location_name
+        from skills.uexcorp.uexcorp.tool.location_blocks import BlockLocation
+
+        self._install_llm(None)
+        self._seed_shared_nicknames()
+        handler = self._handler()
+        places = (
+            ("Seraphim", "Seraphim Station", "station"),
+            ("Checkmate", "Checkmate Station", "station"),
+            ("GrimHEX", "Green Imperial Housing Exchange", "station"),
+            ("Grimhex", "Green Imperial Housing Exchange", "station"),
+            ("Baijini", "Baijini Point", "station"),
+            ("S4DC05", "Covalex Distribution Center S4DC05", "poi"),
+        )
+        for query, place, scope in places:
+            trading, note = asyncio.run(
+                resolve_location_name(self._helper, query, for_trading=True)
+            )
+            self.assertEqual(trading, place, query)
+            self.assertIsNone(note, query)
+            listed, listed_note = asyncio.run(
+                resolve_location_name(self._helper, query, for_trading=False)
+            )
+            self.assertEqual(listed, place, query)
+            self.assertIsNone(listed_note, query)
+
+            route, _instant = asyncio.run(
+                handler.execute_tool(
+                    "uex_get_trade_routes",
+                    {"filter_start_location": query},
+                )
+            )
+            self.assertNotIn("not recognized", route, query)
+            self.assertNotIn("Admin - GrimHEX" if query.casefold() == "grimhex" else "\0", route)
+
+            info, _instant = asyncio.run(
+                handler.execute_tool(
+                    "uex_get_location_or_terminal_information",
+                    {"filter_locations": [query]},
+                )
+            )
+            self.assertNotIn("not recognized", info, query)
+            self.assertIn(place, info, query)
+
+            preview, _instant = asyncio.run(BlockLocation().execute(name=query))
+            self.assertIn(place, preview, query)
+            self.assertIn(f"Would block {scope}", preview, query)
+            self.assertIn("confirm=true", preview, query)
+            self.assertNotIn("Nothing was saved", preview, query)
+            self.assertEqual(self._entries(), [], query)

@@ -120,11 +120,25 @@ class ExactCodeAndSlugTest(_SqliteCase):
             "IRON": "Iron",
             "iron": "Iron",
             "LARA": "Laranite",
+            "Lara": "Laranite",
+            "lara": "Laranite",
             "CARA": "Caranite",
+            "Cara": "Caranite",
+            "cara": "Caranite",
             "TRIT": "Tritium",
+            "Trit": "Tritium",
+            "trit": "Tritium",
             "POTA": "Potassium",
+            "Pota": "Potassium",
+            "pota": "Potassium",
             "IRONO": "Iron (Ore)",
+            "Irono": "Iron (Ore)",
+            "irono": "Iron (Ore)",
             "iron-ore": "Iron (Ore)",
+            "FREE": "Freeze",
+            "Free": "Freeze",
+            "AMMO": "Ammonia",
+            "Ammo": "Ammonia",
         }
         for system_one in (False, True):
             picker = _TwinPicker() if system_one else None
@@ -138,11 +152,14 @@ class ExactCodeAndSlugTest(_SqliteCase):
             if picker is not None:
                 self.assertEqual(picker.decisions, 0)
 
-    def test_lowercase_words_do_not_use_the_code_field(self) -> None:
+    def test_lowercase_everyday_words_do_not_use_the_code_field(self) -> None:
+        """``ammo`` and ``free`` are words. ``lara`` is not, so the code still hits."""
         self._commodities()
         self._llm(None)
-        for query, forbidden in (("lara", "Laranite"), ("ammo", "Ammonia"), ("free", "Freeze")):
+        self.assertEqual(self._commodity("lara"), "Laranite")
+        for query, forbidden in (("ammo", "Ammonia"), ("free", "Freeze")):
             self._helper.get_handler_tool().notes.clear()
+            self.assertIsNone(self._commodity(query), query)
             self.assertNotEqual(self._commodity(query), forbidden, query)
 
     def test_explicit_code_field_matches_without_all_caps(self) -> None:
