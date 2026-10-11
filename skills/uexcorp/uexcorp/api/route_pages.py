@@ -21,8 +21,8 @@ def collect_commodity_routes(
     off-planet orbits the caller passes. Those are the station orbits that
     trade this commodity (Levski, Nyx stations, the Gateways), not every orbit.
     Rows are deduped by route id.
-    An origin-orbit page that is itself capped is kept and reported; a finer
-    split is deferred.
+    A planet or origin-orbit page that is itself capped is kept and reported;
+    a finer split is deferred.
     """
     first = fetch_page({"id_commodity": commodity_id})
     if not first.ok:
@@ -51,6 +51,11 @@ def collect_commodity_routes(
         # A short planet page contains every route from that planet, so its
         # origin orbits do not need their own query. A capped planet page does not.
         if len(page_rows) >= cap:
+            if warn is not None:
+                warn(
+                    f"UEX route page for commodity {commodity_id} origin planet {planet_id} "
+                    f"hit the {cap}-row cap. Those rows are kept; a finer split is deferred."
+                )
             continue
         for row in page_rows:
             if not isinstance(row, dict):

@@ -69,6 +69,9 @@ class ImportHandler:
         }
         self.__imported_percent: int = 0
         self.__import_started: bool = False
+        # Set when any dataset returns IMPORT_FAILED. Blacklist sync reads this
+        # and leaves the yaml alone; the file is the only lasting blacklist.
+        self.import_failed: bool = False
 
         self.generate_import_session()
         self.is_preload = False
@@ -94,6 +97,7 @@ class ImportHandler:
             return
 
         self.__common_data["last_import_run_id"] = self.__helper.get_timestamp()
+        self.import_failed = False
         self.__api.begin_run()
 
         self.__helper.get_handler_debug().write(
@@ -129,10 +133,12 @@ class ImportHandler:
         total_count = 0
         self.__imported_percent = 0
         self.__import_started = True
+        self.import_failed = False
         for importer in self.__importers.values():
             if self.active:
                 outcome = importer()
                 if outcome is self.IMPORT_FAILED:
+                    self.import_failed = True
                     self.__helper.get_handler_debug().write(
                         "UEX import step failed. Previous rows for that dataset were kept.",
                         True,

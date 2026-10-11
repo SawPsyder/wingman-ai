@@ -247,7 +247,9 @@ class CommodityRoute(Tool):
                 Validator.VALIDATE_COMMODITY,
                 multiple=True,
                 config={
-                    "for_trading": True
+                    # Any known commodity, not only the current tradable set,
+                    # so a name can be blacklisted or cleared while it has no price.
+                    "for_trading": False
                 },
                 prompt="Excludes trade routes for these commodities.",
             ),

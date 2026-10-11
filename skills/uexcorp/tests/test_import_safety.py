@@ -211,12 +211,9 @@ class _SqliteCase(unittest.TestCase):
         except Exception:
             pass
         Helper._instance = self._original_helper
-        try:
-            for name in os.listdir(self._tmp_dir):
-                os.remove(os.path.join(self._tmp_dir, name))
-            os.rmdir(self._tmp_dir)
-        except OSError:
-            pass
+        import shutil
+
+        shutil.rmtree(self._tmp_dir, ignore_errors=True)
 
     def _route_ids(self) -> list[int]:
         rows = self._db.execute_fetchall("SELECT id FROM commodity_route ORDER BY id")
@@ -354,11 +351,13 @@ class RouteSplitTest(unittest.TestCase):
                 return FetchResult(True, [{"id": 903, "src": "extra"}])
             return FetchResult(True, [])
 
+        warnings = []
         result = collect_commodity_routes(
             fetch_page,
             commodity_id=79,
             planet_ids=[10, 20],
             orbit_ids=[7, 8, 77],
+            warn=warnings.append,
         )
         self.assertTrue(result.ok)
         ids = [row["id"] for row in result.data]
@@ -374,6 +373,10 @@ class RouteSplitTest(unittest.TestCase):
         orbit_queries = [call.get("id_orbit_origin") for call in calls if "id_orbit_origin" in call]
         # Orbit 7 is already covered by planet 10. 8 and 77 are not.
         self.assertEqual(orbit_queries, [8, 77])
+        planet_warnings = [note for note in warnings if "origin planet" in note]
+        self.assertEqual(len(planet_warnings), 1)
+        self.assertIn("20", planet_warnings[0])
+        self.assertIn("deferred", planet_warnings[0])
 
     def test_levski_and_gateway_origins_survive_a_lowered_cap(self) -> None:
         """Agricium-like: 162 routes, cap 100, no planet page capped.
@@ -1237,6 +1240,232 @@ class TradingCommodityValidationTest(_SqliteCase):
         notes = " ".join(self._helper.get_handler_tool().notes)
         self.assertIn("Xyzzyqqq", notes)
         self.assertIn("Invalid commodity name", notes)
+
+    def test_blacklist_accepts_catalog_names_that_are_not_tradable(self) -> None:
+        import asyncio
+
+        from skills.uexcorp.uexcorp.api.llm import Llm
+        from skills.uexcorp.uexcorp.tool.commodity_route import CommodityRoute
+
+        # Gold is in the catalog and blacklisted, with no sell price, so it is
+        # not tradable. The route blacklist must still accept that name. The
+        # whitelist stays on the tradable set.
+        self._db.execute(
+            """
+            INSERT INTO commodity (id, name, is_blacklisted) VALUES
+                (1, 'Gold', 1),
+                (2, 'Iron', 0)
+            """
+        )
+        self._db.execute(
+            """
+            INSERT INTO commodity_price (id, id_commodity, id_terminal, price_buy, price_sell)
+            VALUES
+                (1, 2, 10, 4, 0),
+                (2, 2, 11, 0, 9)
+            """
+        )
+        self._db.commit()
+        self._helper.get_llm = lambda: Llm(self._helper)
+        fields = CommodityRoute().get_optional_fields()
+        blacklist = fields["filter_commodity_blacklist"]
+        whitelist = fields["filter_commodity_whitelist"]
+
+        accepted = asyncio.run(blacklist.validate(["Gold", "Iron"]))
+        self.assertEqual(accepted, ["Gold", "Iron"])
+
+        self._helper.get_handler_tool().notes.clear()
+        rejected = asyncio.run(whitelist.validate(["Gold"]))
+        self.assertIsNone(rejected)
+        self.assertIn("Gold", " ".join(self._helper.get_handler_tool().notes))
+
+        self._helper.get_handler_tool().notes.clear()
+        unknown = asyncio.run(blacklist.validate(["Xyzzyqqq"]))
+        self.assertIsNone(unknown)
+        notes = " ".join(self._helper.get_handler_tool().notes)
+        self.assertIn("Xyzzyqqq", notes)
+
+
+class CommodityBlacklistFileTest(_SqliteCase):
+    def setUp(self) -> None:
+        super().setUp()
+        from skills.uexcorp.uexcorp.handler.config_handler import ConfigHandler
+        from skills.uexcorp.uexcorp.handler.import_handler import ImportHandler
+
+        self._helper.is_ready = lambda: True
+        self._helper.get_data_path = lambda: self._tmp_dir
+        self._import_handler = ImportHandler(self._helper)
+        self._helper.set_import_handler(self._import_handler)
+        self._config = ConfigHandler(self._helper)
+        self._blacklist_path = os.path.join(
+            self._config._ConfigHandler__fine_config_path,
+            "commodity_blacklist.yaml",
+        )
+
+    def _write_blacklist(self, text: str) -> None:
+        os.makedirs(os.path.dirname(self._blacklist_path), exist_ok=True)
+        with open(self._blacklist_path, "w") as handle:
+            handle.write(text)
+
+    def _blacklist_text(self) -> str:
+        with open(self._blacklist_path, "r") as handle:
+            return handle.read()
+
+    def _flags(self) -> dict[str, int]:
+        rows = self._db.execute_fetchall(
+            "SELECT name, is_blacklisted FROM commodity ORDER BY id"
+        )
+        return {row["name"]: row["is_blacklisted"] for row in rows}
+
+    def _sync(self) -> None:
+        self._config.sync_blacklists()
+
+    def test_gold_stays_blacklisted_when_it_is_not_tradable(self) -> None:
+        import yaml
+
+        from skills.uexcorp.uexcorp.tradable import tradable_commodity_ids
+
+        # Import reset the flags. Iron trades. Gold's sell price is zero, and
+        # Laranite is only in the file.
+        self._db.execute(
+            """
+            INSERT INTO commodity (id, name, is_blacklisted) VALUES
+                (1, 'Gold', 0),
+                (2, 'Iron', 0),
+                (3, 'Agricium', 0)
+            """
+        )
+        self._db.execute(
+            """
+            INSERT INTO commodity_price (id, id_commodity, id_terminal, price_buy, price_sell)
+            VALUES
+                (1, 2, 10, 4, 0),
+                (2, 2, 11, 0, 9),
+                (3, 1, 12, 5, 0)
+            """
+        )
+        self._db.commit()
+        self.assertNotIn(1, tradable_commodity_ids(self._db))
+
+        self._write_blacklist(
+            "# user blacklist\n"
+            "- id: 1\n"
+            "  commodity: Gold\n"
+            "  is_blacklisted: true\n"
+            "- id: 99\n"
+            "  commodity: Laranite\n"
+            "  is_blacklisted: true\n"
+        )
+        self._sync()
+
+        self.assertEqual(self._flags()["Gold"], 1)
+        self.assertEqual(self._flags()["Iron"], 0)
+        saved = {
+            row["commodity"]: row["is_blacklisted"]
+            for row in yaml.safe_load(self._blacklist_text())
+        }
+        self.assertEqual(saved["Gold"], True)
+        self.assertEqual(saved["Iron"], False)
+        self.assertEqual(saved["Agricium"], False)
+        self.assertEqual(saved["Laranite"], True)
+
+        # A later import resets the DB flag and re-applies the file.
+        self._db.execute("UPDATE commodity SET is_blacklisted = 0")
+        self._db.commit()
+        self._sync()
+        self.assertEqual(self._flags()["Gold"], 1)
+        saved_again = {
+            row["commodity"]: row["is_blacklisted"]
+            for row in yaml.safe_load(self._blacklist_text())
+        }
+        self.assertEqual(saved_again["Gold"], True)
+        self.assertIn("Laranite", saved_again)
+
+    def test_failed_price_import_leaves_the_blacklist_file(self) -> None:
+        from skills.uexcorp.uexcorp.api.uex import FetchResult
+
+        self._db.execute(
+            """
+            INSERT INTO commodity (id, name, is_blacklisted) VALUES
+                (1, 'Gold', 0),
+                (2, 'Iron', 0)
+            """
+        )
+        self._db.commit()
+        original = (
+            "# user blacklist — do not rewrite empty\n"
+            "- id: 1\n"
+            "  commodity: Gold\n"
+            "  is_blacklisted: true\n"
+            "- id: 2\n"
+            "  commodity: Iron\n"
+            "  is_blacklisted: true\n"
+        )
+        self._write_blacklist(original)
+
+        def fetch(endpoint, get=None, params=None):
+            return FetchResult(False, error="prices down")
+
+        self._import_handler._ImportHandler__api.fetch = fetch
+        self._import_handler._ImportHandler__importers = {
+            "commodity_price": self._import_handler._ImportHandler__import_data_commodity_price,
+        }
+        self._import_handler._ImportHandler__import_data()
+        self.assertTrue(self._import_handler.import_failed)
+
+        self._sync()
+        self.assertEqual(self._blacklist_text(), original)
+        self.assertEqual(self._flags(), {"Gold": 1, "Iron": 1})
+
+    def test_breaker_trip_leaves_the_blacklist_file(self) -> None:
+        self._db.execute(
+            """
+            INSERT INTO commodity (id, name, is_blacklisted) VALUES
+                (1, 'Gold', 0),
+                (2, 'Iron', 0)
+            """
+        )
+        # Leftover prices keep the tradable set non-empty. Skipping has to
+        # come from the failed import, not from an empty price table.
+        self._db.execute(
+            """
+            INSERT INTO commodity_price (id, id_commodity, id_terminal, price_buy, price_sell)
+            VALUES
+                (1, 2, 10, 4, 0),
+                (2, 2, 11, 0, 9)
+            """
+        )
+        self._db.commit()
+        original = (
+            "# user blacklist — breaker must not wipe this\n"
+            "- id: 1\n"
+            "  commodity: Gold\n"
+            "  is_blacklisted: true\n"
+        )
+        self._write_blacklist(original)
+
+        session = _ScriptedSession()
+        session.mode = "forbidden"
+        clock = _Clock()
+        api = Uex(
+            self._helper,
+            sleeper=clock.sleep,
+            monotonic=clock.monotonic,
+            rng=lambda: 0.0,
+        )
+        api.session = session
+        self._import_handler._ImportHandler__api = api
+        self._import_handler._ImportHandler__importers = {
+            "commodity_price": self._import_handler._ImportHandler__import_data_commodity_price,
+        }
+        self._import_handler._ImportHandler__import_data()
+        self.assertTrue(self._import_handler.import_failed)
+        self.assertGreaterEqual(len(session.urls), MAX_ATTEMPTS)
+
+        self._sync()
+        self.assertEqual(self._blacklist_text(), original)
+        self.assertEqual(self._flags()["Gold"], 1)
+        self.assertEqual(self._flags()["Iron"], 0)
 
 
 class OffPlanetOrbitQueryTest(_SqliteCase):

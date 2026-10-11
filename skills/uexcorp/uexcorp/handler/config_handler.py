@@ -175,51 +175,93 @@ class ConfigHandler:
             self.__fine_config_path, "commodity_blacklist.yaml"
         )
 
-        # sync status from file to database
+        # The yaml is the only lasting blacklist. Each commodity import resets
+        # the DB flag, then this method re-applies the file. Read it first and
+        # do not delete it until a full rewrite is known to be safe.
+        file_entries: list[dict] = []
+        readable = True
         if os.path.exists(file_path):
             try:
                 with open(file_path, "r") as file:
-                    commodity_data = yaml.safe_load(file)
-
-                if commodity_data:
-                    for index, commodity in enumerate(commodity_data):
-                        commodity_model = CommodityDataAccess().load_by_property("id", commodity["id"])
-                        if commodity_model is None:
-                            continue
-                        commodity_model.set_is_blacklisted(bool(commodity["is_blacklisted"]))
-                        commodity_model.persist(index < len(commodity_data) - 1)
+                    loaded = yaml.safe_load(file)
+                if isinstance(loaded, list):
+                    file_entries = [entry for entry in loaded if isinstance(entry, dict)]
+                elif loaded not in (None,):
+                    readable = False
             except Exception as e:
+                readable = False
                 self.__helper.get_handler_debug().write(f"Error while syncing commodity blacklist: {e}", True)
                 self.__helper.get_handler_error().write("ConfigHandler.__init_commodity_blacklist", [], e)
-                self.__helper.get_handler_debug().write("Commodity blacklist config will be recreated.", True)
 
-            # delete file after sync
-            os.remove(file_path)
+        applied = True
+        if readable and file_entries:
+            try:
+                applicable = []
+                for commodity in file_entries:
+                    if "id" not in commodity:
+                        continue
+                    commodity_model = CommodityDataAccess().load_by_property("id", commodity["id"])
+                    if commodity_model is None:
+                        continue
+                    commodity_model.set_is_blacklisted(bool(commodity.get("is_blacklisted")))
+                    applicable.append(commodity_model)
+                for index, commodity_model in enumerate(applicable):
+                    commodity_model.persist(index < len(applicable) - 1)
+            except Exception as e:
+                applied = False
+                self.__helper.get_handler_debug().write(f"Error while syncing commodity blacklist: {e}", True)
+                self.__helper.get_handler_error().write("ConfigHandler.__init_commodity_blacklist", [], e)
 
-        # rewrite file to add possible new commodities. Same terminal-price
-        # set as the route import, so Gold and Iron can be blacklisted.
+        # tradable_commodity_ids only decides whether this run's prices are
+        # usable. It is not the set written to disk. Route-tool name checks
+        # are the only place that set is an allow-list. A failed apply leaves
+        # the file untouched so a partial write cannot drop a blacklist.
         from skills.uexcorp.uexcorp.tradable import tradable_commodity_ids
 
+        catalog = CommodityDataAccess().load()
         traded_ids = tradable_commodity_ids(self.__helper.get_database())
-        commodities = (
-            CommodityDataAccess().add_filter_by_id(traded_ids).load() if traded_ids else []
+        import_handler = self.__helper.get_handler_import()
+        import_failed = bool(
+            import_handler is not None and getattr(import_handler, "import_failed", False)
         )
-        commodity_data = []
-        for commodity in commodities:
-            commodity_data.append(
-                {
-                    "id": commodity.get_id(),
-                    "commodity": commodity.get_name(),
-                    "is_blacklisted": bool(commodity.get_is_blacklisted()),
-                }
-            )
+        if not catalog or not traded_ids or import_failed or not applied:
+            return False
+        if not readable:
+            self.__helper.get_handler_debug().write("Commodity blacklist config will be recreated.", True)
+            file_entries = []
 
-        with open(file_path, 'w') as file:
-            file.write("# Only the 'is_blacklisted' value must be changed to 'true' or 'false'.")
-            file.write("\n# Blacklisted commodities ('is_blacklisted: true') will be ignored in trade route calculations.")
-            file.write("\n# If the yaml-format gets corrupted, the file will be deleted and recreated on the next start.")
-            file.write("\n# This would reset previous set commodity blacklists.\n\n")
-            file.write(yaml.dump(commodity_data))
+        # Catalog, plus anything already in the file. A commodity that is not
+        # tradable this run (Gold with no sell price) stays, and so does a
+        # blacklisted name that is no longer in the catalog.
+        written: dict = {}
+        for entry in file_entries:
+            commodity_id = entry.get("id")
+            if commodity_id is None:
+                continue
+            written[commodity_id] = {
+                "id": commodity_id,
+                "commodity": entry.get("commodity"),
+                "is_blacklisted": bool(entry.get("is_blacklisted")),
+            }
+        for commodity in catalog:
+            written[commodity.get_id()] = {
+                "id": commodity.get_id(),
+                "commodity": commodity.get_name(),
+                "is_blacklisted": bool(commodity.get_is_blacklisted()),
+            }
+
+        commodity_data = [written[commodity_id] for commodity_id in sorted(written, key=lambda value: (not isinstance(value, int), value))]
+        payload = (
+            "# Only the 'is_blacklisted' value must be changed to 'true' or 'false'."
+            "\n# Blacklisted commodities ('is_blacklisted: true') will be ignored in trade route calculations."
+            "\n# If the yaml-format gets corrupted, the file will be deleted and recreated on the next start."
+            "\n# This would reset previous set commodity blacklists.\n\n"
+            + yaml.dump(commodity_data)
+        )
+        temporary_path = file_path + ".tmp"
+        with open(temporary_path, "w") as file:
+            file.write(payload)
+        os.replace(temporary_path, file_path)
 
     def __sync_terminal_blacklist(self):
         from skills.uexcorp.uexcorp.data_access.terminal_data_access import TerminalDataAccess
