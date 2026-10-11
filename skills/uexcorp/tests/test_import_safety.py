@@ -1568,6 +1568,145 @@ class OffPlanetOrbitQueryTest(_SqliteCase):
         self.assertLess(len(session.urls), 1 + 3 + 30)
 
 
+class ConnectionErrorBreakerTest(_SqliteCase):
+    def _handler(self, session):
+        from skills.uexcorp.uexcorp.handler.import_handler import ImportHandler
+
+        self._helper.sync_fasterwhisper_hotwords = lambda unload=False: None
+        self._helper.on_import_completed = lambda count: None
+
+        class _Settings:
+            debug_mode = False
+
+        class _Wingmen:
+            settings = _Settings()
+
+        self._helper.get_wingmen = lambda: _Wingmen()
+        self._helper.get_handler_config().get_api_url = (
+            lambda: "https://uex-r3-failure.invalid/2.0"
+        )
+        handler = ImportHandler(self._helper)
+        self._helper.set_import_handler(handler)
+        clock = _Clock()
+        api = Uex(
+            self._helper,
+            sleeper=clock.sleep,
+            monotonic=clock.monotonic,
+            rng=lambda: 0.0,
+        )
+        api.session = session
+        handler._ImportHandler__api = api
+        return handler, api
+
+    def _seed_stale_route(self) -> None:
+        self._db.execute(
+            """
+            INSERT INTO commodity_route (
+                id, id_commodity, price_origin, price_destination, commodity_name, last_import_run_id
+            ) VALUES (7, 33, 1, 2, 'Old Gold', 1)
+            """
+        )
+        self._db.execute(
+            """
+            INSERT INTO imports (`table`, date_imported, dataset_count, time_taken, last_import_run_id)
+            VALUES ('commodity_route', 1, 1, 0, 1)
+            """
+        )
+        self._db.commit()
+
+    def test_persistent_connection_errors_trip_after_one_request(self) -> None:
+        import requests
+
+        self._seed_stale_route()
+
+        class _Down:
+            def __init__(self):
+                self.urls = []
+
+            def get(self, url, params=None, timeout=None, headers=None, stream=None):
+                self.urls.append(url)
+                raise requests.exceptions.ConnectionError(
+                    "Failed to resolve uex-r3-failure.invalid"
+                )
+
+        session = _Down()
+        handler, api = self._handler(session)
+        handler.import_data(True)
+
+        self.assertTrue(api._is_blocked())
+        self.assertTrue(handler.import_failed)
+        self.assertEqual(len(session.urls), MAX_ATTEMPTS)
+        self.assertLess(len(session.urls), 30)
+        self.assertTrue(all("uex-r3-failure.invalid" in url for url in session.urls))
+        self.assertTrue(all(url.endswith("/categories") for url in session.urls))
+        self.assertEqual(self._route_ids(), [7])
+        stamp = self._db.execute_fetchall(
+            "SELECT date_imported, dataset_count FROM imports WHERE `table` = ?",
+            ("commodity_route",),
+        )
+        self.assertEqual(stamp[0]["date_imported"], 1)
+        self.assertEqual(stamp[0]["dataset_count"], 1)
+
+        # A timeout that also burns every attempt opens the breaker the same way.
+        api.begin_run()
+
+        class _Timeouts:
+            def __init__(self):
+                self.urls = []
+
+            def get(self, url, params=None, timeout=None, headers=None, stream=None):
+                self.urls.append(url)
+                raise requests.exceptions.Timeout("timed out")
+
+        timeouts = _Timeouts()
+        api.session = timeouts
+        failed = api.fetch("categories")
+        self.assertFalse(failed.ok)
+        self.assertTrue(api._is_blocked())
+        self.assertEqual(len(timeouts.urls), MAX_ATTEMPTS)
+        again = api.fetch("commodities")
+        self.assertFalse(again.ok)
+        self.assertEqual(len(timeouts.urls), MAX_ATTEMPTS)
+
+    def test_connection_error_then_success_does_not_trip(self) -> None:
+        import requests
+
+        class _Blip:
+            def __init__(self):
+                self.urls = []
+
+            def get(self, url, params=None, timeout=None, headers=None, stream=None):
+                self.urls.append(url)
+                if len(self.urls) == 1:
+                    raise requests.exceptions.ConnectionError("temporary reset")
+                return _Response(
+                    200,
+                    {
+                        "status": "ok",
+                        "data": [{"id": 5, "name": "Weapons", "section": "Ship"}],
+                    },
+                )
+
+        session = _Blip()
+        handler, api = self._handler(session)
+        handler._ImportHandler__importers = {
+            "category": handler._ImportHandler__import_data_category,
+        }
+        handler.import_data(True)
+
+        self.assertFalse(api._is_blocked())
+        self.assertFalse(handler.import_failed)
+        self.assertEqual(len(session.urls), 2)
+        rows = self._db.execute_fetchall("SELECT id, name FROM category")
+        self.assertEqual([(row["id"], row["name"]) for row in rows], [(5, "Weapons")])
+        stamp = self._db.execute_fetchall(
+            "SELECT date_imported, dataset_count FROM imports WHERE `table` = ?",
+            ("category",),
+        )
+        self.assertEqual(stamp[0]["date_imported"], NOW)
+        self.assertEqual(stamp[0]["dataset_count"], 1)
+
+
 class ApiUrlTest(unittest.TestCase):
     def test_bad_api_url_falls_back_and_warns_once(self) -> None:
         import skills.uexcorp.uexcorp.handler.config_handler as config_handler

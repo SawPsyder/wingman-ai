@@ -242,6 +242,18 @@ class Uex:
                     headers=self._get_headers(),
                     stream=True,
                 )
+            except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+                # DNS, connection refused, and timeouts. One failure is retried.
+                # The breaker opens only after this request has used its attempts,
+                # so the rest of the run does not keep calling a dead host.
+                last_error = str(e) or "connection_error"
+                self.helper.get_handler_debug().write(f"Error while retrieving data from {url}: {e}", attempt == MAX_ATTEMPTS)
+                self.helper.get_handler_error().write("Api.fetch", [endpoint, params], e)
+                if attempt >= MAX_ATTEMPTS:
+                    self._trip_breaker(last_error)
+                    return FetchResult(False, error=self._blocked_error or last_error)
+                self._sleeper(self._backoff_seconds(attempt))
+                continue
             except (requests.exceptions.RequestException, requests.exceptions.JSONDecodeError) as e:
                 last_error = str(e)
                 self.helper.get_handler_debug().write(f"Error while retrieving data from {url}: {e}", attempt == MAX_ATTEMPTS)
