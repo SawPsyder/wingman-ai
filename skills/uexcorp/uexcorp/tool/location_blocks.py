@@ -13,7 +13,12 @@ from skills.uexcorp.uexcorp.location_blocklist import (
     parse_duration,
     signature,
 )
-from skills.uexcorp.uexcorp.resolver import format_candidates, resolve_location
+from skills.uexcorp.uexcorp.resolver import (
+    Resolution,
+    format_candidates,
+    place_by_key,
+    resolve_location,
+)
 
 
 def _store(helper) -> LocationBlocklist:
@@ -29,7 +34,9 @@ _AGREEMENT_QUESTION = (
 )
 
 
-async def _confirm_or_preview(store, helper, needed: bool, confirm: bool, sig: str, preview: str):
+async def _confirm_or_preview(
+    store, helper, needed: bool, confirm: bool, sig: str, preview: str, choice: str | None = None
+):
     if not needed:
         return None
     if confirm:
@@ -41,7 +48,7 @@ async def _confirm_or_preview(store, helper, needed: bool, confirm: bool, sig: s
             "That confirmation does not match the pending preview, or the preview expired. Nothing was saved.",
             "",
         )
-    store.remember_preview(sig)
+    store.remember_preview(sig, choice)
     return preview, ""
 
 
@@ -183,17 +190,7 @@ class BlockLocation(Tool):
             expires = parse_duration(duration, helper.get_timestamp())
         except ValueError as error:
             return str(error), ""
-        resolved = await resolve_location(helper, name, scope, for_write=True, available_only=False)
-        if resolved.match is None and not resolved.candidates:
-            return f"No location matches {name}. Nothing was saved.", ""
-        if resolved.match is None:
-            return _candidate_reply(resolved)
-        place = resolved.match
         store = _store(helper)
-        count = store.terminal_count(place)
-        total = store.terminal_total(place)
-        non_exact = resolved.method != "exact"
-        needed = store.needs_confirm("block", place["scope"], count) or non_exact
         sig = signature(
             "block",
             {
@@ -203,6 +200,24 @@ class BlockLocation(Tool):
                 "duration": duration or "",
             },
         )
+        resolved = None
+        if confirm:
+            # Same signature and window as the preview. Skip the name pick.
+            # The noul check in _confirm_or_preview still runs.
+            cached = place_by_key(helper, store.pending_choice(sig))
+            if cached is not None:
+                resolved = Resolution(match=cached, method="cached")
+        if resolved is None:
+            resolved = await resolve_location(helper, name, scope, for_write=True, available_only=False)
+        if resolved.match is None and not resolved.candidates:
+            return f"No location matches {name}. Nothing was saved.", ""
+        if resolved.match is None:
+            return _candidate_reply(resolved)
+        place = resolved.match
+        count = store.terminal_count(place)
+        total = store.terminal_total(place)
+        non_exact = resolved.method != "exact"
+        needed = store.needs_confirm("block", place["scope"], count) or non_exact
         where = f" in {place['path']}" if place.get("path") else ""
         preview = (
             f"Would block {place['scope']} {place['name']}{where}: "
@@ -215,7 +230,9 @@ class BlockLocation(Tool):
             f"Ask the user, then call again with the same arguments and confirm=true "
             f"within {CONFIRM_SECONDS // 60} minutes."
         )
-        held = await _confirm_or_preview(store, helper, needed, bool(confirm), sig, preview)
+        held = await _confirm_or_preview(
+            store, helper, needed, bool(confirm), sig, preview, place.get("key")
+        )
         if held:
             return held
         entry = store.add(place, reason, expires)
@@ -280,19 +297,31 @@ class UnblockLocation(Tool):
     async def execute(self, name: str, confirm: bool | None = None) -> tuple[str, str]:
         helper = self._helper
         store = _store(helper)
+        sig = signature("unblock", {"name": name})
         matches = store.matching_blocks(name)
         non_exact = False
+        choice = None
         # scope:id is exact. A missing station:52 must not fuzzy-match Stanton.
         if _parse_block_ref(name) is not None:
             if not matches:
                 return f"No block matches {name}.", ""
         elif not matches:
-            resolved = await resolve_location(helper, name, None, for_write=True, available_only=False)
-            if resolved.match is None and resolved.candidates:
-                return _candidate_reply(resolved)
-            if resolved.match is not None:
-                non_exact = resolved.method != "exact"
-                place = resolved.match
+            place = None
+            if confirm:
+                cached = place_by_key(helper, store.pending_choice(sig))
+                if cached is not None:
+                    place = cached
+                    non_exact = True
+                    choice = place.get("key")
+            if place is None:
+                resolved = await resolve_location(helper, name, None, for_write=True, available_only=False)
+                if resolved.match is None and resolved.candidates:
+                    return _candidate_reply(resolved)
+                if resolved.match is not None:
+                    non_exact = resolved.method != "exact"
+                    place = resolved.match
+                    choice = place.get("key")
+            if place is not None:
                 matches = [
                     entry
                     for entry in store.read()
@@ -309,13 +338,12 @@ class UnblockLocation(Tool):
         if not matches:
             return f"No block matches {name}.", ""
         needed = store.needs_confirm("unblock", removing=len(matches)) or non_exact
-        sig = signature("unblock", {"name": name})
         names = ", ".join(entry.get("name") or "" for entry in matches)
         preview = (
             f"Would remove {len(matches)} blocks ({names}). "
             "Ask the user, then call again with the same name and confirm=true within 2 minutes."
         )
-        held = await _confirm_or_preview(store, helper, needed, bool(confirm), sig, preview)
+        held = await _confirm_or_preview(store, helper, needed, bool(confirm), sig, preview, choice)
         if held:
             return held
         removed = store.remove_keys([(entry["scope"], entry["id"]) for entry in matches])

@@ -305,6 +305,19 @@ async def shop_trade_note(helper, name: str) -> str | None:
     return shop_sentence(match["name"], match.get("parent_name"))
 
 
+def place_by_key(helper, key: str | None) -> dict | None:
+    """The collected place for a cached ``scope:id``, without running a matcher."""
+    if not key or ":" not in str(key):
+        return None
+    scope, _raw = str(key).split(":", 1)
+    if scope not in _SCOPE:
+        return None
+    for row in collect_locations(helper, scope=scope, available_only=False):
+        if row["key"] == key:
+            return row
+    return None
+
+
 async def resolve_location_name(helper, name: str, for_trading: bool = False):
     """Validator entry. Returns ``(canonical name, note)``.
 

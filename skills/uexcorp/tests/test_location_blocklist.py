@@ -1676,6 +1676,84 @@ class LocationBlocklistTest(_SqliteCase):
         )
         self.assertIn("not recognized", unknown)
 
+    def test_confirm_reuses_the_preview_pick(self) -> None:
+        from types import SimpleNamespace
+
+        from skills.uexcorp.uexcorp.tool.location_blocks import BlockLocation
+
+        self._seed_trade()
+        self._db.execute(
+            """
+            INSERT INTO space_station (id, name, id_star_system, star_system_name, is_available)
+            VALUES (54, 'Ruin Station', 1, 'Stanton', 1)
+            """
+        )
+        self._db.commit()
+
+        class _Answers:
+            def __init__(self, pick, confidence, agreed):
+                self._pick = pick
+                self._confidence = confidence
+                self._agreed = agreed
+                self.seconds = 0.0
+
+            def choice(self, key, min_confidence=0.0):
+                if self._pick is None or self._confidence < min_confidence:
+                    return None
+                return self._pick
+
+            def confidence(self, key):
+                return self._confidence
+
+            def noul(self, key):
+                if self._agreed is None:
+                    return None
+                return 0.95 if self._agreed else 0.05
+
+        class _SystemOne:
+            def __init__(self):
+                self.available = True
+                self.pick_calls = 0
+                self.noul_calls = 0
+
+            def choice(self, instructions, criteria, examples=None):
+                return {"criteria": criteria}
+
+            def noul(self, instructions):
+                return {"question": instructions}
+
+            async def decide(self, state, questions):
+                if "match" in questions:
+                    self.pick_calls += 1
+                    criteria = (questions.get("match") or {}).get("criteria") or {}
+                    pick = "station:54"
+                    if pick not in criteria:
+                        for key in criteria:
+                            if key != "none_of_these" and "Ruin" in str(key):
+                                pick = key
+                                break
+                    return _Answers(pick, 0.91, None)
+                self.noul_calls += 1
+                return _Answers(None, 0.0, None)
+
+        system_one = _SystemOne()
+        wingman = SimpleNamespace(
+            system_one=system_one,
+            conversation=SimpleNamespace(history=lambda: [{"role": "user", "content": "yes"}]),
+        )
+        self._helper.get_handler_config().get_wingman = lambda: wingman
+
+        preview, _instant = asyncio.run(BlockLocation().execute(name="Ruin"))
+        self.assertIn("Would block", preview)
+        self.assertEqual(system_one.pick_calls, 1)
+        self.assertEqual(_PREVIEWS[self._store().path]["choice"], "station:54")
+
+        saved, _instant = asyncio.run(BlockLocation().execute(name="Ruin", confirm=True))
+        self.assertIn("Blocked", saved)
+        self.assertEqual(self._entries()[0]["id"], 54)
+        self.assertEqual(system_one.pick_calls, 1)
+        self.assertEqual(system_one.noul_calls, 1)
+
 
 if __name__ == "__main__":
     unittest.main()

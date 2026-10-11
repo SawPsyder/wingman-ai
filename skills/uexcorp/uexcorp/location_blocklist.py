@@ -301,8 +301,32 @@ class LocationBlocklist:
             return True
         return terminal_count > TERMINAL_CONFIRM_LIMIT
 
-    def remember_preview(self, signature: str) -> None:
-        _PREVIEWS[self.path] = {"signature": signature, "until": self.now() + CONFIRM_SECONDS}
+    def remember_preview(self, signature: str, choice: str | None = None) -> None:
+        """Hold a preview for ``CONFIRM_SECONDS``.
+
+        ``choice`` is the resolved scope:id. A confirm with the same signature
+        reuses it, so System One is not asked to pick the name again. The noul
+        yes-check on confirm is a separate call and still runs.
+        """
+        _PREVIEWS[self.path] = {
+            "signature": signature,
+            "until": self.now() + CONFIRM_SECONDS,
+            "choice": choice,
+        }
+
+    def pending_choice(self, signature: str) -> str | None:
+        """The preview's scope:id while that signature is inside the window."""
+        pending = _PREVIEWS.get(self.path)
+        if not pending:
+            return None
+        if self.now() > int(pending["until"]):
+            return None
+        if pending["signature"] != signature:
+            return None
+        choice = pending.get("choice")
+        if not choice:
+            return None
+        return str(choice)
 
     def accept_confirm(self, signature: str) -> bool:
         pending = _PREVIEWS.get(self.path)
