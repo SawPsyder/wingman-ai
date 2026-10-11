@@ -36,7 +36,6 @@ class Helper:
         if cls._instance is not None:
             cls._instance.get_handler_import().destroy()
             cls._instance.get_database().destroy()
-            cls._instance.sync_fasterwhisper_hotwords(unload=True)
         cls._instance = None
 
     def __init__(self):
@@ -126,90 +125,6 @@ class Helper:
             self.__handler_debug.write(
                 f"UEX/Skill version parity restored. UEX functions are available again.",
                 True,
-            )
-
-    def sync_fasterwhisper_hotwords(self, unload: bool = False):
-        if not self.get_handler_config().get_behavior_use_fasterwhisper_hotwords():
-            return
-
-        self.__handler_debug.write(
-            f"{'Unloading' if unload else 'Syncing'} UEX unique names with the hotword list..."
-        )
-        from skills.uexcorp.uexcorp.data_access.city_data_access import (
-            CityDataAccess,
-        )
-        from skills.uexcorp.uexcorp.data_access.commodity_data_access import (
-            CommodityDataAccess,
-        )
-        from skills.uexcorp.uexcorp.data_access.company_data_access import (
-            CompanyDataAccess,
-        )
-        from skills.uexcorp.uexcorp.data_access.item_data_acceess import (
-            ItemDataAccess,
-        )
-        from skills.uexcorp.uexcorp.data_access.moon_data_access import (
-            MoonDataAccess,
-        )
-        from skills.uexcorp.uexcorp.data_access.outpost_data_access import (
-            OutpostDataAccess,
-        )
-        from skills.uexcorp.uexcorp.data_access.planet_data_access import (
-            PlanetDataAccess,
-        )
-        from skills.uexcorp.uexcorp.data_access.poi_data_access import PoiDataAccess
-        from skills.uexcorp.uexcorp.data_access.space_station_data_access import (
-            SpaceStationDataAccess,
-        )
-        from skills.uexcorp.uexcorp.data_access.star_system_data_access import (
-            StarSystemDataAccess,
-        )
-        from skills.uexcorp.uexcorp.data_access.terminal_data_access import (
-            TerminalDataAccess,
-        )
-        from skills.uexcorp.uexcorp.data_access.vehicle_data_access import (
-            VehicleDataAccess,
-        )
-
-        data_access_instances = [
-            CityDataAccess(),
-            CommodityDataAccess(),
-            # CompanyDataAccess(),
-            # ItemDataAccess(),
-            MoonDataAccess(),
-            # OutpostDataAccess(),
-            PlanetDataAccess(),
-            # PoiDataAccess(),
-            SpaceStationDataAccess(),
-            StarSystemDataAccess(),
-            # TerminalDataAccess(),
-            VehicleDataAccess(),
-        ]
-
-        uex_hotwords = ["UEX"]
-        for data_access in data_access_instances:
-            data = data_access.load()
-            for item in data:
-                item_name = str(item).strip()
-                if item_name:
-                    uex_hotwords.append(item_name)
-        uex_hotwords = list(set(uex_hotwords)) # remove duplicates
-
-        stt = self.get_wingmen().stt
-        if unload:
-            hotword_change = -stt.remove_hotwords(uex_hotwords)
-        else:
-            hotword_change = stt.add_hotwords(uex_hotwords)
-        if hotword_change < 0:
-            self.__handler_debug.write(
-                f"Removed {abs(hotword_change)} UEX hotwords."
-            )
-        elif hotword_change > 0:
-            self.__handler_debug.write(
-                f"Synced {hotword_change} new UEX hotwords."
-            )
-        else:
-            self.__handler_debug.write(
-                "No new UEX hotwords to sync."
             )
 
     def wait(self, seconds: int):

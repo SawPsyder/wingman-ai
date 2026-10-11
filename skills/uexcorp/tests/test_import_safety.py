@@ -1709,7 +1709,6 @@ class ConnectionErrorBreakerTest(_SqliteCase):
     def _handler(self, session):
         from skills.uexcorp.uexcorp.handler.import_handler import ImportHandler
 
-        self._helper.sync_fasterwhisper_hotwords = lambda unload=False: None
         self._helper.on_import_completed = lambda count: None
 
         class _Settings:

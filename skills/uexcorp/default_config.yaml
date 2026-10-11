@@ -140,11 +140,7 @@ custom_properties:
   #   property_type: boolean
   ### Profit Calculation End ###
 
-  ### FasterWhisper Start ###
-  - id: add_fasterwhisper_hotwords
-    name: Add UEX names as hotwords (Experimental)
-    hint: Add common names fetched from UEXCorp as hotwords, so misheard Star Citizen names in what you say are corrected. The bundled Star Citizen list in Settings > Speech-to-text covers most of them already.
-    value: false
-    required: true
-    property_type: boolean
-  ### FasterWhisper End ###
+# Settings removed from the skill. A saved Wingman still stores {id, value}
+# for these. The config loader drops them with no warning.
+retired_custom_properties:
+  - add_fasterwhisper_hotwords

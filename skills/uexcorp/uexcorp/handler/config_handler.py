@@ -142,15 +142,10 @@ class ConfigHandler:
         self.__behavior_commodity_route_default_count: int = 1
         self.__behavior_commodity_route_use_estimated_availability: bool = True
         self.__behavior_commodity_route_advanced_info: bool = False
-        self.__behavior_use_fasterwhisper_hotwords: bool = False
 
     async def validate(self, errors: list[WingmanInitializationError], retrieve_custom_property_value: callable) -> list[WingmanInitializationError]:
         self.__property_retriever = retrieve_custom_property_value
         try:
-            self.set_behavior_update_fasterwhisper_hotwords(
-                retrieve_custom_property_value("add_fasterwhisper_hotwords", errors)
-            )
-
             self.set_behavior_commodity_route_default_count(
                 retrieve_custom_property_value("commodity_route_default_count", errors)
             )
@@ -399,16 +394,6 @@ class ConfigHandler:
 
     def set_behavior_commodity_route_advanced_info(self, advanced_info: bool):
         self.__behavior_commodity_route_advanced_info = advanced_info
-
-    def get_behavior_use_fasterwhisper_hotwords(self) -> bool:
-        errors = []
-        value = self.__property_retriever("add_fasterwhisper_hotwords", errors)
-        if not errors:
-            self.set_behavior_update_fasterwhisper_hotwords(value)
-        return self.__behavior_use_fasterwhisper_hotwords
-
-    def set_behavior_update_fasterwhisper_hotwords(self, update: bool):
-        self.__behavior_use_fasterwhisper_hotwords = update
 
     def set_wingman(self, wingman: "WingmanContext"):
         self.__wingman = wingman

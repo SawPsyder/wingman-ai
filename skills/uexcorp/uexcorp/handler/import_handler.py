@@ -104,11 +104,7 @@ class ImportHandler:
             "Importing UEX api data (may take a while) ..."
         )
         self.__helper.start_timer("import_total")
-        if not self.is_preload:
-            self.__helper.sync_fasterwhisper_hotwords(unload=True)
         total_count = self.__import_data()
-        if not self.is_preload:
-            self.__helper.sync_fasterwhisper_hotwords()
         if self.__helper.get_wingmen().settings.debug_mode:
             self.__helper.get_handler_debug().write(
                 f"UEX api data imported: {total_count} record(s) in {self.__helper.end_timer('import_total')}s",
