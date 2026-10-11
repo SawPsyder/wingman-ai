@@ -16,7 +16,11 @@ from services.config_manager import ConfigManager
 from services.local_ai_service import LocalAiService
 from services import other_language
 from services.config_service import ConfigService
-from services.wingman_default_voices import apply_default_voices
+from services.spoken_language import LANGUAGE_NAMES
+from services.wingman_default_voices import (
+    apply_default_voices,
+    switch_to_azure_for_language,
+)
 from services.printr import Printr
 from services.pub_sub import PubSub
 
@@ -270,8 +274,26 @@ class SettingsService:
                 self.config_manager.app_root_path,
                 settings.spoken_language.value,
             )
-            if (changed or restored) and self.config_service.tower:
-                await self.config_service.load_config()
+            # Pocket TTS is the default for English only: for another language
+            # the Wingmen still on it with a default voice move to Azure.
+            moved = switch_to_azure_for_language(
+                self.config_manager,
+                self.config_manager.app_root_path,
+                settings.spoken_language.value,
+            )
+            if moved:
+                wingmen = [m for m in moved if m != "defaults"] or ["all Wingmen using the defaults"]
+                await self.printr.print_async(
+                    f"Spoken language {LANGUAGE_NAMES.get(settings.spoken_language, settings.spoken_language.value)}: "
+                    f"these Wingmen now speak with Azure voices: {', '.join(wingmen)}.",
+                    color=LogType.INFO,
+                )
+            # Also without a Tower: before sign-in the config is already parsed,
+            # and the Tower starts from that copy, not from the rewritten files.
+            if changed or restored or moved:
+                await self.config_service.load_config(
+                    self.config_service.current_config_dir
+                )
 
         # Local AI (llama.cpp)
         if self.local_ai_service:

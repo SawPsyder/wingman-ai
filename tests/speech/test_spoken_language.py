@@ -103,7 +103,7 @@ def test_only_a_reload_with_another_model_counts_as_a_switch(tmp_path, monkeypat
 
     monkeypatch.setattr(pocket, "use_r2_mirror", lambda: True)
     monkeypatch.setattr(pocket, "build_r2_config", lambda model_id, _dir: model_id)
-    monkeypatch.setattr(pocket, "prefetch_gated_weights", lambda *a, **k: None)
+    monkeypatch.setattr(pocket, "prefetch_model_files", lambda *a, **k: None)
     monkeypatch.setattr(pocket.TTSModel, "load_model", classmethod(lambda cls, **k: object()))
     monkeypatch.setattr(pocket, "get_pocket_tts_models_dir", lambda: str(tmp_path))
     monkeypatch.setattr(pocket, "get_custom_voices_dir", lambda: str(tmp_path))
@@ -138,7 +138,7 @@ def test_an_other_language_passes_its_code_and_no_transcription_hint():
     assert inworld_language(SpokenLanguage.OTHER, dutch) == "nl"
     assert language_name(SpokenLanguage.OTHER, dutch) == "Dutch"
     # Pocket TTS has no Dutch model; the English one stays loaded.
-    assert pocket_tts_model(SpokenLanguage.OTHER, PocketTtsQuality.STANDARD) == "english_2026-09"
+    assert pocket_tts_model(SpokenLanguage.OTHER, PocketTtsQuality.STANDARD) == "english_drifting_26-09"
 
 
 def _context(spoken_language, other_language=None):

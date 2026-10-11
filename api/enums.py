@@ -98,6 +98,18 @@ class TtsVoiceGender(Enum):
     NEUTRAL = "Neutral"
 
 
+class VoiceCloneState(Enum):
+    """Whether a Pocket TTS voice fits the loaded model."""
+
+    CURRENT = "current"
+    """Made for this model, or Wingman makes it from the voice's recording."""
+    OUTDATED = "outdated"
+    """Only an older clone and no recording to make it again: it speaks with
+    the old clone."""
+    MISSING = "missing"
+    """Only clones for other models and no recording: it cannot speak."""
+
+
 class PerplexityModel(Enum):
     """https://docs.perplexity.ai/models/model-cards"""
 
@@ -282,10 +294,13 @@ class RecordingDevice(Enum):
 
 
 class WingmanProTtsProvider(Enum):
-    # One provider since 2026-09-11. OpenAI's voices cost 15 dollars per million
-    # characters against Inworld's 5, and the reason they were kept — Inworld
-    # having two poor German voices — went away when Inworld shipped 17.
+    # Two providers since 3.2.6. Azure is back as the voice every plan has
+    # (15 dollars per million characters), Inworld (5) is in Pro and Ultra.
+    # Which of them a plan may use comes from the backend's /api/v1/models.
+    # Inworld stays first: the sanitizer falls back to the first member when a
+    # stored value is unknown and no template value is at hand.
     INWORLD = "inworld"
+    AZURE = "azure"
 
 
 class McpTransportType(Enum):
@@ -345,6 +360,10 @@ class CustomPropertyTypeEnumModel(BaseEnumModel):
 
 class TtsVoiceGenderEnumModel(BaseEnumModel):
     gender: TtsVoiceGender
+
+
+class VoiceCloneStateEnumModel(BaseEnumModel):
+    state: VoiceCloneState
 
 
 class PerplexityModelEnumModel(BaseEnumModel):
@@ -427,6 +446,7 @@ ENUM_TYPES = {
     "CommandTag": CommandTagEnumModel,
     "CustomPropertyType": CustomPropertyTypeEnumModel,
     "TtsVoiceGender": TtsVoiceGenderEnumModel,
+    "VoiceCloneState": VoiceCloneStateEnumModel,
     "SoundEffect": SoundEffectEnumModel,
     "TtsProvider": TtsProviderEnumModel,
     "SttProvider": SttProviderEnumModel,

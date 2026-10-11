@@ -41,6 +41,8 @@ from api.interface import (
     AudioDevice,
     AudioFile,
     AvatarGenerationRequest,
+    AvatarPrompt,
+    AvatarPromptRequest,
     AvatarVariant,
     BenchmarkResult,
     ChangelogEntry,
@@ -49,6 +51,7 @@ from api.interface import (
     ConfigWithDirInfo,
     CoreStatusResponse,
     ElevenlabsModel,
+    ImageStylePrompt,
     MemoryEntryResponse,
     MemoryUpdateRequest,
     MicStatusResponse,
@@ -68,6 +71,7 @@ from api.interface import (
     PronunciationRule,
     SttTestResult,
     SubscriptionRoutes,
+    SubscriptionTtsModels,
     VocabularyPreset,
     TestConnectionResult,
     VoiceActivationSettings,
@@ -162,6 +166,10 @@ def _key_source(key) -> str:
 
 def _words(text: str) -> list[str]:
     return re.findall(r"[a-zäöüßàâçéèêëîïôûùüÿñáíóú']+", text.lower())
+
+
+class SubscriptionNotSignedIn(Exception):
+    """Core has no device token yet, so it cannot ask the subscription backend."""
 
 
 class WingmanCore(WebSocketUser):
@@ -341,6 +349,20 @@ class WingmanCore(WebSocketUser):
         )
         self.router.add_api_route(
             methods=["GET"],
+            path="/image-style-prompts",
+            endpoint=self.get_image_style_prompts,
+            response_model=list[ImageStylePrompt],
+            tags=tags,
+        )
+        self.router.add_api_route(
+            methods=["POST"],
+            path="/avatar-prompt",
+            endpoint=self.write_avatar_prompt,
+            response_model=AvatarPrompt,
+            tags=tags,
+        )
+        self.router.add_api_route(
+            methods=["GET"],
             path="/avatar-variants",
             endpoint=self.get_avatar_variants,
             response_model=list[AvatarVariant],
@@ -469,6 +491,16 @@ class WingmanCore(WebSocketUser):
             path="/models/wingman-pro/routes",
             response_model=SubscriptionRoutes,
             endpoint=self.get_wingman_routes,
+            tags=tags,
+        )
+
+        # The plan's TTS models (Azure, Inworld), with locks and usage factor,
+        # so the client knows which provider tile to offer.
+        self.router.add_api_route(
+            methods=["GET"],
+            path="/models/wingman-pro/tts",
+            response_model=SubscriptionTtsModels,
+            endpoint=self.get_wingman_tts_models,
             tags=tags,
         )
 
@@ -818,6 +850,9 @@ class WingmanCore(WebSocketUser):
         self.core_state_progress: float | None = None
         self.startup_errors: list[WingmanInitializationError] = []
         self.tower_errors: list[WingmanInitializationError] = []
+        # One Tower build at a time: a language change during sign-in reloads
+        # the config while the sign-in is about to build the Tower itself.
+        self._tower_lock = asyncio.Lock()
 
         self.key_events = {}
         # When "stop" was last said with nothing playing; see _on_transcript.
@@ -1518,6 +1553,10 @@ class WingmanCore(WebSocketUser):
         await self.refresh_input_hooks()
 
     async def initialize_tower(self, config_dir_info: ConfigWithDirInfo):
+        async with self._tower_lock:
+            await self._initialize_tower(config_dir_info)
+
+    async def _initialize_tower(self, config_dir_info: ConfigWithDirInfo):
         if not self.is_client_logged_in:
             self.printr.print(
                 "Client not logged in yet - skipping Tower initialization.",
@@ -2146,13 +2185,13 @@ class WingmanCore(WebSocketUser):
             other_language.restore_wingmen(self.config_manager)
         await self.settings_service.save_settings(settings)
 
-        voices, provider = await self._inworld_voices_for(language.code)
+        voices, provider, subprovider = await self._inworld_voices_for(language.code)
         switched = []
         if voices and provider:
             defaults = self.config_manager.load_defaults_config(silent_on_error=True)
             default_tts = defaults.features.tts_provider.value if defaults else "pocket_tts"
             switched = other_language.switch_wingmen(
-                self.config_manager, default_tts, language, provider, voices
+                self.config_manager, default_tts, language, provider, voices, subprovider
             )
             if switched and self.config_service.tower:
                 await self.config_service.load_config()
@@ -2161,10 +2200,11 @@ class WingmanCore(WebSocketUser):
         )
 
     async def _inworld_voices_for(self, code: Optional[str]):
-        """Inworld voices for ``code`` and the provider to reach them through:
-        the subscription when signed in, else the user's own Inworld key."""
+        """Voices for ``code``, the provider to reach them through and, for
+        the subscription, its voice provider: Inworld when the plan has it,
+        else Azure. Without a sign-in, the user's own Inworld key."""
         if not code:
-            return [], None
+            return [], None, None
         try:
             if self.is_client_logged_in:
                 from providers.wingman_subscription import WingmanSubscription
@@ -2172,19 +2212,28 @@ class WingmanCore(WebSocketUser):
                 subscription = WingmanSubscription(
                     wingman_name="system", settings=self.settings_service.settings.wingman_pro
                 )
-                voices = await asyncio.get_running_loop().run_in_executor(
-                    None, subscription.get_available_inworld_voices
+                tts = await self.get_wingman_tts_models()
+                has_inworld = not tts.models or any(
+                    m.provider == "inworld" and m.available for m in tts.models
                 )
-                return other_language.inworld_speaks(voices, code), "wingman_pro"
+                if has_inworld:
+                    voices = await asyncio.get_running_loop().run_in_executor(
+                        None, subscription.get_available_inworld_voices
+                    )
+                    return other_language.inworld_speaks(voices, code), "wingman_pro", "inworld"
+                voices = await asyncio.get_running_loop().run_in_executor(
+                    None, subscription.get_available_azure_voices
+                )
+                return other_language.azure_speaks(voices, code), "wingman_pro", "azure"
             key = SecretKeeper().secrets.get("inworld")
             if key:
                 from providers.inworld import Inworld
 
                 voices = await Inworld(api_key=key, wingman_name="").get_available_voices()
-                return other_language.inworld_speaks(voices, code), "inworld"
+                return other_language.inworld_speaks(voices, code), "inworld", None
         except Exception as e:
-            self.printr.print(f"Could not list Inworld voices: {e}", server_only=True)
-        return [], None
+            self.printr.print(f"Could not list voices: {e}", server_only=True)
+        return [], None, None
 
     # ───────────────── Microphone test (Settings) ───────────────── #
 
@@ -2269,6 +2318,8 @@ class WingmanCore(WebSocketUser):
         )
 
         self.listen_controller.playback_started()
+        if getattr(self, "audio_input", None):
+            self.audio_input.set_output_busy(True)
         self._emit_voice_state()
 
         if time.time() - self._stop_requested_at <= STOP_AHEAD_SECONDS:
@@ -2288,6 +2339,8 @@ class WingmanCore(WebSocketUser):
         )
 
         self.listen_controller.playback_finished()
+        if getattr(self, "audio_input", None):
+            self.audio_input.set_output_busy(False)
         self._emit_voice_state()
 
     async def process_events(self):
@@ -2374,22 +2427,38 @@ class WingmanCore(WebSocketUser):
     async def get_avatar_variants(self, wingman_name: str) -> list[AvatarVariant]:
         return avatar_studio.list_variants(wingman_name)
 
+    # GET /image-style-prompts
+    async def get_image_style_prompts(self) -> list[ImageStylePrompt]:
+        return avatar_studio.style_prompts()
+
+    # POST /avatar-prompt
+    async def write_avatar_prompt(self, request: AvatarPromptRequest) -> AvatarPrompt:
+        wingman = self._studio_wingman(request.wingman_name)
+        try:
+            return AvatarPrompt(
+                prompt=await avatar_studio.write_prompt(wingman, request)
+            )
+        except avatar_studio.AvatarStudioError as e:
+            raise HTTPException(status_code=502, detail=str(e))
+
     # POST /avatar-variants
     async def generate_avatar_variant(
         self, request: AvatarGenerationRequest
     ) -> AvatarVariant:
-        wingman = (
-            self.tower.get_wingman_by_name(request.wingman_name) if self.tower else None
-        )
+        wingman = self._studio_wingman(request.wingman_name)
+        try:
+            return await avatar_studio.generate_variant(wingman, request)
+        except avatar_studio.AvatarStudioError as e:
+            raise HTTPException(status_code=502, detail=str(e))
+
+    def _studio_wingman(self, wingman_name: str) -> OpenAiWingman:
+        wingman = self.tower.get_wingman_by_name(wingman_name) if self.tower else None
         if not isinstance(wingman, OpenAiWingman):
             raise HTTPException(
                 status_code=404,
                 detail="This wingman is not loaded. Enable it and try again.",
             )
-        try:
-            return await avatar_studio.generate_variant(wingman, request)
-        except avatar_studio.AvatarStudioError as e:
-            raise HTTPException(status_code=502, detail=str(e))
+        return wingman
 
     # DELETE /avatar-variants
     async def delete_avatar_variant(self, wingman_name: str, file_name: str):
@@ -2741,6 +2810,8 @@ class WingmanCore(WebSocketUser):
     async def _start_precompute(self, only_stale: bool) -> dict:
         if not self.pocket_tts.settings.enable or not self.pocket_tts.settings.run_locally:
             return {"started": False, "reason": "pocket_tts unavailable", "total": 0}
+        if self.pocket_tts.is_loading:
+            return {"started": False, "reason": "model loading", "total": 0}
         if not self.pocket_tts.model:
             return {"started": False, "reason": "model not loaded", "total": 0}
         if self.pocket_tts._precompute_running:
@@ -3201,9 +3272,14 @@ class WingmanCore(WebSocketUser):
         One request for both, because the two pickers in the client are on screen
         at the same time and the backend assembles them from the same catalogue.
         """
+        # The device token, saved by the client on sign-in. Never ask for it: the
+        # user does not know it, and the client may ask for the models before
+        # it has saved the token.
         wingman_pro_token = await self.secret_keeper.retrieve(
-            key="wingman_pro", requester="WingmanPro"
+            key="wingman_pro", requester="WingmanPro", prompt_if_missing=False
         )
+        if not wingman_pro_token:
+            raise SubscriptionNotSignedIn()
         response = requests.get(
             url=f"{self.settings_service.settings.wingman_pro.base_url}/api/v1/models",
             timeout=10,
@@ -3222,8 +3298,11 @@ class WingmanCore(WebSocketUser):
             # The backend answers {plan, models:[{id,name}], support:{...}}; the
             # client wants the bare list, the way the old endpoint returned it.
             return body.get("models", [])
+        except SubscriptionNotSignedIn:
+            # A fresh install before the first sign-in. Not an error worth a toast.
+            return []
         except Exception as e:
-            self.printr.toast_error(f"Wingman Pro: \n{str(e)}")
+            self.printr.toast_error(f"Wingman Subscription: \n{str(e)}")
             return []
 
     # GET /models/wingman-pro/support
@@ -3253,6 +3332,17 @@ class WingmanCore(WebSocketUser):
         except Exception:
             pass
         return SubscriptionRoutes()
+
+    # GET /models/wingman-pro/tts
+    async def get_wingman_tts_models(self) -> SubscriptionTtsModels:
+        """Every TTS model of every plan, `available` for this one. Empty when
+        not signed in or when the backend is unreachable."""
+        from providers.wingman_subscription import tts_models_from
+
+        try:
+            return tts_models_from(await self._fetch_subscription_models())
+        except Exception:
+            return SubscriptionTtsModels()
 
     # GET /models/elevenlabs
     async def get_elevenlabs_models(self) -> list[ElevenlabsModel]:
@@ -4347,6 +4437,9 @@ class WingmanCore(WebSocketUser):
 
     # GET /memories/{wingman_name}
     def get_memories(self, wingman_name: str):
+        # No Tower before sign-in, while the client may already show the page.
+        if not self.tower:
+            return []
         wingman = self.tower.get_wingman_by_name(wingman_name)
         if not wingman or not hasattr(wingman, "ensure_memory_initialized"):
             return []

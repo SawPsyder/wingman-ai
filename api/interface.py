@@ -2,6 +2,7 @@ from typing import Optional
 from typing_extensions import Annotated, TypedDict
 from pydantic import Base64Str, BaseModel, ConfigDict, Field, model_validator
 from api.enums import (
+    VoiceCloneState,
     ConversationProvider,
     CoreState,
     ImageGenerationProvider,
@@ -149,6 +150,12 @@ class VoiceInfo(BaseModel):
     provider: Optional[str] = None
     description: Optional[str] = None
     """A short line on how the voice sounds, e.g. "ruhig, gemächlich"."""
+    locked: bool = False
+    """The voice needs a higher plan. Subscription voices only; the backend
+    plays a free voice of the same gender instead, previews play it as is."""
+    clone_state: VoiceCloneState = VoiceCloneState.CURRENT
+    """Pocket TTS custom voices only: whether the voice fits the loaded model
+    or only an old clone without its recording is left."""
 
 
 # from sounddevice lib
@@ -496,8 +503,18 @@ class LocalLlmConfig(BaseModel):
     endpoint: str
 
 
+class AzureTtsConfig(BaseModel):
+    """Azure voices through the subscription. The region is the backend's
+    business, so only the voice and the streaming switch are left."""
+
+    voice: str
+    """Full Azure short name, e.g. "en-US-JennyMultilingualNeural"."""
+    output_streaming: bool
+
+
 class WingmanProConfig(BaseModel):
     tts_provider: WingmanProTtsProvider
+    azure: AzureTtsConfig
 
     conversation_deployment: str = ""
     """Gateway id of the chat model, or empty to follow the plan's default.
@@ -1662,6 +1679,32 @@ class SubscriptionRoutes(BaseModel):
     """What chat falls back to once the allowance is used up."""
 
 
+class SubscriptionTtsModel(BaseModel):
+    id: str
+    name: str
+    provider: str
+    """Either "azure" or "inworld", the values of WingmanProTtsProvider."""
+    available: bool
+    """False: another plan has it, this one does not."""
+    usage_factor: int
+    """How much of the allowance a spoken sentence uses, relative to the
+    cheapest TTS model (1). Never a price."""
+
+
+class SubscriptionTtsModels(BaseModel):
+    """The `tts` part of the backend's /api/v1/models: every TTS model of every
+    plan, so the client can show what is locked."""
+
+    default: Optional[str] = None
+    """The plan's default TTS model id. None when the backend did not answer."""
+    models: list[SubscriptionTtsModel] = []
+
+
+class MachineHash(BaseModel):
+    machine_hash: str
+    """sha256 of the machine's id, salted. The raw id never leaves Core."""
+
+
 class BenchmarkResult(BaseModel):
     label: str
     execution_time_ms: float
@@ -1690,18 +1733,42 @@ class TokenUsage(BaseModel):
     """Tokens the model wrote, summed over every request of the turn."""
 
 
+class AvatarPromptRequest(BaseModel):
+    """Lets the wingman's model write the prompt for a new avatar variant."""
+
+    wingman_name: str
+    style: ImageStyle
+    """The art style preset. Its text opens the prompt."""
+    wishes: str
+    """What the user wants, in any language. May be empty: then the backstory
+    alone decides. With `refine` it says what should change."""
+    refine: bool
+    """True when the image will be built on a reference image. Then the
+    prompt says what changes instead of describing the whole character."""
+
+
+class AvatarPrompt(BaseModel):
+    prompt: str
+    """The complete prompt: style, character description and framing."""
+
+
+class ImageStylePrompt(BaseModel):
+    """What a style preset adds to an image prompt."""
+
+    style: ImageStyle
+    prompt: str
+    """Empty for NONE."""
+
+
 class AvatarGenerationRequest(BaseModel):
     """One new avatar variant from the avatar studio."""
 
     wingman_name: str
+    prompt: str
+    """The complete prompt. Core sends it to the image model as is."""
     style: ImageStyle
-    """The art style preset. Core adds its text and the avatar framing."""
-    wishes: str
-    """What the user wants, in any language. May be empty: then the backstory
-    alone decides. With a reference it says what should change."""
-    prompt: Optional[str] = None
-    """The character description to use as is. None lets the wingman's model
-    write it from backstory and wishes."""
+    """The style preset the prompt was written with. Stored with the variant,
+    so the studio selects it again when the user goes back to it."""
     reference: Optional[str] = None
     """File name of an earlier variant, or an uploaded image as data URL. The
     new image keeps its character. None generates from scratch."""
@@ -1716,7 +1783,7 @@ class AvatarVariant(BaseModel):
     path: str
     """Absolute file path, for "show in folder"."""
     prompt: str
-    """The character description the image was made from, without style and framing."""
+    """The complete prompt the image was made from."""
     style: ImageStyle
     created: float
     """Unix timestamp."""

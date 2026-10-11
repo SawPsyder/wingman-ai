@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import yaml
 
-from api.enums import TtsProvider
+from api.enums import TtsProvider, WingmanProTtsProvider
 from api.interface import AudioDeviceSettings, AudioSettings, CommandCategoryConfig
 from wingmen import facade
 
@@ -53,12 +53,74 @@ def test_a_stored_device_resolves_to_its_index(monkeypatch):
     assert facade._device_index(None, "output") is None
 
 
-def test_the_subscription_voice_is_read_from_inworld():
-    config = SimpleNamespace(
+def _subscription_config(subprovider):
+    return SimpleNamespace(
         features=SimpleNamespace(tts_provider=TtsProvider.WINGMAN_PRO),
-        inworld=SimpleNamespace(voice_id="Ashley"),
+        wingman_pro=SimpleNamespace(
+            tts_provider=subprovider,
+            azure=SimpleNamespace(voice="en-US-AndrewMultilingualNeural", output_streaming=True),
+        ),
+        inworld=SimpleNamespace(voice_id="Ashley", output_streaming=True),
     )
-    assert facade.SkillTts(SimpleNamespace(config=config)).voice == "Ashley"
+
+
+def test_the_subscription_voice_follows_its_voice_provider():
+    inworld = _subscription_config(WingmanProTtsProvider.INWORLD)
+    azure = _subscription_config(WingmanProTtsProvider.AZURE)
+
+    assert facade.SkillTts(SimpleNamespace(config=inworld)).voice == "Ashley"
+    assert facade.SkillTts(SimpleNamespace(config=azure)).voice == "en-US-AndrewMultilingualNeural"
+
+
+def test_a_voice_is_applied_to_the_subscriptions_voice_provider():
+    azure = _subscription_config(WingmanProTtsProvider.AZURE)
+    assert facade.apply_voice_to_current_provider(azure, "de-DE-KatjaNeural") == (
+        "de-DE-KatjaNeural", "Wingman Pro / Azure TTS"
+    )
+    assert azure.wingman_pro.azure.voice == "de-DE-KatjaNeural"
+    assert azure.inworld.voice_id == "Ashley"
+
+    inworld = _subscription_config(WingmanProTtsProvider.INWORLD)
+    facade.apply_voice_to_current_provider(inworld, "Edward")
+    assert inworld.inworld.voice_id == "Edward"
+    assert inworld.inworld.output_streaming is False
+
+
+def _pocket_wingman(voice_ids):
+    pocket = SimpleNamespace(
+        get_available_voices=AsyncMock(
+            return_value=[SimpleNamespace(id=v) for v in voice_ids]
+        )
+    )
+    return SimpleNamespace(
+        config=SimpleNamespace(
+            features=SimpleNamespace(tts_provider=TtsProvider.POCKET_TTS),
+            pocket_tts=SimpleNamespace(voice="alba"),
+        ),
+        tts=SimpleNamespace(),
+        _shared_providers={"pocket_tts": pocket},
+    )
+
+
+def test_a_pocket_tts_voice_without_its_file_is_missing():
+    tts = facade.SkillTts(_pocket_wingman(["alba", "moxxi1"]))
+
+    assert [v.id for v in _run(tts.voices())] == ["alba", "moxxi1"]
+    assert _run(tts.missing_voices(["alba", "moxxi", "moxxi1"])) == ["moxxi"]
+
+
+def test_a_missing_voice_is_not_set():
+    wingman = _pocket_wingman(["alba"])
+
+    result = _run(facade.SkillTts(wingman).set_voice("Fabieng"))
+
+    assert "Fabieng" in result
+    assert wingman.config.pocket_tts.voice == "alba"
+
+
+def test_other_providers_have_no_missing_voices():
+    tts = facade.SkillTts(SimpleNamespace(config=_subscription_config(WingmanProTtsProvider.INWORLD)))
+    assert _run(tts.missing_voices(["Fabieng"])) == []
 
 
 def test_categories_are_saved_with_the_commands(tmp_path, monkeypatch):
