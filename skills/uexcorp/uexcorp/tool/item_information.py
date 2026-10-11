@@ -49,6 +49,11 @@ class ItemInformation(Tool):
                 category_data_access.add_filter_by_combined_name(filter_category)
                 category_data_access.add_filter_by_is_game_related(True)
                 categories = category_data_access.load(debug=True)
+                if not categories:
+                    helper.get_handler_tool().add_note(
+                        f"No category matches {', '.join(filter_category)}."
+                    )
+                    return [], ""
                 item_data_access.add_filter_by_id_category([category.get_id() for category in categories])
 
             if filter_buy_location:
@@ -56,6 +61,11 @@ class ItemInformation(Tool):
                 terminal_data_access.add_filter_by_location_name_whitelist(filter_buy_location)
                 terminal_data_access.add_filter_by_type(Terminal.TYPE_ITEM)
                 terminals = terminal_data_access.load(debug=True)
+                if not terminals:
+                    helper.get_handler_tool().add_note(
+                        f"No terminal matches buy location {', '.join(filter_buy_location)}."
+                    )
+                    return [], ""
 
                 item_price_data_access = ItemPriceDataAccess()
                 item_price_data_access.add_filter_by_id_terminal([terminal.get_id() for terminal in terminals])
@@ -66,12 +76,22 @@ class ItemInformation(Tool):
                     if item_price.get_id_item() not in item_price_item_ids:
                         item_price_item_ids.append(item_price.get_id_item())
 
+                if not item_price_item_ids:
+                    helper.get_handler_tool().add_note(
+                        f"No item is sold at {', '.join(filter_buy_location)}."
+                    )
+                    return [], ""
                 item_data_access.add_filter_by_id(item_price_item_ids)
 
             if filter_company:
                 company_data_access = CompanyDataAccess()
                 company_data_access.add_filter_by_name(filter_company)
                 companies = company_data_access.load(debug=True)
+                if not companies:
+                    helper.get_handler_tool().add_note(
+                        f"No company matches {', '.join(filter_company)}."
+                    )
+                    return [], ""
                 item_data_access.add_filter_by_id_company([company.get_id() for company in companies])
 
             if filter_attribute:
@@ -130,6 +150,11 @@ class ItemInformation(Tool):
                     for item_attribute in item_attributes:
                         if item_attribute.get_id_item() not in item_ids:
                             item_ids.append(item_attribute.get_id_item())
+                    if not item_ids:
+                        helper.get_handler_tool().add_note(
+                            "No item matches the given attributes."
+                        )
+                        return [], ""
                     item_data_access.add_filter_by_id(item_ids)
 
         items = item_data_access.load(debug=True)

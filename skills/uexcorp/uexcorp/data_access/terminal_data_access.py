@@ -82,14 +82,19 @@ class TerminalDataAccess(DataAccess):
         return self
 
     def add_filter_by_location_name_blacklist(self, location_names: str | list[str]) -> "TerminalDataAccess":
-        self.filter.where("star_system_name", location_names, "!=")
-        self.filter.where("planet_name", location_names, "!=")
-        self.filter.where("orbit_name", location_names, "!=")
-        self.filter.where("moon_name", location_names, "!=")
-        self.filter.where("space_station_name", location_names, "!=")
-        self.filter.where("outpost_name", location_names, "!=")
-        self.filter.where("city_name", location_names, "!=")
-        self.filter.where("name", location_names, "!=")
+        # NULL-safe: a terminal is excluded only when a location column actually
+        # equals the name. Empty columns stay in the result.
+        for column in (
+            "star_system_name",
+            "planet_name",
+            "orbit_name",
+            "moon_name",
+            "space_station_name",
+            "outpost_name",
+            "city_name",
+            "name",
+        ):
+            self.filter.where_null_or_excluded(column, location_names)
         return self
 
     def add_filter_by_id_star_system(self, id_star_system: int | list[int]) -> "TerminalDataAccess":

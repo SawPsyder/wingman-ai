@@ -3,6 +3,27 @@ from skills.uexcorp.uexcorp.tool.tool import Tool
 from skills.uexcorp.uexcorp.tool.validator import Validator
 
 
+def _no_routes(helper, note: str):
+    helper.get_handler_tool().add_note(note)
+    return compression.dumps([]), ""
+
+
+def _commodity_terminal_ids_at(location_names: str | list[str]) -> list[int]:
+    """Ids of available commodity terminals whose location columns match.
+
+    Equality is OR across columns, so a NULL planet name does not hide a
+    terminal that sits in the named star system.
+    """
+    from skills.uexcorp.uexcorp.data_access.terminal_data_access import TerminalDataAccess
+    from skills.uexcorp.uexcorp.model.terminal import Terminal
+
+    access = TerminalDataAccess()
+    access.add_filter_by_location_name_whitelist(location_names)
+    access.add_filter_by_type(Terminal.TYPE_COMMODITY)
+    access.add_filter_by_is_available(True)
+    return [terminal.get_id() for terminal in access.load()]
+
+
 def _note_hidden_illegal_commodities(helper, names: list[str]) -> None:
     """Say why a named commodity disappeared while the illegal switch is off."""
     from skills.uexcorp.uexcorp.data_access.commodity_data_access import CommodityDataAccess
@@ -75,11 +96,18 @@ class CommodityRoute(Tool):
             max_scu = available_cargo_space_scu
 
         if filter_commodity_whitelist:
+            matched_commodities = CommodityDataAccess().add_filter_by_name(filter_commodity_whitelist).load()
+            if not matched_commodities:
+                return _no_routes(
+                    helper,
+                    f"No commodity matches {', '.join(filter_commodity_whitelist)}.",
+                )
             commodity_route_data_access.add_filter_by_commodity_name_whitelist(filter_commodity_whitelist)
             if not filter_allow_illegal_commodities:
                 _note_hidden_illegal_commodities(helper, filter_commodity_whitelist)
 
         if filter_commodity_blacklist:
+            # An unknown name excludes nothing. NOT IN already does that.
             commodity_route_data_access.add_filter_by_commodity_name_blacklist(filter_commodity_blacklist)
 
         # Blacklist and illegal are separate. ANDing them hid illegal goods
@@ -92,9 +120,18 @@ class CommodityRoute(Tool):
                     commodity_ids_exclude.append(commodity.get_id())
 
         if filter_star_system_whitelist:
+            from skills.uexcorp.uexcorp.data_access.star_system_data_access import StarSystemDataAccess
+
+            matched_systems = StarSystemDataAccess().add_filter_by_name(filter_star_system_whitelist).load()
+            if not matched_systems:
+                return _no_routes(
+                    helper,
+                    f"No star system matches {', '.join(filter_star_system_whitelist)}.",
+                )
             commodity_route_data_access.add_filter_by_star_system_name_whitelist(filter_star_system_whitelist)
 
         if filter_star_system_blacklist:
+            # An unknown system excludes nothing.
             commodity_route_data_access.add_filter_by_star_system_name_blacklist(filter_star_system_blacklist)
 
         if filter_allow_star_system_change is False:
@@ -118,28 +155,26 @@ class CommodityRoute(Tool):
                 max_scu = ship.get_scu() if ship.get_scu() else 0
 
         if filter_location_blacklist:
-            terminal_data_access = TerminalDataAccess()
-            terminal_data_access.add_filter_by_location_name_blacklist(filter_location_blacklist)
-            terminal_data_access.add_filter_by_type(Terminal.TYPE_COMMODITY)
-            terminal_data_access.add_filter_by_is_available(True)
-            for terminal in terminal_data_access.load():
-                terminal_ids_exclude.append(terminal.get_id())
+            # Match the name (OR across columns), then NOT IN those ids.
+            # The blacklist SQL keeps non-matching terminals; using it here
+            # would exclude the wrong set. No match means exclude nothing.
+            terminal_ids_exclude = _commodity_terminal_ids_at(filter_location_blacklist)
 
         if filter_start_location:
-            terminal_data_access = TerminalDataAccess()
-            terminal_data_access.add_filter_by_location_name_whitelist(filter_start_location)
-            terminal_data_access.add_filter_by_type(Terminal.TYPE_COMMODITY)
-            terminal_data_access.add_filter_by_is_available(True)
-            for terminal in terminal_data_access.load():
-                start_terminal_ids.append(terminal.get_id())
+            start_terminal_ids = _commodity_terminal_ids_at(filter_start_location)
+            if not start_terminal_ids:
+                return _no_routes(
+                    helper,
+                    f"No terminal matches start location {filter_start_location}.",
+                )
 
         if filter_destination_location:
-            terminal_data_access = TerminalDataAccess()
-            terminal_data_access.add_filter_by_location_name_whitelist(filter_destination_location)
-            terminal_data_access.add_filter_by_type(Terminal.TYPE_COMMODITY)
-            terminal_data_access.add_filter_by_is_available(True)
-            for terminal in terminal_data_access.load():
-                end_terminals_ids.append(terminal.get_id())
+            end_terminals_ids = _commodity_terminal_ids_at(filter_destination_location)
+            if not end_terminals_ids:
+                return _no_routes(
+                    helper,
+                    f"No terminal matches destination location {filter_destination_location}.",
+                )
 
         if filter_require_auto_load:
             # Route rows have no is_auto_load; constrain both ends via terminal ids.

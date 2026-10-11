@@ -446,6 +446,83 @@ class RouteSplitTest(unittest.TestCase):
         self.assertIn("902", warnings[0])
         self.assertIn("deferred", warnings[0])
 
+    def test_nyx_station_and_gateway_origins_survive_the_split(self) -> None:
+        """Iron, RMC, Scrap, and Waste lose every Nyx origin when a capped page
+        is split only by planet. Those origins are stations and Gateways, not
+        planets: Iron 25, RMC 27, Scrap 29, Waste 14.
+        """
+        cap = 100
+        cases = (
+            (1, "Iron", 25),
+            (2, "Recycled Material Composite", 27),
+            (3, "Scrap", 29),
+            (4, "Waste", 14),
+        )
+        stanton_orbit = 10
+        nyx_orbit = 550
+        gateway_orbit = 551
+
+        for commodity_id, name, nyx_count in cases:
+            calls = []
+            nyx_ids = list(range(4000, 4000 + nyx_count))
+            gateway_ids = list(range(3000, 3007))
+
+            def fetch_page(
+                query,
+                name=name,
+                nyx_ids=nyx_ids,
+                gateway_ids=gateway_ids,
+            ):
+                calls.append(dict(query))
+                if "id_planet_origin" not in query and "id_orbit_origin" not in query:
+                    return FetchResult(
+                        True,
+                        [
+                            {"id": i, "origin": "Stanton", "id_orbit_origin": stanton_orbit}
+                            for i in range(1, cap + 1)
+                        ],
+                    )
+                if query.get("id_planet_origin") == 1:
+                    return FetchResult(
+                        True,
+                        [
+                            {"id": i, "origin": "Hurston", "id_orbit_origin": stanton_orbit}
+                            for i in range(1, 41)
+                        ],
+                    )
+                orbit = query.get("id_orbit_origin")
+                if orbit == nyx_orbit:
+                    return FetchResult(
+                        True,
+                        [{"id": i, "origin": "Nyx", "commodity": name} for i in nyx_ids],
+                    )
+                if orbit == gateway_orbit:
+                    return FetchResult(
+                        True,
+                        [{"id": i, "origin": "Gateway"} for i in gateway_ids],
+                    )
+                return FetchResult(True, [])
+
+            result = collect_commodity_routes(
+                fetch_page,
+                commodity_id=commodity_id,
+                planet_ids=[1],
+                orbit_ids=[stanton_orbit, nyx_orbit, gateway_orbit],
+                cap=cap,
+            )
+            self.assertTrue(result.ok, name)
+            ids = {row["id"] for row in result.data}
+            self.assertTrue(set(nyx_ids).issubset(ids), name)
+            self.assertTrue(set(gateway_ids).issubset(ids), name)
+            nyx_rows = [row for row in result.data if row.get("origin") == "Nyx"]
+            self.assertEqual(len(nyx_rows), nyx_count, name)
+            self.assertTrue(all(row.get("commodity") == name for row in nyx_rows), name)
+            orbit_queries = [
+                call.get("id_orbit_origin") for call in calls if "id_orbit_origin" in call
+            ]
+            # The Stanton orbit is already on the complete planet page.
+            self.assertEqual(orbit_queries, [nyx_orbit, gateway_orbit], name)
+
     def test_short_page_is_kept_without_a_split(self) -> None:
         calls = []
 
@@ -765,6 +842,317 @@ class LegalFilterAndPromptTest(_SqliteCase):
 
         location = LocationInformation().get_optional_fields()["filter_locations"].get_llm_definition()["description"]
         self.assertIn("Nyx", location)
+
+
+# Terminals whose other location columns are NULL. The old blacklist ANDed
+# `col != name` and matched nothing, because NULL != 'Pyro' is NULL.
+PYRO = 1
+HURSTON = 2
+ARCCORP = 3
+NYX = 4
+
+
+class LocationFilterTest(_SqliteCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self._db.execute(
+            """
+            INSERT INTO terminal (
+                id, name, type, is_available,
+                star_system_name, planet_name, orbit_name, moon_name,
+                space_station_name, outpost_name, city_name
+            ) VALUES
+                (?, 'Checkmate Admin', 'commodity', 1, 'Pyro', NULL, 'Checkmate', NULL, 'Checkmate', NULL, NULL),
+                (?, 'Lorville TDD', 'commodity', 1, 'Stanton', 'Hurston', NULL, NULL, NULL, NULL, 'Lorville'),
+                (?, 'Area18 TDD', 'commodity', 1, 'Stanton', 'ArcCorp', NULL, NULL, NULL, NULL, 'Area18'),
+                (?, 'Orbituary Admin', 'commodity', 1, 'Nyx', NULL, 'Orbituary', NULL, 'Orbituary', NULL, NULL)
+            """,
+            (PYRO, HURSTON, ARCCORP, NYX),
+        )
+        self._db.execute(
+            """
+            INSERT INTO star_system (id, name, is_available) VALUES
+                (64, 'Pyro', 1),
+                (68, 'Stanton', 1),
+                (55, 'Nyx', 1)
+            """
+        )
+        self._db.execute(
+            """
+            INSERT INTO commodity (id, name, is_illegal, is_blacklisted, is_buyable, is_sellable)
+            VALUES
+                (1, 'Waste', 0, 0, 0, 0),
+                (2, 'Pyro Dust', 0, 0, 0, 0)
+            """
+        )
+        routes = (
+            (1, PYRO, HURSTON, "Checkmate Admin", "Lorville TDD", "Pyro", "Stanton", None, "Hurston"),
+            (2, HURSTON, ARCCORP, "Lorville TDD", "Area18 TDD", "Stanton", "Stanton", "Hurston", "ArcCorp"),
+            (3, ARCCORP, NYX, "Area18 TDD", "Orbituary Admin", "Stanton", "Nyx", "ArcCorp", None),
+            (4, PYRO, ARCCORP, "Checkmate Admin", "Area18 TDD", "Pyro", "Stanton", None, "ArcCorp"),
+        )
+        for route in routes:
+            self._db.execute(
+                """
+                INSERT INTO commodity_route (
+                    id, id_commodity, commodity_name,
+                    id_terminal_origin, id_terminal_destination,
+                    origin_terminal_name, destination_terminal_name,
+                    origin_star_system_name, destination_star_system_name,
+                    origin_planet_name, destination_planet_name,
+                    price_origin, price_destination, scu_origin, scu_destination, score
+                ) VALUES (?, 1, 'Waste', ?, ?, ?, ?, ?, ?, ?, ?, 5, 9, 10, 10, 1)
+                """,
+                route,
+            )
+        self._db.execute(
+            """
+            INSERT INTO commodity_price (id, id_commodity, id_terminal, price_buy, commodity_name, terminal_name)
+            VALUES
+                (1, 1, ?, 5, 'Waste', 'Checkmate Admin'),
+                (2, 1, ?, 6, 'Waste', 'Lorville TDD'),
+                (3, 2, ?, 7, 'Pyro Dust', 'Checkmate Admin')
+            """,
+            (PYRO, HURSTON, PYRO),
+        )
+        self._db.commit()
+
+    def _routes(self, **kwargs):
+        from skills.uexcorp.uexcorp.tool.commodity_route import CommodityRoute
+
+        self._helper.get_handler_tool().notes.clear()
+        payload, _instant = CommodityRoute().execute(**kwargs)
+        return _parse_routes(payload), self._helper.get_handler_tool().notes
+
+    def _pairs(self, routes):
+        return {(route["buy_at"], route["sell_at"]) for route in routes}
+
+    def test_location_blacklist_drops_pyro_and_hurston(self) -> None:
+        from skills.uexcorp.uexcorp.data_access.terminal_data_access import TerminalDataAccess
+
+        pyro_kept = {
+            terminal.get_id()
+            for terminal in TerminalDataAccess()
+            .add_filter_by_location_name_blacklist(["Pyro"])
+            .add_filter_by_type("commodity")
+            .add_filter_by_is_available(True)
+            .load()
+        }
+        self.assertNotIn(PYRO, pyro_kept)
+        self.assertIn(HURSTON, pyro_kept)
+        self.assertIn(ARCCORP, pyro_kept)
+        self.assertIn(NYX, pyro_kept)
+
+        hurston_kept = {
+            terminal.get_id()
+            for terminal in TerminalDataAccess()
+            .add_filter_by_location_name_blacklist(["Hurston"])
+            .add_filter_by_type("commodity")
+            .add_filter_by_is_available(True)
+            .load()
+        }
+        self.assertNotIn(HURSTON, hurston_kept)
+        self.assertIn(PYRO, hurston_kept)
+
+        routes, _notes = self._routes(
+            filter_commodity_whitelist=["Waste"],
+            filter_location_blacklist=["Pyro"],
+            limit=8,
+        )
+        pairs = self._pairs(routes)
+        self.assertNotIn(("Checkmate Admin", "Lorville TDD"), pairs)
+        self.assertNotIn(("Checkmate Admin", "Area18 TDD"), pairs)
+        self.assertIn(("Lorville TDD", "Area18 TDD"), pairs)
+        self.assertIn(("Area18 TDD", "Orbituary Admin"), pairs)
+
+        hurston_routes, _notes = self._routes(
+            filter_commodity_whitelist=["Waste"],
+            filter_location_blacklist=["Hurston"],
+            limit=8,
+        )
+        hurston_pairs = self._pairs(hurston_routes)
+        self.assertNotIn(("Checkmate Admin", "Lorville TDD"), hurston_pairs)
+        self.assertNotIn(("Lorville TDD", "Area18 TDD"), hurston_pairs)
+        self.assertIn(("Area18 TDD", "Orbituary Admin"), hurston_pairs)
+        self.assertIn(("Checkmate Admin", "Area18 TDD"), hurston_pairs)
+
+    def test_unknown_location_blacklist_excludes_nothing(self) -> None:
+        routes, notes = self._routes(
+            filter_commodity_whitelist=["Waste"],
+            filter_location_blacklist=["Nowhereville"],
+            limit=8,
+        )
+        self.assertEqual(len(routes), 4)
+        self.assertFalse(any("nowhereville" in note.lower() for note in notes))
+
+    def test_unknown_start_and_destination_return_no_routes_and_a_hint(self) -> None:
+        start_routes, start_notes = self._routes(
+            filter_commodity_whitelist=["Waste"],
+            filter_start_location="Nowhereville",
+            limit=8,
+        )
+        self.assertEqual(start_routes, [])
+        start_text = " ".join(start_notes).lower()
+        self.assertIn("no terminal matches start location", start_text)
+        self.assertIn("nowhereville", start_text)
+
+        end_routes, end_notes = self._routes(
+            filter_commodity_whitelist=["Waste"],
+            filter_destination_location="Nowhereville",
+            limit=8,
+        )
+        self.assertEqual(end_routes, [])
+        end_text = " ".join(end_notes).lower()
+        self.assertIn("no terminal matches destination location", end_text)
+        self.assertIn("nowhereville", end_text)
+
+        hurston_routes, _notes = self._routes(
+            filter_commodity_whitelist=["Waste"],
+            filter_start_location="Hurston",
+            limit=8,
+        )
+        self.assertEqual(self._pairs(hurston_routes), {("Lorville TDD", "Area18 TDD")})
+
+    def test_unknown_include_filters_hint_and_exclude_filters_do_not(self) -> None:
+        missing_commodity, notes = self._routes(
+            filter_commodity_whitelist=["Unobtanium"],
+            limit=8,
+        )
+        self.assertEqual(missing_commodity, [])
+        self.assertIn("unobtanium", " ".join(notes).lower())
+        self.assertIn("no commodity matches", " ".join(notes).lower())
+
+        still_there, notes = self._routes(
+            filter_commodity_blacklist=["Unobtanium"],
+            limit=8,
+        )
+        self.assertEqual(len(still_there), 4)
+        self.assertFalse(any("unobtanium" in note.lower() for note in notes))
+
+        missing_system, notes = self._routes(
+            filter_star_system_whitelist=["Nowhereville"],
+            limit=8,
+        )
+        self.assertEqual(missing_system, [])
+        self.assertIn("no star system matches", " ".join(notes).lower())
+
+        stanton, _notes = self._routes(
+            filter_star_system_whitelist=["Stanton"],
+            limit=8,
+        )
+        self.assertEqual(self._pairs(stanton), {("Lorville TDD", "Area18 TDD")})
+
+        ignored, notes = self._routes(
+            filter_star_system_blacklist=["Nowhereville"],
+            limit=8,
+        )
+        self.assertEqual(len(ignored), 4)
+        self.assertFalse(any("nowhereville" in note.lower() for note in notes))
+
+    def test_commodity_location_filters_are_null_safe(self) -> None:
+        from skills.uexcorp.uexcorp.tool.commodity_information import CommodityInformation
+
+        self._helper.get_handler_tool().notes.clear()
+        payload, _instant = CommodityInformation().execute(filter_location_blacklist=["Pyro"])
+        names = {row["name"] for row in json.loads(payload)}
+        self.assertEqual(names, {"Waste"})
+
+        self._helper.get_handler_tool().notes.clear()
+        payload, _instant = CommodityInformation().execute(filter_location_blacklist=["Nowhereville"])
+        names = {row["name"] for row in json.loads(payload)}
+        self.assertEqual(names, {"Waste", "Pyro Dust"})
+
+        self._helper.get_handler_tool().notes.clear()
+        payload, _instant = CommodityInformation().execute(filter_location_whitelist=["Nowhereville"])
+        self.assertEqual(payload, [])
+        text = " ".join(self._helper.get_handler_tool().notes).lower()
+        self.assertIn("no terminal matches location", text)
+        self.assertIn("nowhereville", text)
+
+        self._helper.get_handler_tool().notes.clear()
+        payload, _instant = CommodityInformation().execute(filter_location_whitelist=["Hurston"])
+        names = {row["name"] for row in json.loads(payload)}
+        self.assertEqual(names, {"Waste"})
+
+    def test_other_include_filters_that_match_nothing_hint(self) -> None:
+        from skills.uexcorp.uexcorp.tool.item_information import ItemInformation
+        from skills.uexcorp.uexcorp.tool.vehicle_information import VehicleInformation
+
+        self._helper.get_handler_tool().notes.clear()
+        payload, _instant = ItemInformation().execute(filter_buy_location=["Nowhereville"])
+        self.assertEqual(payload, [])
+        self.assertIn(
+            "no terminal matches buy location",
+            " ".join(self._helper.get_handler_tool().notes).lower(),
+        )
+
+        self._helper.get_handler_tool().notes.clear()
+        payload, _instant = ItemInformation().execute(filter_category=["Not a category"])
+        self.assertEqual(payload, [])
+        self.assertIn("no category matches", " ".join(self._helper.get_handler_tool().notes).lower())
+
+        self._helper.get_handler_tool().notes.clear()
+        payload, _instant = ItemInformation().execute(filter_company=["Not a company"])
+        self.assertEqual(payload, [])
+        self.assertIn("no company matches", " ".join(self._helper.get_handler_tool().notes).lower())
+
+        self._helper.get_handler_tool().notes.clear()
+        payload, _instant = VehicleInformation().execute(filter_vehicles=["Not a ship"])
+        self.assertEqual(json.loads(payload), [])
+        self.assertIn(
+            "no matching vehicles",
+            " ".join(self._helper.get_handler_tool().notes).lower(),
+        )
+
+
+class DatasetCountTest(_SqliteCase):
+    def test_status_and_game_version_count_rows_not_keys(self) -> None:
+        from skills.uexcorp.uexcorp.api.uex import Uex
+        from skills.uexcorp.uexcorp.handler.import_handler import ImportHandler, dataset_row_count
+
+        self.assertEqual(dataset_row_count({"buy": [1, 2], "sell": [1]}), 3)
+        self.assertEqual(dataset_row_count({"live": "4.10.2", "ptu": None}), 1)
+        self.assertEqual(dataset_row_count([]), 0)
+
+        handler = ImportHandler(self._helper)
+        self._helper.set_import_handler(handler)
+
+        def fetch(endpoint, get=None, params=None):
+            if endpoint == Uex.COMMODITIES_STATUS:
+                return FetchResult(
+                    True,
+                    {
+                        "buy": [
+                            {"code": 1, "name": "Out of Stock"},
+                            {"code": 2, "name": "Low"},
+                        ],
+                        "sell": [{"code": 1, "name": "Extremely high demand"}],
+                    },
+                )
+            if endpoint == Uex.GAME_VERSIONS:
+                return FetchResult(True, {"live": "4.10.2", "ptu": None})
+            return FetchResult(False, error="unexpected")
+
+        handler._ImportHandler__api.fetch = fetch
+        self.assertEqual(handler._ImportHandler__import_data_commodity_status(), 3)
+        self.assertEqual(handler._ImportHandler__import_data_game_version(), 1)
+
+        status_stamp = self._db.execute_fetchall(
+            "SELECT dataset_count FROM imports WHERE `table` = ?",
+            ("commodity_status",),
+        )
+        version_stamp = self._db.execute_fetchall(
+            "SELECT dataset_count FROM imports WHERE `table` = ?",
+            ("game_version",),
+        )
+        self.assertEqual(status_stamp[0]["dataset_count"], 3)
+        self.assertEqual(version_stamp[0]["dataset_count"], 1)
+        self.assertEqual(
+            len(self._db.execute_fetchall("SELECT code FROM commodity_status")),
+            3,
+        )
+        versions = self._db.execute_fetchall("SELECT live FROM game_version")
+        self.assertEqual([row["live"] for row in versions], ["4.10.2"])
 
 
 class ApiUrlTest(unittest.TestCase):

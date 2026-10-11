@@ -64,6 +64,20 @@ class CommodityInformation(Tool):
                 for terminal in terminal_data_access.load():
                     terminal_ids.append(terminal.get_id())
 
+                # Whitelist is an include. No matching terminal must not become
+                # "every commodity". A blacklist that matches nothing leaves the
+                # other terminals in place; an empty list here means none remain.
+                if not terminal_ids:
+                    if filter_location_whitelist is not None:
+                        helper.get_handler_tool().add_note(
+                            f"No terminal matches location {', '.join(filter_location_whitelist)}."
+                        )
+                    else:
+                        helper.get_handler_tool().add_note(
+                            "No matching commodities found. Please check filter criteria."
+                        )
+                    return [], ""
+
                 commodity_price_data_access = CommodityPriceDataAccess()
                 commodity_price_data_access.add_filter_by_id_terminal(terminal_ids)
                 commodity_prices = commodity_price_data_access.load()

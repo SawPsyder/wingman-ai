@@ -62,6 +62,12 @@ class VehicleInformation(Tool):
 
         vehicles = vehicle_data_access.load(debug=True) # TODO remove debug=True
 
+        if not vehicles:
+            helper.get_handler_tool().add_note(
+                "No matching vehicles found. Please check filter criteria."
+            )
+            return compression.dumps([]), ""
+
         data = [vehicle.get_data_for_ai() for vehicle in vehicles]
 
         if filter_vehicles:

@@ -6,6 +6,22 @@ if TYPE_CHECKING:
     from skills.uexcorp.uexcorp.helper import Helper
 
 
+def dataset_row_count(data) -> int:
+    """Count stored rows, not the keys of a wrapper object.
+
+    commodities_status is ``{buy: [...], sell: [...]}``. game_versions is one
+    ``{live, ptu}`` record. ``len`` on those dicts is 2.
+    """
+    if isinstance(data, list):
+        return len(data)
+    if not isinstance(data, dict) or not data:
+        return 0
+    nested = [value for value in data.values() if isinstance(value, list)]
+    if nested and len(nested) == len(data):
+        return sum(len(rows) for rows in nested)
+    return 1
+
+
 class ImportHandler:
 
     # Fetch failed. Do not stamp the cache and do not delete stored rows.
@@ -426,14 +442,15 @@ class ImportHandler:
                         index < len(commodity_status_data["sell"]) - 1
                     )
 
+        status_count = dataset_row_count(commodity_status_data)
         commodity_status_import.set_date_imported(self.__helper.get_timestamp())
-        commodity_status_import.set_dataset_count(len(commodity_status_data))
+        commodity_status_import.set_dataset_count(status_count)
         commodity_status_import.set_time_taken(self.__helper.end_timer("import"))
         commodity_status_import.persist()
         self.__helper.get_handler_debug().write(
             f"Commodity Status data imported: {commodity_status_import.get_dataset_count()} record(s) in {commodity_status_import.get_time_taken()}s"
         )
-        return len(commodity_status_data)
+        return status_count
 
     def __import_data_commodity_route(self) -> bool | int:
         from skills.uexcorp.uexcorp.model.import_data import ImportData
@@ -469,7 +486,7 @@ class ImportHandler:
         ]
         # Every available orbit. collect_commodity_routes skips orbits a complete
         # planet page already covered, and still queries station orbits such as
-        # Levski and the Gateways.
+        # Levski, Nyx stations, and the Gateways.
         all_orbit_ids = [
             orbit.get_id()
             for orbit in OrbitDataAccess().add_filter_by_is_available(True).load()
@@ -656,14 +673,15 @@ class ImportHandler:
             game_version.set_data(game_version_data)
             game_version.persist()
 
+        version_count = dataset_row_count(game_version_data)
         game_version_import.set_date_imported(self.__helper.get_timestamp())
-        game_version_import.set_dataset_count(len(game_version_data))
+        game_version_import.set_dataset_count(version_count)
         game_version_import.set_time_taken(self.__helper.end_timer("import"))
         game_version_import.persist()
         self.__helper.get_handler_debug().write(
             f"Game Version data imported: {game_version_import.get_dataset_count()} record(s) in {game_version_import.get_time_taken()}s"
         )
-        return len(game_version_data)
+        return version_count
 
     def __import_data_item(self) -> bool | int:
         from skills.uexcorp.uexcorp.model.import_data import ImportData

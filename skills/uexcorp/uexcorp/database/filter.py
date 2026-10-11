@@ -11,6 +11,7 @@ class Filter:
         self.__offset = None
         self.__binds = {}
         self.__order_by = {}
+        self.__raw_where = []
 
     def clear(self):
         self.__init__(self.get_table())
@@ -22,6 +23,7 @@ class Filter:
         if filter.get_offset() is not None:
             self.__offset = filter.get_offset()
         self.__binds.update(filter.get_bind())
+        self.__raw_where += filter.get_raw_where()
         if filter.get_where():
             self.__grouped_where.append({
                 "where": filter.get_where(),
@@ -70,11 +72,34 @@ class Filter:
     def where(self, field: str, value, operation: str | None = None, is_or: bool = False, value_is_field: bool = False):
         self.__where.append((field, value, operation, is_or, value_is_field))
 
+    def where_null_or_excluded(self, field: str, names: str | list[str]) -> None:
+        """Keep rows whose column is NULL or outside ``names``.
+
+        ``NULL != 'Pyro'`` is NULL, so a plain AND of ``!=`` drops every row
+        that has any empty location column. This clause does not.
+        """
+        values = [names] if isinstance(names, str) else list(names)
+        if not values:
+            return
+        qualified = field if "." in field or "(" in field else f"{self.__base_table}.{field}"
+        placeholders = []
+        for item in values:
+            key = f"param_{uuid.uuid4().hex}"
+            self.add_bind(key, item)
+            placeholders.append(f":{key}")
+        joined = ",".join(placeholders)
+        self.__raw_where.append(
+            f"({qualified} IS NULL OR {qualified} NOT IN ({joined}))"
+        )
+
+    def get_raw_where(self) -> list[str]:
+        return self.__raw_where
+
     def get_where(self) -> list[tuple[str, any, str | None, bool, bool]]:
         return self.__where
 
     def resolve_where(self) -> str:
-        if len(self.__where) == 0 and len(self.__grouped_where) == 0:
+        if len(self.__where) == 0 and len(self.__grouped_where) == 0 and len(self.__raw_where) == 0:
             return ""
 
         def resolve_where_loop(where: list[tuple[str, any, str | None, bool, bool]]) -> str:
@@ -130,6 +155,10 @@ class Filter:
                     combined_where += " AND (" if not grouped_where["is_or"] else " OR ("
                 combined_where += resolve_where_loop(grouped_where["where"])
                 combined_where += ")"
+        if self.__raw_where:
+            raw = " AND ".join(self.__raw_where)
+            has_clause = len(self.__where) > 0 or len(self.__grouped_where) > 0
+            combined_where += f" AND {raw}" if has_clause else raw
         return combined_where
 
     def join(self, target_table, target_field, source_table, source_field):
