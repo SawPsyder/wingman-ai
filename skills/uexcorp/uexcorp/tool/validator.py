@@ -94,13 +94,29 @@ def _commodity_code(commodity) -> str:
     return str(getter() or "").casefold()
 
 
+def _query_is_code(catalog, query: str) -> bool:
+    """True when ``query`` is a commodity code and not a commodity name.
+
+    ``Borase`` and ``Gold (Ore)`` are names, so they stay those rows.
+    ``BORA`` is only a code. ``Gold`` is a name that shares its code, so
+    ``GOLD`` is the name, not a code lookup.
+    """
+    folded = (query or "").strip().casefold()
+    if not folded:
+        return False
+    for item in catalog:
+        if str(item).casefold() == folded:
+            return False
+    return any(_commodity_code(item) == folded for item in catalog)
+
+
 def _unique_tradable_holder(catalog, decided_name: str, tradable_names: set[str]) -> str | None:
-    """The one tradable commodity a route filter should keep for this hit.
+    """The one tradable commodity a shared code should use on a route filter.
 
     Borase and Borase (Ore) share BORA. The exact step prefers the refined
-    row, which is sell-only, so a route filter takes the tradable ore
-    instead. A name that is already tradable stays, which keeps Gold.
-    Several tradable holders are not a guess.
+    row, which is sell-only, so the code takes the tradable ore instead.
+    A name that is already tradable stays. Several tradable holders are
+    not a guess. Callers must not use this for an exact commodity name.
     """
     if decided_name in tradable_names:
         return decided_name
@@ -457,9 +473,17 @@ class Validator:
             tradable_names = {str(item) for item in tradable}
             if decided is not None:
                 if decided.key:
-                    holder = _unique_tradable_holder(catalog, decided.key, tradable_names)
+                    # An exact name stays that commodity. Only a shared code
+                    # such as BORA prefers the one tradable holder.
+                    holder = None
+                    if _query_is_code(catalog, name):
+                        holder = _unique_tradable_holder(
+                            catalog, decided.key, tradable_names
+                        )
                     if holder:
                         return holder, None
+                    if decided.key in tradable_names:
+                        return decided.key, None
                     row = next(item for item in catalog if str(item) == decided.key)
                     buy, sell = _price_sides(self.__helper, row.get_id())
                     return None, _untradable_sentence(decided.key, buy, sell)

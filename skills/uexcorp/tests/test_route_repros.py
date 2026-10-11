@@ -804,9 +804,10 @@ class RouteReproTest(_SqliteCase):
         """Every code that two commodities share, on a route whitelist.
 
         The tradable holder is the one with both a terminal buy and a
-        terminal sell. BORA's tradable row is the ore. The others that
-        trade at all trade the refined row. A code with no tradable
-        holder still says why.
+        terminal sell. A shared code such as BORA prefers that holder.
+        An exact name stays that commodity, so Borase and Gold (Ore)
+        keep their own sell-only note. A code with no tradable holder
+        still says why.
         """
         from skills.uexcorp.uexcorp.api.llm import _stoplist_blocks_pick
         from skills.uexcorp.uexcorp.tool.validator import Validator
@@ -877,6 +878,10 @@ class RouteReproTest(_SqliteCase):
                 416, 509, 'Borase (Ore)', 80, 83,
                 'Levski', 'Area18 TDD',
                 10, 12, 8, 8, 1
+            ), (
+                418, 518, 'Gold', 80, 83,
+                'Levski', 'Area18 TDD',
+                10, 40, 8, 8, 1
             )
             """
         )
@@ -886,18 +891,30 @@ class RouteReproTest(_SqliteCase):
             config={"for_trading": True},
         )
         for code, first, second, tradable in shared:
+            names = {first.casefold(): first, second.casefold(): second}
             for query in (code, code.title(), code.lower(), first, second):
                 self._helper.get_handler_tool().notes.clear()
                 result = asyncio.run(validator.validate(query))
                 notes = " ".join(self._helper.get_handler_tool().notes)
-                if tradable and not _stoplist_blocks_pick(query):
+                literal = names.get(query.casefold())
+                if literal is not None:
+                    if literal == tradable:
+                        self.assertEqual(result, literal, query)
+                        self.assertNotIn("sell-only", notes, query)
+                    else:
+                        self.assertIsNone(result, query)
+                        self.assertIn(literal, notes, query)
+                        self.assertTrue(
+                            "sell-only" in notes or "no buy/sell prices" in notes,
+                            notes,
+                        )
+                elif tradable and not _stoplist_blocks_pick(query):
                     self.assertEqual(result, tradable, query)
                     self.assertNotIn("sell-only", notes, query)
                 else:
                     self.assertIsNone(result, query)
-                    self.assertNotEqual(result, second if tradable != second else first, query)
         handler = self._handler()
-        for query in ("BORA", "Bora", "bora", "Borase"):
+        for query in ("BORA", "Bora", "bora"):
             text, _instant = asyncio.run(
                 handler.execute_tool(
                     "uex_get_trade_routes",
@@ -907,6 +924,29 @@ class RouteReproTest(_SqliteCase):
             self.assertIn("Borase (Ore)", text, query)
             self.assertNotIn("sell-only", text, query)
             self.assertNotIn("not recognized", text, query)
+        for query, sentence in (
+            ("Borase", "Borase is sell-only, so there are no trade routes"),
+            ("Gold (Ore)", "Gold (Ore) is sell-only, so there are no trade routes"),
+        ):
+            text, _instant = asyncio.run(
+                handler.execute_tool(
+                    "uex_get_trade_routes",
+                    {"filter_commodity_whitelist": [query]},
+                )
+            )
+            self.assertIn(sentence, text, query)
+            self.assertNotIn("Area18 TDD", text, query)
+        for query, kept in (("Borase", "Borase (Ore)"), ("Gold (Ore)", "Gold")):
+            text, _instant = asyncio.run(
+                handler.execute_tool(
+                    "uex_get_trade_routes",
+                    {"filter_commodity_blacklist": [query]},
+                )
+            )
+            self.assertNotIn("sell-only", text, query)
+            self.assertNotIn("not recognized", text, query)
+            self.assertIn(kept, text, query)
+            self.assertIn("Area18 TDD", text, query)
 
     def test_untradable_typos_keep_the_sell_only_note(self) -> None:
         self._install_llm(None)
