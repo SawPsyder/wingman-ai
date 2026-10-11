@@ -7,7 +7,9 @@ key match back into a place.
 
 from __future__ import annotations
 
-from skills.uexcorp.uexcorp.api.llm import _whole_word_name, strip_type_tag
+import difflib
+
+from skills.uexcorp.uexcorp.api.llm import _whole_word_name, rank_places, strip_type_tag
 from skills.uexcorp.uexcorp.location_blocklist import (
     SCOPES,
     _SCOPE,
@@ -251,6 +253,59 @@ def shop_sentence(name: str, parent: str | None) -> str:
     return text + "."
 
 
+def shop_chain_sentence(brand: str, parents: list[str]) -> str:
+    """A shop with several branches, naming a few of those places."""
+    text = f"{brand} is a shop chain, not a trade terminal"
+    shown = [parent for parent in parents if parent][:3]
+    if shown:
+        text += ". Try a nearby trade terminal such as " + ", ".join(shown)
+    return text + "."
+
+
+# A route filter that is only one of these words stays a candidate list.
+# Mine must not become Kudre Ore Mine, and System One must not pick one
+# station out of Station. Fuel is not in this set.
+_GENERIC_PLACE_WORDS = frozenset({
+    "mine", "star", "station", "outpost", "port", "gateway", "city", "depot", "hub",
+})
+_PLACE_SCOPES = frozenset({
+    "system", "planet", "moon", "city", "station", "outpost", "poi", "orbit",
+})
+
+
+def _bare_generic_place(query: str) -> bool:
+    """True when the query is one generic place word, in any letter case."""
+    text = (query or "").strip()
+    if not text or any(char.isspace() for char in text):
+        return False
+    return text.casefold() in _GENERIC_PLACE_WORDS
+
+
+def _shop_brand(name: str) -> str:
+    return str(name or "").split(" - ", 1)[0].strip()
+
+
+def _brand_query_ok(query: str, brand: str) -> bool:
+    """The typed words are that shop, a whole-word prefix, or a close typo."""
+    left = (query or "").casefold().strip()
+    right = (brand or "").casefold().strip()
+    if not left or not right:
+        return False
+    if left == right or _whole_word_name(query, brand):
+        return True
+    return difflib.SequenceMatcher(None, left, right).ratio() >= 0.84
+
+
+def _chain_parents(rows: list[dict]) -> list[str]:
+    parents = []
+    for row in rows:
+        parent = row.get("parent_name")
+        if parent and parent not in parents:
+            parents.append(parent)
+    parents.sort()
+    return parents
+
+
 def _shop_records(helper) -> list[dict]:
     """Non-trade shop terminals, in the same row shape the place matcher uses."""
     try:
@@ -293,16 +348,46 @@ def _shop_records(helper) -> list[dict]:
     return rows
 
 
+def _shops_of_brand(shops: list[dict], brand: str) -> list[dict]:
+    folded = brand.casefold()
+    return [row for row in shops if _shop_brand(row.get("name") or "").casefold() == folded]
+
+
+def _note_for_brand(query: str, shops: list[dict], brand: str) -> str | None:
+    """One shop names its parent. Several branches name the chain."""
+    rows = _shops_of_brand(shops, brand)
+    if not rows:
+        return None
+    if len(rows) == 1:
+        parent = rows[0].get("parent_name")
+        return shop_sentence(_shop_spoken_name(query, rows[0]["name"]), parent)
+    return shop_chain_sentence(brand, _chain_parents(rows))
+
+
+def _unambiguous_shop_brand(query: str, hits: list[dict]) -> str | None:
+    """The brand when every hit is that shop and the query clearly means it."""
+    brands = []
+    for hit in hits:
+        brand = _shop_brand(str(hit.get("name") or ""))
+        if brand and brand not in brands:
+            brands.append(brand)
+    if len(brands) != 1 or not _brand_query_ok(query, brands[0]):
+        return None
+    return brands[0]
+
+
 async def shop_trade_note(helper, name: str) -> str | None:
     """Sentence when ``name`` is a shop the trade filters cannot use.
 
     An exact name or alias of a terminal that is not a trade terminal names
     that shop and its parent place. A unique whole-word prefix such as
-    Cubby Blast does too. A fuzzy or dumb match does not, so Star cannot
-    turn Admin - Starlight Service into a shop hint.
+    Cubby Blast does too. Several branches that share the typed name name
+    the chain instead. A typo gets that hint when the shortlist, or System
+    One's pick, is unambiguously that one shop. A fuzzy or dumb match does
+    not, and a bare word such as Star does not either.
     """
     text = strip_type_tag((name or "").strip())
-    if not text or text == "None":
+    if not text or text == "None" or _bare_generic_place(text):
         return None
     shops = _shop_records(helper)
     if not shops:
@@ -314,18 +399,28 @@ async def shop_trade_note(helper, name: str) -> str | None:
         records=shops,
         allow_llm=False,
         allow_dumb=False,
-        ask_system_one=False,
+        ask_system_one=True,
         allow_whole_word=True,
     )
-    if found.method not in ("exact", "alias", "prefix"):
-        return None
-    chosen = _rows_for_keys(shops, found)
-    decided = _decided_name(text, chosen, found)
-    if decided is None:
-        return None
-    parents = {row.get("parent_name") for row in chosen if row["name"] == decided}
-    parent = next(iter(parents)) if len(parents) == 1 else None
-    return shop_sentence(_shop_spoken_name(text, decided), parent)
+    if found.method in ("exact", "alias", "prefix"):
+        chosen = _rows_for_keys(shops, found)
+        decided = _decided_name(text, chosen, found)
+        if decided is not None:
+            same = [row for row in chosen if row["name"] == decided]
+            if len(same) <= 1:
+                parents = {row.get("parent_name") for row in same}
+                parent = next(iter(parents)) if len(parents) == 1 else None
+                return shop_sentence(_shop_spoken_name(text, decided), parent)
+            return shop_chain_sentence(_shop_brand(decided), _chain_parents(same))
+    ranked = rank_places(shops, text)
+    brand = _unambiguous_shop_brand(text, ranked)
+    if brand is not None:
+        return _note_for_brand(text, shops, brand)
+    if found.method == "system_one":
+        brand = _unambiguous_shop_brand(text, found.candidates or [])
+        if brand is not None:
+            return _note_for_brand(text, shops, brand)
+    return None
 
 
 def _decided_name(query: str, chosen: list[dict], found) -> str | None:
@@ -406,6 +501,39 @@ def _station_label_for_admin(query: str, chosen: list[dict], found, decided: str
     return decided
 
 
+def _whole_word_pick_is_unique(helper, query: str, found, pool: list[dict]) -> bool:
+    """A whole-word read pick has to be the only place that uses the word.
+
+    The trade filter hides non-trade POIs, so Ajax Mine would not count
+    and a single trade pad could look unique. The parent of a picked
+    terminal stays with that terminal: Olisar is Admin - Port Olisar's
+    station, not a second place.
+    """
+    full = collect_locations(helper, for_trading=False, available_only=True) or pool
+    picked = next((row for row in full if row.get("key") == found.key), None)
+    if picked is None:
+        picked = next((row for row in pool if row.get("key") == found.key), None)
+    parent_keys = set()
+    if picked and picked.get("scope") == "terminal":
+        for scope, parent_id in (picked.get("parents") or {}).items():
+            parent_keys.add(f"{scope}:{parent_id}")
+    hits = []
+    for row in full:
+        if row.get("scope") not in _PLACE_SCOPES:
+            continue
+        if row.get("key") in parent_keys:
+            continue
+        if not _whole_word_name(query, str(row.get("name") or "")):
+            continue
+        key = row.get("key")
+        if key not in hits:
+            hits.append(key)
+    if not hits:
+        # The only places that use the word are the picked terminal's parents.
+        return True
+    return len(hits) == 1 and hits[0] == found.key
+
+
 async def resolve_location_name(helper, name: str, for_trading: bool = False):
     """Validator entry. Returns ``(canonical name, note)``.
 
@@ -418,9 +546,17 @@ async def resolve_location_name(helper, name: str, for_trading: bool = False):
     text = strip_type_tag((name or "").strip())
     if not text or text == "None":
         return None, None
-    rows = collect_locations(helper, for_trading=for_trading, available_only=True)
-    # Read filters accept an exact name, an alias, or one whole-word place.
-    # Fuzzy, dumb, System One, and the main model do not auto-pick.
+    # Read filters accept an exact name, an alias, one whole-word place, or
+    # a System One pick from the shortlist. The main model and the dumb
+    # match stay off. A bare generic word such as Mine or Station does not
+    # auto-pick, including through System One. Its candidates include
+    # non-trade POIs, so Mine can list Kudre Ore Mine instead of selecting it.
+    generic = _bare_generic_place(text)
+    rows = collect_locations(
+        helper,
+        for_trading=for_trading and not generic,
+        available_only=True,
+    )
     found = await _llm(helper).find_closest_key(
         text,
         {row["key"]: row["name"] for row in rows},
@@ -428,9 +564,19 @@ async def resolve_location_name(helper, name: str, for_trading: bool = False):
         records=rows,
         allow_llm=False,
         allow_dumb=False,
-        ask_system_one=False,
-        allow_whole_word=True,
+        ask_system_one=not generic,
+        allow_whole_word=not generic,
     )
+    if found.method == "prefix" and found.key and not _whole_word_pick_is_unique(helper, text, found, rows):
+        found.key = None
+        found.keys = []
+        found.method = None
+        if not found.note and found.candidates:
+            found.note = ", ".join(
+                (item.get("label") or item.get("name") or "")
+                for item in found.candidates[:3]
+                if item.get("label") or item.get("name")
+            )
     chosen = _rows_for_keys(rows, found)
     decided = _decided_name(text, chosen, found)
     if decided is None:

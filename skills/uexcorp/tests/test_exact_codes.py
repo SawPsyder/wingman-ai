@@ -266,12 +266,13 @@ class ExactCodeAndSlugTest(_SqliteCase):
 def test_common_english_commodity_codes_are_stoplisted() -> None:
     """A corpus code that is a common English word must be on the stoplist.
 
-    The word file is the 3-6 letter words from the first 2500 entries of
-    the Google 10000 English no-swears list, plus the dictionary words
-    alum, ammo, arse, audi, carp, coil, meth, merc, pita, and sari.
-    Abbreviations further down that frequency list (carb, comp, dist,
-    prot, rand, rico) are not in the file. A code that is also a
-    commodity name, such as GOLD, is resolved as a name and is skipped.
+    The word file is SCOWL 2020.12.07 english-words sizes 10 through 50,
+    filtered to 3-6 letters. Nothing was added by hand. Abbreviations
+    that are not in that slice (carb, comp, dist, prot, rand, rico) stay
+    out of the stoplist. A code that is also a commodity name, such as
+    GOLD, is resolved as a name and is skipped. argo, arse, audi, merc,
+    and meth are not in this SCOWL slice; they stay on the stoplist
+    because they are commodity codes that are easy to say.
     """
     import json
     from pathlib import Path
@@ -300,3 +301,5 @@ def test_common_english_commodity_codes_are_stoplisted() -> None:
     assert dictionary <= words
     assert dictionary <= _CODE_STOPLIST
     assert {"argo", "audi", "merc", "meth", "arse"} <= _CODE_STOPLIST
+    assert {"argo", "audi", "merc", "meth", "arse"}.isdisjoint(words)
+    assert {"carb", "comp", "dist", "prot", "rand", "rico"}.isdisjoint(words)

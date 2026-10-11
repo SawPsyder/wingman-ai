@@ -456,6 +456,26 @@ class RouteReproTest(_SqliteCase):
         )
         self._db.execute(
             """
+            INSERT INTO poi (
+                id, name, id_star_system, star_system_name,
+                is_available, is_available_live, has_trade_terminal
+            ) VALUES
+                (131, 'Kudre Ore Mine (Closed)', 1, 'Stanton', 1, 1, 0),
+                (152, 'Miner''s Lament', 1, 'Stanton', 1, 1, 0)
+            """
+        )
+        self._db.execute(
+            """
+            INSERT INTO space_station (
+                id, name, id_star_system, star_system_name,
+                is_available, is_available_live, has_trade_terminal
+            ) VALUES (
+                48, 'Seraphim Station', 1, 'Stanton', 1, 1, 1
+            )
+            """
+        )
+        self._db.execute(
+            """
             INSERT INTO space_station (
                 id, name, nickname, id_star_system, star_system_name,
                 is_available, is_available_live, has_trade_terminal
@@ -478,8 +498,9 @@ class RouteReproTest(_SqliteCase):
         self._db.commit()
         handler = self._handler()
 
-        mine, _note = asyncio.run(resolve_location_name(self._helper, "Mine", for_trading=True))
+        mine, note = asyncio.run(resolve_location_name(self._helper, "Mine", for_trading=True))
         self.assertIsNone(mine)
+        self.assertNotEqual(mine, "Kudre Ore Mine (Closed)")
         mined, _instant = asyncio.run(
             handler.execute_tool(
                 "uex_get_trade_routes",
@@ -487,7 +508,25 @@ class RouteReproTest(_SqliteCase):
             )
         )
         self.assertIn("not recognized", mined)
+        self.assertNotIn("has no trade terminal", mined)
         self.assertNotIn("is a shop", mined)
+        self.assertIn("Kudre", mined)
+        self.assertIn("Min", mined)
+
+        station, _note = asyncio.run(
+            resolve_location_name(self._helper, "Station", for_trading=True)
+        )
+        self.assertIsNone(station)
+        stationed, _instant = asyncio.run(
+            handler.execute_tool(
+                "uex_get_trade_routes",
+                {"filter_start_location": "Station"},
+            )
+        )
+        self.assertIn("not recognized", stationed)
+        self.assertNotIn("has no trade terminal", stationed)
+        self.assertNotEqual(station, "Seraphim Station")
+        self.assertNotEqual(station, "Starlight Service Station")
 
         star, _note = asyncio.run(resolve_location_name(self._helper, "Star", for_trading=True))
         self.assertIsNone(star)
@@ -594,3 +633,313 @@ class RouteReproTest(_SqliteCase):
             text,
         )
         self.assertNotIn("too abstract", text)
+
+    def test_bare_place_words_stay_candidates_even_when_unique(self) -> None:
+        """Mine is one POI's word, and Station is one station, and neither picks."""
+        from skills.uexcorp.uexcorp.resolver import resolve_location_name
+
+        class _Greedy:
+            available = True
+
+            def __init__(self) -> None:
+                self.calls = 0
+                self.offered: list[str] = []
+
+            def choice(self, *args, **kwargs):
+                criteria = {}
+                if len(args) > 1 and isinstance(args[1], dict):
+                    criteria = args[1]
+                elif isinstance(kwargs.get("criteria"), dict):
+                    criteria = kwargs["criteria"]
+                self.offered = [name for name in criteria if name != "none_of_these"]
+                return {"criteria": criteria}
+
+            def noul(self, *args, **kwargs):
+                return {}
+
+            async def decide(self, state=None, questions=None):
+                self.calls += 1
+                offered = list(self.offered)
+
+                class _Answers:
+                    seconds = 0.0
+
+                    def choice(self, key, min_confidence=0.0):
+                        return offered[0] if offered else "Kudre Ore Mine (Closed)"
+
+                    def confidence(self, key):
+                        return 0.99
+
+                return _Answers()
+
+        greedy = _Greedy()
+        self._install_llm(greedy)
+        self._seed_trade()
+        self._db.execute(
+            """
+            INSERT INTO poi (
+                id, name, id_star_system, star_system_name,
+                is_available, is_available_live, has_trade_terminal
+            ) VALUES (131, 'Kudre Ore Mine (Closed)', 1, 'Stanton', 1, 1, 0)
+            """
+        )
+        self._db.execute(
+            """
+            INSERT INTO space_station (
+                id, name, id_star_system, star_system_name,
+                is_available, is_available_live, has_trade_terminal
+            ) VALUES (48, 'Seraphim Station', 1, 'Stanton', 1, 1, 1)
+            """
+        )
+        self._db.execute(
+            """
+            INSERT INTO outpost (
+                id, name, id_star_system, star_system_name,
+                is_available, is_available_live, has_trade_terminal
+            ) VALUES (61, 'Ajax Depot', 1, 'Stanton', 1, 1, 1)
+            """
+        )
+        self._db.execute(
+            """
+            INSERT INTO poi (
+                id, name, id_star_system, star_system_name,
+                is_available, is_available_live, has_trade_terminal
+            ) VALUES (132, 'Ajax Mine', 1, 'Stanton', 1, 1, 0)
+            """
+        )
+        self._db.commit()
+        handler = self._handler()
+        for query in ("Mine", "Station", "mine", "STATION"):
+            named, _note = asyncio.run(
+                resolve_location_name(self._helper, query, for_trading=True)
+            )
+            self.assertIsNone(named, query)
+            text, _instant = asyncio.run(
+                handler.execute_tool(
+                    "uex_get_trade_routes",
+                    {"filter_start_location": query},
+                )
+            )
+            self.assertIn("not recognized", text, query)
+            self.assertNotIn("has no trade terminal", text, query)
+        self.assertEqual(greedy.calls, 0)
+        ajax, _note = asyncio.run(
+            resolve_location_name(self._helper, "Ajax", for_trading=True)
+        )
+        self.assertIsNone(ajax)
+
+    def test_shop_chains_and_single_shops_keep_their_hints(self) -> None:
+        self._install_llm(None)
+        self._seed_trade()
+        self._db.execute(
+            """
+            INSERT INTO terminal (
+                id, name, nickname, type, is_available, id_star_system, star_system_name,
+                id_city, city_name, id_space_station, space_station_name
+            ) VALUES
+                (113, 'Cubby Blast - Area 18', 'Cubby Area 18', 'item', 1, 1, 'Stanton', 18, 'Area 18', NULL, NULL),
+                (114, 'Teach''s - Levski', 'Teach''s', 'clothing', 1, 2, 'Nyx', 41, 'Levski', NULL, NULL),
+                (116, 'Conscientious Objects - Levski', 'Conscientious Objects', 'clothing', 1, 2, 'Nyx', 41, 'Levski', NULL, NULL),
+                (117, 'Tammany and Sons - Metro Center - Lorville', 'Tammany and Sons', 'clothing', 1, 1, 'Stanton', 40, 'Lorville', NULL, NULL),
+                (201, 'Live Fire Weapons - Area 18', 'Live Fire Area 18', 'fps', 1, 1, 'Stanton', 18, 'Area 18', NULL, NULL),
+                (202, 'Live Fire Weapons - Lorville', 'Live Fire Lorville', 'fps', 1, 1, 'Stanton', 40, 'Lorville', NULL, NULL),
+                (203, 'Casaba Outlet - Area 18', 'Casaba Area 18', 'clothing', 1, 1, 'Stanton', 18, 'Area 18', NULL, NULL),
+                (204, 'Casaba Outlet - Everus Harbor', 'Casaba Everus', 'clothing', 1, 1, 'Stanton', NULL, NULL, 52, 'Everus Harbor'),
+                (205, 'Casaba Outlet - CRU-L4', 'Casaba CRU', 'clothing', 1, 1, 'Stanton', NULL, NULL, 54, 'CRU-L4')
+            """
+        )
+        self._db.commit()
+        handler = self._handler()
+        singles = (
+            ("Cubby Blast", "Cubby Blast is a shop, not a trade terminal. Try Area 18."),
+            ("Teach's", "Teach's is a shop, not a trade terminal. Try Levski."),
+            (
+                "Conscientious Objects",
+                "Conscientious Objects is a shop, not a trade terminal. Try Levski.",
+            ),
+            (
+                "Tammany and Sons",
+                "Tammany and Sons is a shop, not a trade terminal. Try Lorville.",
+            ),
+        )
+        for query, sentence in singles:
+            text, _instant = asyncio.run(
+                handler.execute_tool(
+                    "uex_get_trade_routes",
+                    {"filter_start_location": query},
+                )
+            )
+            self.assertIn(sentence, text, query)
+            self.assertNotIn("not recognized", text, query)
+            self.assertNotIn("shop chain", text, query)
+        chains = (
+            (
+                "Casaba Outlet",
+                "Casaba Outlet is a shop chain, not a trade terminal. "
+                "Try a nearby trade terminal such as Area 18, CRU-L4, Everus Harbor.",
+            ),
+            (
+                "Live Fire Weapons",
+                "Live Fire Weapons is a shop chain, not a trade terminal. "
+                "Try a nearby trade terminal such as Area 18, Lorville.",
+            ),
+            (
+                "Casaba Outlett",
+                "Casaba Outlet is a shop chain, not a trade terminal. "
+                "Try a nearby trade terminal such as Area 18, CRU-L4, Everus Harbor.",
+            ),
+        )
+        for query, sentence in chains:
+            text, _instant = asyncio.run(
+                handler.execute_tool(
+                    "uex_get_trade_routes",
+                    {"filter_start_location": query},
+                )
+            )
+            self.assertIn(sentence, text, query)
+            self.assertNotIn("not recognized", text, query)
+            self.assertNotIn("too abstract", text, query)
+
+    def test_shared_commodity_codes_prefer_the_tradable_holder(self) -> None:
+        """Every code that two commodities share, on a route whitelist.
+
+        The tradable holder is the one with both a terminal buy and a
+        terminal sell. BORA's tradable row is the ore. The others that
+        trade at all trade the refined row. A code with no tradable
+        holder still says why.
+        """
+        from skills.uexcorp.uexcorp.api.llm import _stoplist_blocks_pick
+        from skills.uexcorp.uexcorp.tool.validator import Validator
+
+        # code, first name, second name, tradable name or None
+        shared = (
+            ("AGRI", "Agricium", "Agricium (Ore)", "Agricium"),
+            ("ALUM", "Aluminum", "Aluminum (Ore)", "Aluminum"),
+            ("BERY", "Beryl", "Beryl (Raw)", None),
+            ("BEXA", "Bexalite", "Bexalite (Raw)", "Bexalite"),
+            ("BORA", "Borase", "Borase (Ore)", "Borase (Ore)"),
+            ("COBA", "Cobalt", "Cobalt (Raw)", "Cobalt"),
+            ("COPP", "Copper", "Copper (Ore)", "Copper"),
+            ("CORU", "Corundum", "Corundum (Raw)", "Corundum"),
+            ("DIAM", "Diamond", "Diamond (Raw)", None),
+            ("GOLD", "Gold", "Gold (Ore)", "Gold"),
+            ("HEPH", "Hephaestanite", "Hephaestanite (Raw)", "Hephaestanite"),
+            ("LARA", "Laranite", "Laranite (Raw)", "Laranite"),
+            ("QUAN", "Quantainium", "Quantainium (Raw)", None),
+            ("QUAR", "Quartz", "Quartz (Raw)", "Quartz"),
+            ("SADA", "Sadaryx", "Sadaryx (Raw)", None),
+            ("SILI", "Silicon", "Silicon (Raw)", None),
+            ("STIL", "Stileron", "Stileron (Raw)", None),
+            ("TARA", "Taranite", "Taranite (Raw)", "Taranite"),
+            ("TITA", "Titanium", "Titanium (Ore)", "Titanium"),
+            ("TUNG", "Tungsten", "Tungsten (Ore)", "Tungsten"),
+            ("YTRO", "Year of the Rat Envelope", "Year of the Rooster Envelope", None),
+        )
+        self._install_llm(None)
+        self._seed_trade()
+        next_id = 500
+        price_id = 500
+        for code, first, second, tradable in shared:
+            for name in (first, second):
+                raw = int("(Ore)" in name or "(Raw)" in name)
+                self._db.execute(
+                    "INSERT INTO commodity (id, name, code, is_raw) VALUES (?, ?, ?, ?)",
+                    (next_id, name, code, raw),
+                )
+                if name == tradable:
+                    self._db.execute(
+                        """
+                        INSERT INTO commodity_price (
+                            id, id_commodity, id_terminal, price_buy, price_sell, commodity_name
+                        ) VALUES (?, ?, 80, 10, 12, ?)
+                        """,
+                        (price_id, next_id, name),
+                    )
+                elif raw or code in {"BERY", "DIAM", "QUAN", "SADA", "SILI", "STIL", "YTRO", "BORA"}:
+                    self._db.execute(
+                        """
+                        INSERT INTO commodity_price (
+                            id, id_commodity, id_terminal, price_buy, price_sell, commodity_name
+                        ) VALUES (?, ?, 80, 0, 9, ?)
+                        """,
+                        (price_id, next_id, name),
+                    )
+                price_id += 1
+                next_id += 1
+        self._db.execute(
+            """
+            INSERT INTO commodity_route (
+                id, id_commodity, commodity_name,
+                id_terminal_origin, id_terminal_destination,
+                origin_terminal_name, destination_terminal_name,
+                price_origin, price_destination, scu_origin, scu_destination, score
+            ) VALUES (
+                416, 509, 'Borase (Ore)', 80, 83,
+                'Levski', 'Area18 TDD',
+                10, 12, 8, 8, 1
+            )
+            """
+        )
+        self._db.commit()
+        validator = Validator(
+            Validator.VALIDATE_COMMODITY,
+            config={"for_trading": True},
+        )
+        for code, first, second, tradable in shared:
+            for query in (code, code.title(), code.lower(), first, second):
+                self._helper.get_handler_tool().notes.clear()
+                result = asyncio.run(validator.validate(query))
+                notes = " ".join(self._helper.get_handler_tool().notes)
+                if tradable and not _stoplist_blocks_pick(query):
+                    self.assertEqual(result, tradable, query)
+                    self.assertNotIn("sell-only", notes, query)
+                else:
+                    self.assertIsNone(result, query)
+                    self.assertNotEqual(result, second if tradable != second else first, query)
+        handler = self._handler()
+        for query in ("BORA", "Bora", "bora", "Borase"):
+            text, _instant = asyncio.run(
+                handler.execute_tool(
+                    "uex_get_trade_routes",
+                    {"filter_commodity_whitelist": [query]},
+                )
+            )
+            self.assertIn("Borase (Ore)", text, query)
+            self.assertNotIn("sell-only", text, query)
+            self.assertNotIn("not recognized", text, query)
+
+    def test_untradable_typos_keep_the_sell_only_note(self) -> None:
+        self._install_llm(None)
+        self._seed_trade()
+        self._db.execute(
+            """
+            INSERT INTO commodity (id, name, code, is_raw) VALUES
+                (36, 'Hadanite', 'HADA', 0),
+                (58, 'Quantainium', 'QUAN', 0),
+                (59, 'Quantainium (Raw)', 'QUAN', 1)
+            """
+        )
+        self._db.execute(
+            """
+            INSERT INTO commodity_price (
+                id, id_commodity, id_terminal, price_buy, price_sell, commodity_name
+            ) VALUES
+                (36, 36, 80, 0, 500, 'Hadanite'),
+                (58, 58, 80, 0, 400, 'Quantainium'),
+                (59, 59, 80, 0, 0, 'Quantainium (Raw)')
+            """
+        )
+        self._db.commit()
+        handler = self._handler()
+        for query, sentence in (
+            ("Hadinite", "Hadanite is sell-only, so there are no trade routes"),
+            ("Quantanium", "Quantainium is sell-only, so there are no trade routes"),
+        ):
+            text, _instant = asyncio.run(
+                handler.execute_tool(
+                    "uex_get_trade_routes",
+                    {"filter_commodity_whitelist": [query]},
+                )
+            )
+            self.assertIn(sentence, text, query)
+            self.assertNotIn("Area18 TDD", text, query)

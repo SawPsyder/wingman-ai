@@ -1863,8 +1863,11 @@ class LocationBlocklistTest(_SqliteCase):
                 {"filter_start_location": "Casaba Outlett"},
             )
         )
-        self.assertIn("not recognized", typo)
-        self.assertNotIn("is a shop", typo)
+        self.assertIn(
+            "Casaba Outlet is a shop, not a trade terminal. Try Everus Harbor.",
+            typo,
+        )
+        self.assertNotIn("not recognized", typo)
 
         fuel, _instant = asyncio.run(
             handler.execute_tool(

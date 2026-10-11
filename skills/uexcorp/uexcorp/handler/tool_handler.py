@@ -95,7 +95,7 @@ class ToolHandler:
                             (
                                 note
                                 for note in fresh
-                                if "is a shop, not a trade terminal" in note
+                                if "is a shop" in note and "not a trade terminal" in note
                             ),
                             None,
                         )

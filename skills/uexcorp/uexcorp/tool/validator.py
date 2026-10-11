@@ -1,3 +1,4 @@
+import difflib
 import inspect
 from skills.uexcorp.uexcorp.data_access.star_system_data_access import StarSystemDataAccess
 from skills.uexcorp.uexcorp.data_access.vehicle_data_access import VehicleDataAccess
@@ -84,6 +85,54 @@ def _price_sides(helper, commodity_id: int) -> tuple[bool, bool]:
     buy = any((row["price_buy"] or 0) > 0 for row in rows)
     sell = any((row["price_sell"] or 0) > 0 for row in rows)
     return buy, sell
+
+
+def _commodity_code(commodity) -> str:
+    getter = getattr(commodity, "get_code", None)
+    if not callable(getter):
+        return ""
+    return str(getter() or "").casefold()
+
+
+def _unique_tradable_holder(catalog, decided_name: str, tradable_names: set[str]) -> str | None:
+    """The one tradable commodity a route filter should keep for this hit.
+
+    Borase and Borase (Ore) share BORA. The exact step prefers the refined
+    row, which is sell-only, so a route filter takes the tradable ore
+    instead. A name that is already tradable stays, which keeps Gold.
+    Several tradable holders are not a guess.
+    """
+    if decided_name in tradable_names:
+        return decided_name
+    code = ""
+    for item in catalog:
+        if str(item) == decided_name:
+            code = _commodity_code(item)
+            break
+    if not code:
+        return None
+    holders = []
+    for item in catalog:
+        if _commodity_code(item) != code:
+            continue
+        label = str(item)
+        if label in tradable_names and label not in holders:
+            holders.append(label)
+    if len(holders) == 1:
+        return holders[0]
+    return None
+
+
+def _closer_untradable(query: str, catalog_name: str, tradable_name: str | None) -> bool:
+    """A typo of a sell-only commodity beats a weaker tradable lookalike."""
+    left = (query or "").casefold().strip()
+    catalog_ratio = difflib.SequenceMatcher(None, left, catalog_name.casefold()).ratio()
+    if catalog_ratio < 0.8:
+        return False
+    if not tradable_name:
+        return True
+    tradable_ratio = difflib.SequenceMatcher(None, left, tradable_name.casefold()).ratio()
+    return catalog_ratio >= tradable_ratio
 
 
 def _untradable_sentence(name: str, buy: bool, sell: bool) -> str:
@@ -405,11 +454,12 @@ class Validator:
             decided = _decide_exact(
                 _commodity_records(catalog), name, None, match_code=False
             )
+            tradable_names = {str(item) for item in tradable}
             if decided is not None:
-                tradable_names = {str(item) for item in tradable}
                 if decided.key:
-                    if decided.key in tradable_names:
-                        return decided.key, None
+                    holder = _unique_tradable_holder(catalog, decided.key, tradable_names)
+                    if holder:
+                        return holder, None
                     row = next(item for item in catalog if str(item) == decided.key)
                     buy, sell = _price_sides(self.__helper, row.get_id())
                     return None, _untradable_sentence(decided.key, buy, sell)
@@ -417,6 +467,17 @@ class Validator:
             closest_match, options = await _closest_record(
                 self.__helper, name, _commodity_records(tradable)
             )
+            catalog_match, _catalog_note = await _closest_record(
+                self.__helper, name, _commodity_records(catalog)
+            )
+            if (
+                catalog_match
+                and catalog_match not in tradable_names
+                and _closer_untradable(name, catalog_match, closest_match)
+            ):
+                row = next(item for item in catalog if str(item) == catalog_match)
+                buy, sell = _price_sides(self.__helper, row.get_id())
+                return None, _untradable_sentence(catalog_match, buy, sell)
             if closest_match:
                 return closest_match, None
             tradable_ids = set(ids) if ids else set()
