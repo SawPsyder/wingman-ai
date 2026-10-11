@@ -10,7 +10,8 @@ CREATE TABLE imports(
     `date_imported` INTEGER,
     `dataset_count` INTEGER,
     `time_taken` INTEGER,
-    `last_import_run_id` INTEGER
+    `last_import_run_id` INTEGER,
+    `short_streak` TEXT
 );
 
 CREATE TABLE category(

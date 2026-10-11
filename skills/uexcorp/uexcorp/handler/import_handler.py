@@ -1,3 +1,4 @@
+import json
 import time
 from typing import TYPE_CHECKING
 
@@ -13,6 +14,45 @@ ROUTE_SHORT_PAGE_MIN_STORED = 20
 
 def _route_page_is_short(fetched: int, stored: int) -> bool:
     return stored >= ROUTE_SHORT_PAGE_MIN_STORED and fetched * 2 < stored
+
+
+def _ensure_short_streak_column(database) -> None:
+    columns = {row["name"] for row in database.execute_fetchall("PRAGMA table_info(imports)")}
+    if "short_streak" in columns:
+        return
+    database.execute("ALTER TABLE imports ADD COLUMN short_streak TEXT")
+    database.commit()
+
+
+def _load_short_streaks(database) -> dict[int, int]:
+    _ensure_short_streak_column(database)
+    rows = database.execute_fetchall(
+        "SELECT short_streak FROM imports WHERE `table` = ?",
+        ("commodity_route",),
+    )
+    if not rows or not rows[0]["short_streak"]:
+        return {}
+    try:
+        raw = json.loads(rows[0]["short_streak"])
+    except (TypeError, ValueError):
+        return {}
+    streaks = {}
+    for key, value in raw.items():
+        try:
+            streaks[int(key)] = int(value)
+        except (TypeError, ValueError):
+            continue
+    return streaks
+
+
+def _save_short_streaks(database, streaks: dict[int, int]) -> None:
+    _ensure_short_streak_column(database)
+    payload = json.dumps({str(key): value for key, value in sorted(streaks.items())}) if streaks else None
+    database.execute(
+        "UPDATE imports SET short_streak = ? WHERE `table` = ?",
+        (payload, "commodity_route"),
+    )
+    database.commit()
 
 
 def _route_prices_positive(data: dict) -> bool:
@@ -562,8 +602,10 @@ class ImportHandler:
             self.__helper.get_handler_debug().write(message, True)
             return self.IMPORT_FAILED
 
+        streaks = _load_short_streaks(self.__helper.get_database())
         commodity_route_data = []
         seen_route_ids = set()
+        kept_commodity_ids: list[int] = []
         for commodity_id in commodity_ids:
             page = _load_commodity_routes(commodity_id)
             if not page.ok:
@@ -571,21 +613,34 @@ class ImportHandler:
                     f"Commodity route import failed ({page.error or 'unknown'}). Previous routes kept and will be retried."
                 )
             stored = int(stored_counts.get(commodity_id) or 0)
-            if _route_page_is_short(len(page.data), stored):
+            short = _route_page_is_short(len(page.data), stored)
+            if short:
                 page = _load_commodity_routes(commodity_id)
                 if not page.ok:
                     return _keep_previous(
                         f"Commodity route import failed ({page.error or 'unknown'}). Previous routes kept and will be retried."
                     )
-                if _route_page_is_short(len(page.data), stored):
+                short = _route_page_is_short(len(page.data), stored)
+            if short:
+                fetched = len(page.data)
+                if streaks.get(commodity_id, 0) >= 1:
                     warn(
-                        f"UEX route fetch for commodity {commodity_id} returned {len(page.data)} rows "
+                        f"UEX route fetch for commodity {commodity_id} returned {fetched} rows "
                         f"after a retry, under half of the {stored} stored rows. "
-                        "Previous routes kept and the cache was not stamped."
+                        "accepted after 2 consecutive short fetches"
                     )
-                    return _keep_previous(
-                        f"Commodity {commodity_id} route page stayed short ({len(page.data)} of {stored}). Previous routes kept."
+                    streaks.pop(commodity_id, None)
+                else:
+                    streaks[commodity_id] = 1
+                    warn(
+                        f"UEX route fetch for commodity {commodity_id} returned {fetched} rows "
+                        f"after a retry, under half of the {stored} stored rows. "
+                        "Previous rows for this commodity kept."
                     )
+                    kept_commodity_ids.append(commodity_id)
+                    continue
+            else:
+                streaks.pop(commodity_id, None)
             for data in page.data:
                 route_id = data.get("id")
                 if route_id in seen_route_ids:
@@ -597,20 +652,31 @@ class ImportHandler:
                 seen_route_ids.add(route_id)
                 commodity_route_data.append(data)
 
+        run_id = self.__common_data["last_import_run_id"]
+        if kept_commodity_ids:
+            placeholders = ",".join("?" * len(kept_commodity_ids))
+            self.__helper.get_database().execute(
+                f"UPDATE commodity_route SET last_import_run_id = ? "
+                f"WHERE id_commodity IN ({placeholders})",
+                (run_id, *kept_commodity_ids),
+            )
         if commodity_route_data:
             for index, data in enumerate(commodity_route_data):
                 commodity_route = CommodityRoute(data["id"])
                 commodity_route.set_data(data)
                 commodity_route.persist(index < len(commodity_route_data) - 1)
 
+        kept_count = sum(int(stored_counts.get(commodity_id) or 0) for commodity_id in kept_commodity_ids)
+        dataset_count = len(commodity_route_data) + kept_count
         commodity_route_import.set_date_imported(self.__helper.get_timestamp())
-        commodity_route_import.set_dataset_count(len(commodity_route_data))
+        commodity_route_import.set_dataset_count(dataset_count)
         commodity_route_import.set_time_taken(self.__helper.end_timer("import"))
         commodity_route_import.persist()
+        _save_short_streaks(self.__helper.get_database(), streaks)
         self.__helper.get_handler_debug().write(
             f"Commodity Route data imported: {commodity_route_import.get_dataset_count()} record(s) in {commodity_route_import.get_time_taken()}s"
         )
-        return len(commodity_route_data)
+        return dataset_count
 
     def __import_data_company(self) -> bool | int:
         from skills.uexcorp.uexcorp.model.import_data import ImportData

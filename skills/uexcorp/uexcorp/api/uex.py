@@ -308,8 +308,9 @@ class Uex:
         if not already:
             from skills.uexcorp.uexcorp.log import warn
 
+            cause = "timeout budget exhausted" if error == "timeout_budget" else error
             warn(
-                f"UEX requests stopped for this run ({error}). "
+                f"UEX requests stopped for this run ({cause}). "
                 "Queued requests are skipped. Previous data is kept."
             )
 

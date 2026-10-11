@@ -86,6 +86,7 @@ class _FakeHelper:
         self._debug = _NullHandler()
         self._error = _NullHandler()
         self._import_handler = None
+        self.timestamp = NOW
 
     def set_database(self, database) -> None:
         self._database = database
@@ -112,7 +113,7 @@ class _FakeHelper:
         return self._import_handler
 
     def get_timestamp(self) -> int:
-        return NOW
+        return self.timestamp
 
     def start_timer(self, name: str) -> None:
         return None
@@ -943,8 +944,17 @@ class UexClientTest(unittest.TestCase):
         first = self._api.fetch("items_prices_all")
         self.assertFalse(first.ok)
         self.assertFalse(self._api._is_blocked())
-        second = self._api.fetch("commodities_prices_all")
+        import skills.uexcorp.uexcorp.log as log_module
+
+        budget_warnings: list[str] = []
+        original_warn = log_module.warn
+        log_module.warn = budget_warnings.append
+        try:
+            second = self._api.fetch("commodities_prices_all")
+        finally:
+            log_module.warn = original_warn
         self.assertFalse(second.ok)
+        self.assertTrue(any("timeout budget exhausted" in note for note in budget_warnings))
         # The second endpoint's budget failure counts as exhausted, so the
         # breaker opens and a later request is not sent.
         self.assertTrue(self._api._is_blocked())
@@ -2089,7 +2099,16 @@ class CommodityBlacklistFileTest(_SqliteCase):
 
 
 class ShortRoutePageTest(_SqliteCase):
-    def _import_iron(self, stored: int, pages: list[int]):
+    def _short_streak(self):
+        rows = self._db.execute_fetchall(
+            "SELECT short_streak FROM imports WHERE `table` = ?",
+            ("commodity_route",),
+        )
+        if not rows:
+            return None
+        return rows[0]["short_streak"]
+
+    def _import_iron(self, stored: int, pages: list[int], streak: str | None = None):
         from skills.uexcorp.uexcorp.handler.import_handler import ImportHandler
         import skills.uexcorp.uexcorp.log as log_module
 
@@ -2102,6 +2121,16 @@ class ShortRoutePageTest(_SqliteCase):
             """,
             (NOW, NOW),
         )
+        if streak is not None:
+            self._db.execute(
+                """
+                INSERT INTO imports (
+                    `table`, date_imported, dataset_count, time_taken, last_import_run_id, short_streak
+                )
+                VALUES ('commodity_route', 0, ?, 0, 1, ?)
+                """,
+                (stored, streak),
+            )
         self._db.execute(
             """
             INSERT INTO commodity_price (id, id_commodity, price_buy, price_sell)
@@ -2173,9 +2202,9 @@ class ShortRoutePageTest(_SqliteCase):
 
     def test_iron_short_page_twice_keeps_stored_rows(self) -> None:
         imported, handler, session, notes, warnings = self._import_iron(475, [25, 25])
-        self.assertIs(imported, handler.IMPORT_FAILED)
+        self.assertNotEqual(imported, handler.IMPORT_FAILED)
+        self.assertEqual(imported, 475)
         self.assertEqual(self._route_ids(), list(range(1, 476)))
-        self.assertEqual(self._route_stamp(), [])
         self.assertEqual(len(session.urls), 2)
         self.assertEqual(
             notes,
@@ -2186,10 +2215,17 @@ class ShortRoutePageTest(_SqliteCase):
         )
         self.assertEqual(len(warnings), 1)
         self.assertIn("475", warnings[0])
-        self.assertIn("not stamped", warnings[0])
+        self.assertNotIn("not stamped", warnings[0])
+        self.assertNotIn("accepted after 2 consecutive short fetches", warnings[0])
+        stamp = self._route_stamp()
+        self.assertEqual(len(stamp), 1)
+        self.assertEqual(stamp[0]["dataset_count"], 475)
+        self.assertEqual(self._short_streak(), '{"44": 1}')
 
     def test_iron_short_page_then_full_page_is_accepted(self) -> None:
-        imported, _handler, session, notes, warnings = self._import_iron(475, [25, 475])
+        imported, _handler, session, notes, warnings = self._import_iron(
+            475, [25, 475], streak='{"44": 1}'
+        )
         self.assertEqual(imported, 475)
         self.assertEqual(len(self._route_ids()), 475)
         self.assertNotIn(1, self._route_ids())
@@ -2205,6 +2241,7 @@ class ShortRoutePageTest(_SqliteCase):
         stamp = self._route_stamp()
         self.assertEqual(len(stamp), 1)
         self.assertEqual(stamp[0]["dataset_count"], 475)
+        self.assertIsNone(self._short_streak())
 
     def test_nineteen_stored_rows_accept_a_one_row_page(self) -> None:
         imported, _handler, session, notes, warnings = self._import_iron(19, [1])
@@ -2217,13 +2254,18 @@ class ShortRoutePageTest(_SqliteCase):
 
     def test_twenty_stored_rows_keep_old_when_the_retry_stays_short(self) -> None:
         imported, handler, session, notes, warnings = self._import_iron(20, [9, 9])
-        self.assertIs(imported, handler.IMPORT_FAILED)
+        self.assertNotEqual(imported, handler.IMPORT_FAILED)
+        self.assertEqual(imported, 20)
         self.assertEqual(self._route_ids(), list(range(1, 21)))
-        self.assertEqual(self._route_stamp(), [])
         self.assertEqual(len(session.urls), 2)
         self.assertEqual(len(notes), 2)
         self.assertEqual(len(warnings), 1)
         self.assertIn("20", warnings[0])
+        self.assertNotIn("not stamped", warnings[0])
+        stamp = self._route_stamp()
+        self.assertEqual(len(stamp), 1)
+        self.assertEqual(stamp[0]["dataset_count"], 20)
+        self.assertEqual(self._short_streak(), '{"44": 1}')
 
     def test_cold_import_accepts_a_small_page(self) -> None:
         imported, _handler, session, notes, warnings = self._import_iron(0, [5])
@@ -2233,6 +2275,156 @@ class ShortRoutePageTest(_SqliteCase):
         self.assertEqual(notes, ["UEX route fetch commodity 44: 5 rows"])
         self.assertEqual(warnings, [])
         self.assertEqual(self._route_stamp()[0]["dataset_count"], 5)
+
+    def test_short_commodity_last_keeps_only_itself_then_accepts(self) -> None:
+        from skills.uexcorp.uexcorp.handler.import_handler import ImportHandler
+        import skills.uexcorp.uexcorp.log as log_module
+        import skills.uexcorp.uexcorp.tradable as tradable
+
+        self._db.execute(
+            """
+            INSERT INTO imports (`table`, date_imported, dataset_count, time_taken, last_import_run_id)
+            VALUES
+                ('commodity', ?, 1, 0, 1),
+                ('commodity_price', ?, 1, 0, 1)
+            """,
+            (NOW, NOW),
+        )
+        self._db.execute(
+            """
+            INSERT INTO commodity_price (id, id_commodity, price_buy, price_sell)
+            VALUES
+                (1, 44, 3000, 0), (2, 44, 0, 3400),
+                (3, 45, 3000, 0), (4, 45, 0, 3400),
+                (5, 46, 3000, 0), (6, 46, 0, 3400)
+            """
+        )
+
+        def seed(commodity_id: int, start: int, count: int, name: str) -> None:
+            values = ",".join(
+                f"({start + offset}, {commodity_id}, 3000, 3400, 4, 4, '{name}', 1)"
+                for offset in range(count)
+            )
+            self._db.execute(
+                "INSERT INTO commodity_route ("
+                "id, id_commodity, price_origin, price_destination, "
+                "scu_origin, scu_destination, commodity_name, last_import_run_id"
+                f") VALUES {values}"
+            )
+
+        seed(44, 1, 100, "Iron")
+        seed(45, 1001, 10, "Copper")
+        seed(46, 2001, 10, "Aluminum")
+        self._db.commit()
+
+        def ids_for(commodity_id: int) -> list[int]:
+            rows = self._db.execute_fetchall(
+                "SELECT id FROM commodity_route WHERE id_commodity = ? ORDER BY id",
+                (commodity_id,),
+            )
+            return [row["id"] for row in rows]
+
+        def commodity_ids(urls: list[str]) -> list[int]:
+            return [
+                int(parse_qs(urlparse(url).query)["id_commodity"][0])
+                for url in urls
+            ]
+
+        def run(plan: dict[int, list[int]], next_id: int):
+            class _Pages:
+                def __init__(self):
+                    self.plan = {key: list(counts) for key, counts in plan.items()}
+                    self.urls: list[str] = []
+                    self._next_id = next_id
+
+                def get(self, url, params=None, timeout=None, headers=None, stream=None):
+                    self.urls.append(url)
+                    commodity_id = int(parse_qs(urlparse(url).query)["id_commodity"][0])
+                    count = self.plan[commodity_id].pop(0)
+                    rows = []
+                    for _ in range(count):
+                        self._next_id += 1
+                        rows.append(
+                            {
+                                "id": self._next_id,
+                                "id_commodity": commodity_id,
+                                "price_origin": 3000,
+                                "price_destination": 3400,
+                                "scu_origin": 4,
+                                "scu_destination": 8,
+                                "commodity_name": "Commodity",
+                            }
+                        )
+                    return _Response(200, {"status": "ok", "data": rows})
+
+            session = _Pages()
+            handler = ImportHandler(self._helper)
+            self._helper.set_import_handler(handler)
+            clock = _Clock()
+            api = Uex(
+                self._helper,
+                sleeper=clock.sleep,
+                monotonic=clock.monotonic,
+                rng=lambda: 0.0,
+            )
+            api.session = session
+            handler._ImportHandler__api = api
+            notes: list[str] = []
+            warnings: list[str] = []
+            original_info = log_module.info
+            original_warn = log_module.warn
+            log_module.info = notes.append
+            log_module.warn = warnings.append
+            try:
+                imported = handler._ImportHandler__import_data_commodity_route()
+            finally:
+                log_module.info = original_info
+                log_module.warn = original_warn
+            return imported, session.urls, warnings
+
+        original_ids = tradable.tradable_commodity_ids
+        tradable.tradable_commodity_ids = lambda database: [45, 46, 44]
+        try:
+            imported, urls, warnings = run({45: [10], 46: [10], 44: [40, 40]}, 30000)
+            self.assertEqual(imported, 120)
+            self.assertEqual(commodity_ids(urls), [45, 46, 44, 44])
+            self.assertEqual(ids_for(44), list(range(1, 101)))
+            fresh_45 = ids_for(45)
+            fresh_46 = ids_for(46)
+            self.assertEqual(len(fresh_45), 10)
+            self.assertEqual(len(fresh_46), 10)
+            self.assertTrue(all(route_id >= 30000 for route_id in fresh_45))
+            self.assertTrue(all(route_id >= 30000 for route_id in fresh_46))
+            self.assertEqual(len(warnings), 1)
+            self.assertIn("100", warnings[0])
+            self.assertNotIn("accepted after 2 consecutive short fetches", warnings[0])
+            self.assertEqual(self._route_stamp()[0]["dataset_count"], 120)
+            self.assertEqual(self._short_streak(), '{"44": 1}')
+
+            later = NOW + 100_000
+            self._helper.timestamp = later
+            self._db.execute(
+                "UPDATE imports SET date_imported = ? WHERE `table` = ?",
+                (later, "commodity_price"),
+            )
+            self._db.commit()
+            imported, urls, warnings = run({45: [10], 46: [10], 44: [40, 40]}, 40000)
+            self.assertEqual(imported, 60)
+            self.assertEqual(commodity_ids(urls), [45, 46, 44, 44])
+            accepted_44 = ids_for(44)
+            self.assertEqual(len(accepted_44), 40)
+            self.assertTrue(all(route_id >= 40000 for route_id in accepted_44))
+            self.assertEqual(len(ids_for(45)), 10)
+            self.assertEqual(len(ids_for(46)), 10)
+            self.assertTrue(set(ids_for(45)).isdisjoint(fresh_45))
+            self.assertTrue(set(ids_for(46)).isdisjoint(fresh_46))
+            self.assertEqual(len(warnings), 1)
+            self.assertIn("accepted after 2 consecutive short fetches", warnings[0])
+            self.assertEqual(self._route_stamp()[0]["dataset_count"], 60)
+            self.assertIsNone(self._short_streak())
+        finally:
+            tradable.tradable_commodity_ids = original_ids
+            self._helper.timestamp = NOW
 
 
 class OffPlanetOrbitQueryTest(_SqliteCase):
