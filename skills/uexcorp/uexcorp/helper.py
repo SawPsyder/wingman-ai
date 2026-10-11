@@ -115,7 +115,7 @@ class Helper:
     def on_import_completed(self, imported_rows_count: int):
         try:
             self.get_handler_config().sync_blacklists()
-        except OSError as e:
+        except Exception as e:
             from skills.uexcorp.uexcorp.log import warn
 
             warn(f"UEX blacklist file was not rewritten ({e}). The previous file was kept.")

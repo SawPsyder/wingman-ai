@@ -105,10 +105,11 @@ class Item(DataModel):
         buy_groups = {}
         sell_groups = {}
         for price in ItemPriceDataAccess().add_filter_by_id_item(self.get_id()).load():
+            place = price.offer_terminal_label()
             if price.get_price_buy():
-                buy_groups.setdefault(price.get_price_buy(), []).append(price.get_terminal_name())
+                buy_groups.setdefault(price.get_price_buy(), []).append(place)
             if price.get_price_sell():
-                sell_groups.setdefault(price.get_price_sell(), []).append(price.get_terminal_name())
+                sell_groups.setdefault(price.get_price_sell(), []).append(place)
 
         offers = []
         for value in sorted(buy_groups):  # cheapest buy first

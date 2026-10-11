@@ -66,7 +66,7 @@ def _block_detail(helper, terminal_ids: list[int]) -> str:
         for entry in store.active():
             if wanted.intersection(store.terminal_ids_for(entry)):
                 reason = entry.get("reason") or ""
-                when = format_expiry(entry.get("expires"))
+                when = format_expiry(entry.get("expires"), now=store.now())
                 if reason and when:
                     return f"{reason}, until {when}"
                 return reason or (f"until {when}" if when else "")

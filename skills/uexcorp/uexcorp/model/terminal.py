@@ -441,6 +441,20 @@ class Terminal(DataModel):
         return str(self.data["name"])
 
 
+def offer_terminal_label(terminal_id, fallback: str | None = None) -> str:
+    """Shop or pad label, including a block note when one applies."""
+    if not terminal_id:
+        return fallback or ""
+    try:
+        terminal = Terminal(int(terminal_id), load=True)
+        label = terminal.get_ai_location_string()
+        if isinstance(label, str) and label and label != "None":
+            return label
+    except Exception:
+        pass
+    return fallback or ""
+
+
 def _blocked_reason(terminal) -> str | None:
     try:
         from skills.uexcorp.uexcorp.helper import Helper

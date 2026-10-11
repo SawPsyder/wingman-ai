@@ -178,10 +178,8 @@ class LocationInformation(Tool):
 
     def __get_terminals(self) -> list[DataModel]:
         from skills.uexcorp.uexcorp.data_access.terminal_data_access import TerminalDataAccess
-        from skills.uexcorp.uexcorp.model.terminal import Terminal
 
         terminal_data_access = TerminalDataAccess()
-        terminal_data_access.add_filter_by_type(Terminal.TYPE_COMMODITY)
         terminal_data_access.add_filter_by_is_available(True)
         if self.__filter_locations and not self.__filter_location_types:
             terminal_data_access.add_filter_by_name(self.__filter_locations)

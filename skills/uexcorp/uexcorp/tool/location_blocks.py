@@ -5,21 +5,26 @@ from skills.uexcorp.uexcorp.tool.validator import Validator
 from skills.uexcorp.uexcorp.location_blocklist import (
     CONFIRM_SECONDS,
     LocationBlocklist,
+    _expiry_value,
+    _ids_equal,
+    coverage_phrase,
     format_expiry,
     parse_duration,
     signature,
 )
-from skills.uexcorp.uexcorp.location_resolver import format_candidates, resolve_location
+from skills.uexcorp.uexcorp.resolver import format_candidates, resolve_location
 
 
 def _store(helper) -> LocationBlocklist:
     return LocationBlocklist(helper)
 
 
-def _confirm_or_preview(store, needed: bool, confirm: bool, sig: str, preview: str):
+def _confirm_or_preview(store, helper, needed: bool, confirm: bool, sig: str, preview: str):
     if not needed:
         return None
     if confirm:
+        if _user_declined(helper):
+            return "The last reply declined that preview. Nothing was saved.", ""
         if store.accept_confirm(sig):
             return None
         return (
@@ -28,6 +33,65 @@ def _confirm_or_preview(store, needed: bool, confirm: bool, sig: str, preview: s
         )
     store.remember_preview(sig)
     return preview, ""
+
+
+def _user_declined(helper) -> bool:
+    """Confident System One 'no' on the last user line. Unavailable means confirm stands."""
+    try:
+        wingman = helper.get_handler_config().get_wingman()
+        system_one = getattr(wingman, "system_one", None)
+        if not system_one or not system_one.available:
+            return False
+        conversation = getattr(wingman, "conversation", None)
+        history = conversation.history() if conversation is not None else []
+        last = ""
+        for message in reversed(list(history or [])):
+            role = message.get("role") if isinstance(message, dict) else getattr(message, "role", None)
+            if role == "user":
+                content = message.get("content") if isinstance(message, dict) else getattr(message, "content", "")
+                last = content or ""
+                break
+        if not str(last).strip():
+            return False
+        answers = system_one.decide_sync(
+            {"message": last},
+            {
+                "agreed": system_one.noul(
+                    "Did the user agree to the pending location-block preview?"
+                )
+            },
+        )
+        probability = answers.noul("agreed")
+        if probability is not None and probability <= 0.2:
+            return True
+    except Exception:
+        return False
+    return False
+
+
+def _candidate_reply(resolved) -> tuple[str, str]:
+    listing = format_candidates(resolved.candidates)
+    if len(resolved.candidates) == 1:
+        hit = resolved.candidates[0]
+        return (
+            f"Nothing was saved. {hit.get('label') or hit['name']} is not an exact match. "
+            f"Ask which place, then call again with the exact name:\n{listing}",
+            "",
+        )
+    return (
+        "Several locations match. Nothing was saved. Ask which one, then call again with scope or the exact name:\n"
+        + listing,
+        "",
+    )
+
+
+def _covering_parent(store, candidate):
+    parents = candidate.get("parents") or {}
+    for entry in store.active():
+        parent_id = parents.get(entry.get("scope"))
+        if parent_id is not None and _ids_equal(parent_id, entry.get("id")):
+            return entry
+    return None
 
 
 class ListLocationBlocks(Tool):
@@ -39,7 +103,8 @@ class ListLocationBlocks(Tool):
         shown = []
         for entry in store.read():
             expires = entry.get("expires")
-            expired = bool(expires and int(expires) <= now)
+            stamp = _expiry_value(expires)
+            expired = bool(stamp and stamp <= now)
             if expired and not include_expired:
                 continue
             shown.append(
@@ -49,7 +114,7 @@ class ListLocationBlocks(Tool):
                     "name": entry.get("name"),
                     "path": entry.get("path"),
                     "reason": entry.get("reason") or "",
-                    "expires": format_expiry(expires),
+                    "expires": format_expiry(expires, now=now),
                     "expired": expired,
                     "stale": bool(entry.get("stale")),
                     "terminal_count": store.terminal_count(entry),
@@ -70,7 +135,9 @@ class ListLocationBlocks(Tool):
                 bits.append("expired")
             if entry["stale"]:
                 bits.append("stale")
-            bits.append(f"{entry['terminal_count']} terminals")
+            counted = entry["terminal_count"]
+            commodity_word = "commodity terminal" if counted == 1 else "commodity terminals"
+            bits.append(f"{counted} {commodity_word}")
             lines.append("; ".join(bits))
         return "\n".join(lines), ""
 
@@ -105,18 +172,17 @@ class BlockLocation(Tool):
             expires = parse_duration(duration, helper.get_timestamp())
         except ValueError as error:
             return str(error), ""
-        resolved = resolve_location(helper, name, scope)
-        if resolved is None:
+        resolved = resolve_location(helper, name, scope, for_write=True, available_only=False)
+        if resolved.match is None and not resolved.candidates:
             return f"No location matches {name}. Nothing was saved.", ""
-        if isinstance(resolved, list):
-            return (
-                "Several locations match. Nothing was saved. Ask which one, then call again with scope or the exact name:\n"
-                + format_candidates(resolved),
-                "",
-            )
+        if resolved.match is None:
+            return _candidate_reply(resolved)
+        place = resolved.match
         store = _store(helper)
-        count = store.terminal_count(resolved)
-        needed = store.needs_confirm("block", resolved["scope"], count)
+        count = store.terminal_count(place)
+        total = store.terminal_total(place)
+        non_exact = resolved.method != "exact"
+        needed = store.needs_confirm("block", place["scope"], count) or non_exact
         sig = signature(
             "block",
             {
@@ -126,22 +192,27 @@ class BlockLocation(Tool):
                 "duration": duration or "",
             },
         )
+        where = f" in {place['path']}" if place.get("path") else ""
         preview = (
-            f"Would block {resolved['scope']} {resolved['name']}"
-            f"{(' in ' + resolved['path']) if resolved.get('path') else ''}: "
-            f"{count} commodity terminals. "
+            f"Would block {place['scope']} {place['name']}{where}: "
+            f"{coverage_phrase(place['name'], count, total)}. "
+        )
+        lagrange = store.lagrange_sentence(place)
+        if lagrange:
+            preview += lagrange + " "
+        preview += (
             f"Ask the user, then call again with the same arguments and confirm=true "
             f"within {CONFIRM_SECONDS // 60} minutes."
         )
-        held = _confirm_or_preview(store, needed, bool(confirm), sig, preview)
+        held = _confirm_or_preview(store, helper, needed, bool(confirm), sig, preview)
         if held:
             return held
-        entry = store.add(resolved, reason, expires)
-        when = format_expiry(entry.get("expires"))
+        entry = store.add(place, reason, expires)
+        when = format_expiry(entry.get("expires"), now=store.now())
         spoken = f"Blocked {entry['name']} ({entry['scope']})"
         if entry.get("path"):
             spoken += f" in {entry['path']}"
-        spoken += f", {count} terminals."
+        spoken += f", {coverage_phrase(entry['name'], count, total)}."
         if entry.get("reason"):
             spoken += f" Reason: {entry['reason']}."
         if when:
@@ -194,34 +265,43 @@ class UnblockLocation(Tool):
     TOOL_NAME = "uex_unblock_location"
 
     def execute(self, name: str, confirm: bool | None = None) -> tuple[str, str]:
-        store = _store(self._helper)
+        helper = self._helper
+        store = _store(helper)
         matches = store.matching_blocks(name)
+        non_exact = False
         if not matches:
-            resolved = resolve_location(self._helper, name, None)
-            if isinstance(resolved, list):
-                return (
-                    "Several locations match. Nothing was changed:\n" + format_candidates(resolved),
-                    "",
-                )
-            if isinstance(resolved, dict):
+            resolved = resolve_location(helper, name, None, for_write=True, available_only=False)
+            if resolved.match is None and resolved.candidates:
+                return _candidate_reply(resolved)
+            if resolved.match is not None:
+                non_exact = resolved.method != "exact"
+                place = resolved.match
                 matches = [
                     entry
-                    for entry in store.active()
-                    if entry.get("scope") == resolved["scope"] and entry.get("id") == resolved["id"]
+                    for entry in store.read()
+                    if entry.get("scope") == place["scope"] and _ids_equal(entry.get("id"), place["id"])
                 ]
+                if not matches:
+                    parent = _covering_parent(store, place)
+                    if parent:
+                        return (
+                            f"{place['name']} is covered by the {parent.get('scope')} block {parent.get('name')}. "
+                            "Remove that block to unblock it.",
+                            "",
+                        )
         if not matches:
             return f"No block matches {name}.", ""
-        needed = store.needs_confirm("unblock", removing=len(matches))
+        needed = store.needs_confirm("unblock", removing=len(matches)) or non_exact
         sig = signature("unblock", {"name": name})
         names = ", ".join(entry.get("name") or "" for entry in matches)
         preview = (
             f"Would remove {len(matches)} blocks ({names}). "
             "Ask the user, then call again with the same name and confirm=true within 2 minutes."
         )
-        held = _confirm_or_preview(store, needed, bool(confirm), sig, preview)
+        held = _confirm_or_preview(store, helper, needed, bool(confirm), sig, preview)
         if held:
             return held
-        removed = store.remove_keys([(entry["scope"], int(entry["id"])) for entry in matches])
+        removed = store.remove_keys([(entry["scope"], entry["id"]) for entry in matches])
         return f"Removed {removed} block(s): {names}.", ""
 
     def get_mandatory_fields(self) -> dict[str, Validator]:
@@ -256,7 +336,11 @@ class ClearLocationBlocks(Tool):
         entries = store.read()
         now = store.now()
         if only:
-            targets = [entry for entry in entries if entry.get("expires") and int(entry["expires"]) <= now]
+            targets = [
+                entry
+                for entry in entries
+                if _expiry_value(entry.get("expires")) and _expiry_value(entry.get("expires")) <= now
+            ]
         else:
             targets = list(entries)
         sig = signature("clear", {"only_expired": only})
@@ -264,7 +348,7 @@ class ClearLocationBlocks(Tool):
             f"Would clear {len(targets)} location block(s). "
             "Ask the user, then call again with the same arguments and confirm=true within 2 minutes."
         )
-        held = _confirm_or_preview(store, True, bool(confirm), sig, preview)
+        held = _confirm_or_preview(store, self._helper, True, bool(confirm), sig, preview)
         if held:
             return held
         removed = store.clear(only_expired=only)

@@ -58,7 +58,7 @@ class VehicleRentalPrice(DataModel):
         if show_vehicle_information:
             information["vehicle"] = self.get_vehicle_name()
         if show_terminal_information:
-            information["terminal"] = self.get_terminal_name()
+            information["terminal"] = self.offer_terminal_label()
         information["price_rent"] = self.get_price_rent()
         return information
 
@@ -92,5 +92,10 @@ class VehicleRentalPrice(DataModel):
     def get_terminal_name(self) -> str | None:
         return self.data["terminal_name"]
 
+    def offer_terminal_label(self) -> str:
+        from skills.uexcorp.uexcorp.model.terminal import offer_terminal_label
+
+        return offer_terminal_label(self.get_id_terminal(), self.get_terminal_name())
+
     def __str__(self):
-        return f"Rent {self.get_vehicle_name()} at {self.get_terminal_name()} for {self.get_price_rent()}"
+        return f"Rent {self.get_vehicle_name()} at {self.offer_terminal_label()} for {self.get_price_rent()}"

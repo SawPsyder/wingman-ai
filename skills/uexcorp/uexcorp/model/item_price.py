@@ -57,7 +57,7 @@ class ItemPrice(DataModel):
         if show_item_information:
             information["item_name"] = self.get_item_name()
         if show_terminal_information:
-            information["terminal"] = self.get_terminal_name()
+            information["terminal"] = self.offer_terminal_label()
         # A price of 0 means "no buy/sell option here", not a free item.
         if self.get_price_buy():
             information["price_buy_from_terminal"] = self.get_price_buy()
@@ -72,7 +72,7 @@ class ItemPrice(DataModel):
         if self.get_price_sell():
             parts.append(f"sell for {self.get_price_sell()}")
         prefix = f"{self.get_item_name()} at" if show_item else "At"
-        return f"{prefix} {self.get_terminal_name()}: {', '.join(parts)}"
+        return f"{prefix} {self.offer_terminal_label()}: {', '.join(parts)}"
 
     def get_id(self) -> int:
         return self.data["id"]
@@ -112,6 +112,11 @@ class ItemPrice(DataModel):
 
     def get_terminal_name(self) -> str | None:
         return self.data["terminal_name"]
+
+    def offer_terminal_label(self) -> str:
+        from skills.uexcorp.uexcorp.model.terminal import offer_terminal_label
+
+        return offer_terminal_label(self.get_id_terminal(), self.get_terminal_name())
 
     def __str__(self):
         return self.get_ai_string()

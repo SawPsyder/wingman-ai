@@ -128,15 +128,16 @@ class Commodity(DataModel):
             information["parent"] = str(parent)
 
         if self.get_is_buyable() or self.get_is_sellable():
+            blocked = _blocked_terminal_set()
             prices = CommodityPriceDataAccess().add_filter_by_id_commodity(self.get_id()).load()
             for price in prices:
-                if _price_terminal_blocked(price.get_id_terminal()):
+                if _price_terminal_blocked(price.get_id_terminal(), blocked):
                     continue
                 information["buy_sell_options"].append(price.get_data_for_ai_minimal(show_commodity_information=False))
 
             prices_raw = CommodityRawPriceDataAccess().add_filter_by_id_commodity(self.get_id()).load()
             for price_raw in prices_raw:
-                if _price_terminal_blocked(price_raw.get_id_terminal()):
+                if _price_terminal_blocked(price_raw.get_id_terminal(), blocked):
                     continue
                 information["buy_sell_options"].append(price_raw.get_data_for_ai_minimal(show_commodity_information=False))
 
@@ -164,11 +165,12 @@ class Commodity(DataModel):
             # price ("Sell for X at: A, B, C") instead of one line per terminal.
             from skills.uexcorp.uexcorp import compression
 
+            blocked = _blocked_terminal_set()
             buy_groups = {}
             sell_groups = {}
             prices = CommodityPriceDataAccess().add_filter_by_id_commodity(self.get_id()).load()
             for price in prices:
-                if _price_terminal_blocked(price.get_id_terminal()):
+                if _price_terminal_blocked(price.get_id_terminal(), blocked):
                     continue
                 if price.get_price_buy():
                     buy_groups.setdefault(price.get_price_buy(), []).append(price.get_terminal_name())
@@ -178,7 +180,7 @@ class Commodity(DataModel):
             raw_sell_groups = {}
             prices_raw = CommodityRawPriceDataAccess().add_filter_by_id_commodity(self.get_id()).load()
             for price_raw in prices_raw:
-                if _price_terminal_blocked(price_raw.get_id_terminal()):
+                if _price_terminal_blocked(price_raw.get_id_terminal(), blocked):
                     continue
                 if price_raw.get_price_sell():
                     raw_sell_groups.setdefault(price_raw.get_price_sell(), []).append(price_raw.get_terminal_name())
@@ -360,16 +362,25 @@ class Commodity(DataModel):
         return str(self.data["name"])
 
 
-def _price_terminal_blocked(terminal_id) -> bool:
-    if not terminal_id:
-        return False
+def _blocked_terminal_set() -> set:
     try:
         from skills.uexcorp.uexcorp.helper import Helper
         from skills.uexcorp.uexcorp.location_blocklist import LocationBlocklist
 
         helper = Helper.get_instance()
         if helper is None or not hasattr(helper, "get_data_path"):
-            return False
-        return int(terminal_id) in LocationBlocklist(helper).blocked_terminal_ids()
+            return set()
+        return set(LocationBlocklist(helper).blocked_terminal_ids())
+    except Exception:
+        return set()
+
+
+def _price_terminal_blocked(terminal_id, blocked: set | None = None) -> bool:
+    if not terminal_id:
+        return False
+    try:
+        if blocked is None:
+            blocked = _blocked_terminal_set()
+        return int(terminal_id) in blocked
     except Exception:
         return False

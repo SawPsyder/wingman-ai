@@ -1,13 +1,5 @@
 import inspect
-from skills.uexcorp.uexcorp.data_access.city_data_access import CityDataAccess
-from skills.uexcorp.uexcorp.data_access.moon_data_access import MoonDataAccess
-from skills.uexcorp.uexcorp.data_access.orbit_data_access import OrbitDataAccess
-from skills.uexcorp.uexcorp.data_access.outpost_data_access import OutpostDataAccess
-from skills.uexcorp.uexcorp.data_access.planet_data_access import PlanetDataAccess
-from skills.uexcorp.uexcorp.data_access.poi_data_access import PoiDataAccess
-from skills.uexcorp.uexcorp.data_access.space_station_data_access import SpaceStationDataAccess
 from skills.uexcorp.uexcorp.data_access.star_system_data_access import StarSystemDataAccess
-from skills.uexcorp.uexcorp.data_access.terminal_data_access import TerminalDataAccess
 from skills.uexcorp.uexcorp.data_access.vehicle_data_access import VehicleDataAccess
 from skills.uexcorp.uexcorp.data_access.commodity_data_access import CommodityDataAccess
 from skills.uexcorp.uexcorp.data_access.company_data_access import CompanyDataAccess
@@ -253,60 +245,11 @@ class Validator:
         return {"type": "string"}
 
     async def __validate_location(self, name: str, for_trading: bool = False) -> (str | None, str | None):
-        name_collection = []
+        from skills.uexcorp.uexcorp.resolver import resolve_location_name
 
-        star_systems = StarSystemDataAccess().add_filter_by_is_available(True).load()
-        for star_system in star_systems:
-            name_collection.append(str(star_system))
-
-            planets = PlanetDataAccess().add_filter_by_id_star_system(star_system.get_id()).add_filter_by_is_available_live(True).load()
-            for planet in planets:
-                name_collection.append(str(planet))
-
-            moons = MoonDataAccess().add_filter_by_id_star_system(star_system.get_id()).add_filter_by_is_available_live(True).load()
-            for moon in moons:
-                name_collection.append(str(moon))
-
-            space_station_data_access = SpaceStationDataAccess().add_filter_by_id_star_system(star_system.get_id()).add_filter_by_is_available_live(True)
-            if for_trading:
-                space_station_data_access = space_station_data_access.add_filter_by_has_trade_terminal(True)
-            space_stations = space_station_data_access.load()
-            for space_station in space_stations:
-                name_collection.append(str(space_station))
-
-            orbits = OrbitDataAccess().add_filter_by_id_star_system(star_system.get_id()).load()
-            for orbit in orbits:
-                name_collection.append(str(orbit))
-
-            terminal_data_access = TerminalDataAccess().add_filter_by_id_star_system(star_system.get_id())
-            if for_trading:
-                terminal_data_access.add_filter_by_type("commodity")
-            terminals = terminal_data_access.load()
-            for terminal in terminals:
-                name_collection.append(str(terminal))
-
-            city_data_access = CityDataAccess().add_filter_by_id_star_system(star_system.get_id()).add_filter_by_is_available_live(True)
-            if for_trading:
-                city_data_access.add_filter_by_has_trade_terminal(True)
-            cities = city_data_access.load()
-            for city in cities:
-                name_collection.append(str(city))
-
-            poi_data_access = PoiDataAccess().add_filter_by_id_star_system(star_system.get_id()).add_filter_by_is_available_live(True)
-            if for_trading:
-                poi_data_access.add_filter_by_has_trade_terminal(True)
-            pois = poi_data_access.load()
-            for poi in pois:
-                name_collection.append(str(poi))
-
-            outpost_data_access = OutpostDataAccess().add_filter_by_id_star_system(star_system.get_id()).add_filter_by_is_available_live(True)
-            if for_trading:
-                outpost_data_access.add_filter_by_has_trade_terminal(True)
-            outposts = outpost_data_access.load()
-            for outpost in outposts:
-                name_collection.append(str(outpost))
-
-        closest_match, options = await self.__helper.get_llm().find_closest_match(name, name_collection)
+        closest_match, options = await resolve_location_name(
+            self.__helper, name, for_trading=for_trading
+        )
         if closest_match:
             return closest_match, None
 
