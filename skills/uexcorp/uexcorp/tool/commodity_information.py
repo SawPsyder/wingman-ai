@@ -137,10 +137,10 @@ class CommodityInformation(Tool):
                 commodities = temp_commodities
 
             if filter_profit_margin_percent or filter_base_profit_percent:
-                commodities = sorted(commodities, key=lambda x: x.get_profit_margin_max(), reverse=True)
+                commodities = sorted(commodities, key=lambda x: x.get_profit_margin_max() or 0, reverse=True)
                 helper.get_handler_tool().add_note("Commodities are sorted by profit margin percentage DESC")
             elif filter_profit_absolute_per_scu:
-                commodities = sorted(commodities, key=lambda x: x.get_profit_max(), reverse=True)
+                commodities = sorted(commodities, key=lambda x: x.get_profit_max() or 0, reverse=True)
                 helper.get_handler_tool().add_note("Commodities are sorted by absolute profit per SCU DESC")
 
         if not commodities:

@@ -54,12 +54,14 @@ class CommodityRoute(Tool):
         if filter_commodity_blacklist:
             commodity_route_data_access.add_filter_by_commodity_name_blacklist(filter_commodity_blacklist)
 
-        commodity_data_access = CommodityDataAccess()
-        commodity_data_access.add_filter_by_is_blacklisted(True)
-        if filter_allow_illegal_commodities is not None and not filter_allow_illegal_commodities:
-            commodity_data_access.add_filter_by_is_illegal(True)
-        for commodity in commodity_data_access.load():
+        # Blacklist and illegal are separate. ANDing them hid illegal goods
+        # whenever nothing was blacklisted, and the other way around.
+        for commodity in CommodityDataAccess().add_filter_by_is_blacklisted(True).load():
             commodity_ids_exclude.append(commodity.get_id())
+        if not filter_allow_illegal_commodities:
+            for commodity in CommodityDataAccess().add_filter_by_is_illegal(True).load():
+                if commodity.get_id() not in commodity_ids_exclude:
+                    commodity_ids_exclude.append(commodity.get_id())
 
         if filter_star_system_whitelist:
             commodity_route_data_access.add_filter_by_star_system_name_whitelist(filter_star_system_whitelist)
@@ -141,7 +143,7 @@ class CommodityRoute(Tool):
             commodity_route_data_access.add_filter_by_id_terminal_destination(end_terminals_ids)
 
         if commodity_ids_exclude:
-            pass # TODO add if permanent blacklist is available
+            commodity_route_data_access.add_filter_by_id_commodity(commodity_ids_exclude, operation="NOT IN")
 
         if max_scu is None and available_money is None:
             max_scu = 1 # search for an example with 1 scu
@@ -221,21 +223,21 @@ class CommodityRoute(Tool):
             ),
             "filter_allow_star_system_change": Validator(
                 Validator.VALIDATE_BOOL,
-                prompt="If false, only routes within the same star system are shown. eg only in Stanton if route start is in Stanton or only in Pyro if route star is in Pyro.",
+                prompt="If false, only routes within the same star system are shown. eg only in Stanton, Pyro, or Nyx when the route starts there.",
             ),
             "filter_start_location": Validator(
                 Validator.VALIDATE_LOCATION,
                 config={
                     "for_trading": True
                 },
-                prompt="Excludes trade routes starting or ending at these locations. eg [\"Hurston\", \"Bloom\"]",
+                prompt="Shows only trade routes starting at this location. eg \"Pyro\", \"Crusader\", or \"Nyx\". Can be anything from a star system to a terminal.",
             ),
             "filter_destination_location": Validator(
                 Validator.VALIDATE_LOCATION,
                 config={
                     "for_trading": True
                 },
-                prompt="Shows only trade routes ending at this location. eg \"Stanton\"",
+                prompt="Shows only trade routes ending at this location. eg \"Stanton\" or \"Nyx\".",
             ),
             "filter_location_blacklist": Validator(
                 Validator.VALIDATE_LOCATION,
@@ -243,19 +245,20 @@ class CommodityRoute(Tool):
                 config={
                     "for_trading": True
                 },
-                prompt="Shows only trade routes starting at this location. eg \"Pyro\" or \"Crusader\". Can be anything from a star system to a terminal.",
+                prompt="Excludes trade routes starting or ending at these locations. eg [\"Hurston\", \"Bloom\"]",
             ),
             "filter_require_auto_load": Validator(
                 Validator.VALIDATE_BOOL,
                 prompt="If true, only routes where both origin and destination terminals support ship hangar auto load and unload (no manual load/unload).",
             ),
+            "filter_allow_illegal_commodities": Validator(
+                Validator.VALIDATE_BOOL,
+                prompt="Legal commodities are shown by default. Set true to include illegal commodities. Blacklisted commodities stay excluded either way.",
+            ),
 
             # Currently used unreliably by AI
             # "filter_star_system_whitelist": Validator(Validator.VALIDATE_STAR_SYSTEM, multiple=True),
             # "filter_star_system_blacklist": Validator(Validator.VALIDATE_STAR_SYSTEM, multiple=True),
-
-            # UEX only has legal routes
-            # "filter_allow_illegal_commodities": Validator(Validator.VALIDATE_BOOL),
         }
 
     def get_description(self) -> str:

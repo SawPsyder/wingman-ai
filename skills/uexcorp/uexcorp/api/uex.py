@@ -1,11 +1,53 @@
-import requests
-import concurrent.futures
+import email.utils
+import random
+import threading
+import time
 from itertools import product
+from typing import Callable
 from typing import Optional
 from typing import TYPE_CHECKING
 
+import requests
+
 if TYPE_CHECKING:
     from skills.uexcorp.uexcorp.helper import Helper
+
+
+# Documented quota is 120 requests/minute. Stay under that with a margin.
+REQUESTS_PER_MINUTE = 90
+MAX_WORKERS = 4
+MAX_ATTEMPTS = 4
+MAX_BACKOFF_SECONDS = 60.0
+RATE_LIMIT_BACKOFF_BASE = 2.0
+OTHER_ERROR_BACKOFF_BASE = 0.5
+
+
+def skill_user_agent() -> str:
+    version = "3.2.5"
+    try:
+        from services.system_manager import LOCAL_VERSION
+
+        version = LOCAL_VERSION
+    except Exception:
+        pass
+    return f"Wingman-AI UEX skill/{version}"
+
+
+class FetchResult:
+    """Outcome of one UEX read.
+
+    ``ok`` with an empty ``data`` is a genuine empty payload (status ``ok``).
+    ``ok`` false means the call failed; callers must not treat ``data`` as the
+    new dataset.
+    """
+
+    def __init__(self, ok: bool, data=None, error: str | None = None):
+        self.ok = ok
+        self.data = [] if data is None else data
+        self.error = error
+
+    def __repr__(self) -> str:
+        return f"FetchResult(ok={self.ok}, error={self.error!r})"
 
 
 class Uex:
@@ -45,46 +87,76 @@ class Uex:
 
     def __init__(
         self,
-        helper: "Helper"
+        helper: "Helper",
+        sleeper: Callable[[float], None] | None = None,
+        monotonic: Callable[[], float] | None = None,
+        rng: Callable[[], float] | None = None,
     ):
         self.helper = helper
         self.session = None
+        self._sleeper = sleeper or time.sleep
+        self._monotonic = monotonic or time.monotonic
+        self._rng = rng or random.random
+        self._rate_lock = threading.Lock()
+        self._next_request_at = 0.0
+        self._min_interval = 60.0 / REQUESTS_PER_MINUTE
 
     def _get_headers(self) -> dict[str, str]:
         headers = {
             "Accept": "application/json, text/plain, */*",
-            "User-Agent": "Mozilla/5.0 (X11; CrOS x86_64 12871.102.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/81.0.4044.141 Safari/537.36",
+            "User-Agent": skill_user_agent(),
             "Connection": "keep-alive",
         }
         return headers
+
+    def _acquire_rate_limit(self) -> None:
+        with self._rate_lock:
+            now = self._monotonic()
+            delay = 0.0
+            if now < self._next_request_at:
+                delay = self._next_request_at - now
+            self._next_request_at = max(now, self._next_request_at) + self._min_interval
+        if delay > 0:
+            self._sleeper(delay)
 
     def fetch(
         self,
         endpoint: str,
         get: Optional[dict[str, any]] = None,
         params: Optional[dict[str, any]] = None,
-    ) -> list[dict[str, any]]|dict[str, any]:
-        results = []
+    ) -> FetchResult:
         if get and any(isinstance(value, list) for value in get.values()):
             keys, values = zip(*((k, v if isinstance(v, list) else [v]) for k, v in get.items()))
-            with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-                future_to_combination = {executor.submit(self.__actual_fetch, endpoint, dict(zip(keys, combination)), params): combination for combination in product(*values)}
-                for future in concurrent.futures.as_completed(future_to_combination):
+            combinations = list(product(*values))
+            if not combinations:
+                return FetchResult(True, [])
+            results = []
+            errors = []
+            with concurrent_futures_executor() as executor:
+                futures = [
+                    executor.submit(self.__actual_fetch, endpoint, dict(zip(keys, combination)), params)
+                    for combination in combinations
+                ]
+                for future in futures:
                     result = future.result()
-                    if isinstance(result, list):
-                        results.extend(result)
-                    elif isinstance(result, dict):
-                        results.append(result)
-        else:
-            results = self.__actual_fetch(endpoint, get, params)
-        return results
+                    if not result.ok:
+                        errors.append(result.error or "request failed")
+                        continue
+                    if isinstance(result.data, list):
+                        results.extend(result.data)
+                    elif isinstance(result.data, dict):
+                        results.append(result.data)
+            if errors:
+                return FetchResult(False, error=errors[0])
+            return FetchResult(True, results)
+        return self.__actual_fetch(endpoint, get, params)
 
     def __actual_fetch(
         self,
         endpoint: str,
         get: Optional[dict[str, any]] = None,
         params: Optional[dict[str, any]] = None,
-    ) -> list[dict[str, any]]|dict[str, any]:
+    ) -> FetchResult:
         url = f"{self.helper.get_handler_config().get_api_url()}/{endpoint}"
         if get:
             url += "?"
@@ -95,51 +167,136 @@ class Uex:
         if not self.helper.get_handler_config().get_api_url() or not endpoint:
             self.helper.get_handler_debug().write(f"No API URL or endpoint provided -> {url}", True)
             self.helper.get_handler_error().write("Api.fetch", [endpoint, params], f"No API URL or endpoint provided -> {url}", False)
-            return []
+            return FetchResult(False, error="missing api url or endpoint")
 
         if self.session is None:
             self.helper.get_handler_debug().write(f"Init session for {self.helper.get_handler_config().get_api_url()} for future requests ...")
             self.session = requests.Session()
 
-        request_count = 1
-        max_retries = 2
-        timeout_error = False
-        requests_error = False
-        response_json = {}
-
-        while request_count == 1 or (
-            request_count <= (max_retries + 1) and (timeout_error or requests_error)
-        ):
-            self.helper.get_handler_debug().write(f"Fetching data (request {request_count}/{max_retries+1}) from {url} ...")
-            requests_error = False
-            timeout_error = False
+        last_error = "request failed"
+        for attempt in range(1, MAX_ATTEMPTS + 1):
+            self._acquire_rate_limit()
+            self.helper.get_handler_debug().write(f"Fetching data (request {attempt}/{MAX_ATTEMPTS}) from {url} ...")
             try:
                 response = self.session.get(
                     url,
                     params=params,
                     timeout=self.helper.get_handler_config().get_api_timeout(),
                     headers=self._get_headers(),
-                    stream = True
+                    stream=True,
                 )
-                response.raise_for_status()
-                # response.raw.chunked = True
-                response.encoding = "utf-8"
-                response_json = response.json()
-                if "status" not in response_json or response_json["status"] != "ok":
-                    self.helper.get_handler_debug().write(
-                        f"Error while retrieving data from {url}. Status: is not \"ok\".",
-                        request_count > max_retries
-                    )
-                    requests_error = True
             except (requests.exceptions.RequestException, requests.exceptions.JSONDecodeError) as e:
-                self.helper.get_handler_debug().write(f"Error while retrieving data from {url}: {e}", request_count > max_retries)
+                last_error = str(e)
+                self.helper.get_handler_debug().write(f"Error while retrieving data from {url}: {e}", attempt == MAX_ATTEMPTS)
                 self.helper.get_handler_error().write("Api.fetch", [endpoint, params], e)
-                requests_error = True
-                if isinstance(e, requests.exceptions.Timeout):
-                    timeout_error = True
-            request_count += 1
+                if attempt < MAX_ATTEMPTS:
+                    self._sleeper(self._backoff_seconds(attempt, rate_limited=False))
+                continue
 
-        if requests_error:
-            return []
+            response.encoding = "utf-8"
+            limited, reason = self._is_throttled_or_blocked(response)
+            if limited:
+                last_error = reason
+                self.helper.get_handler_debug().write(
+                    f"UEX request blocked ({reason}) from {url}.",
+                    attempt == MAX_ATTEMPTS,
+                )
+                if attempt < MAX_ATTEMPTS:
+                    self._sleeper(self._delay_for_response(response, attempt, rate_limited=True))
+                continue
 
-        return response_json.get("data", [])
+            if response.status_code >= 400:
+                last_error = f"http_{response.status_code}"
+                self.helper.get_handler_debug().write(
+                    f"Error while retrieving data from {url}. HTTP {response.status_code}.",
+                    attempt == MAX_ATTEMPTS,
+                )
+                if attempt < MAX_ATTEMPTS:
+                    self._sleeper(self._backoff_seconds(attempt, rate_limited=False))
+                continue
+
+            try:
+                response_json = response.json()
+            except (requests.exceptions.JSONDecodeError, ValueError) as e:
+                last_error = str(e)
+                self.helper.get_handler_debug().write(f"Error while retrieving data from {url}: {e}", attempt == MAX_ATTEMPTS)
+                self.helper.get_handler_error().write("Api.fetch", [endpoint, params], e)
+                if attempt < MAX_ATTEMPTS:
+                    self._sleeper(self._backoff_seconds(attempt, rate_limited=False))
+                continue
+
+            status = response_json.get("status") if isinstance(response_json, dict) else None
+            if status == "requests_limit_reached":
+                last_error = "requests_limit_reached"
+                self.helper.get_handler_debug().write(
+                    f"UEX requests_limit_reached from {url}.",
+                    attempt == MAX_ATTEMPTS,
+                )
+                if attempt < MAX_ATTEMPTS:
+                    self._sleeper(self._delay_for_response(response, attempt, rate_limited=True))
+                continue
+            if status != "ok":
+                last_error = str(status or "status_not_ok")
+                self.helper.get_handler_debug().write(
+                    f"Error while retrieving data from {url}. Status: is not \"ok\".",
+                    attempt == MAX_ATTEMPTS,
+                )
+                if attempt < MAX_ATTEMPTS:
+                    self._sleeper(self._backoff_seconds(attempt, rate_limited=False))
+                continue
+
+            data = response_json.get("data", [])
+            if data is None:
+                data = []
+            return FetchResult(True, data)
+
+        return FetchResult(False, error=last_error)
+
+    def _is_throttled_or_blocked(self, response) -> tuple[bool, str]:
+        if response.status_code == 429:
+            return True, "http_429"
+        if response.status_code == 403:
+            return True, "http_403"
+        mitigated = (response.headers.get("cf-mitigated") or "").lower()
+        if "challenge" in mitigated:
+            return True, "cloudflare_challenge"
+        content_type = (response.headers.get("content-type") or "").lower()
+        if response.status_code != 200 and "html" in content_type:
+            return True, "cloudflare_challenge"
+        return False, ""
+
+    def _delay_for_response(self, response, attempt: int, rate_limited: bool) -> float:
+        retry_after = _parse_retry_after(response.headers.get("Retry-After"))
+        if retry_after is not None and retry_after > 0:
+            return min(MAX_BACKOFF_SECONDS, retry_after)
+        return self._backoff_seconds(attempt, rate_limited=rate_limited)
+
+    def _backoff_seconds(self, attempt: int, rate_limited: bool) -> float:
+        base = RATE_LIMIT_BACKOFF_BASE if rate_limited else OTHER_ERROR_BACKOFF_BASE
+        delay = base * (2 ** max(attempt - 1, 0))
+        delay = min(MAX_BACKOFF_SECONDS, delay)
+        # Full jitter between half and the full delay so parallel workers do not retry together.
+        factor = 0.5 + (0.5 * self._rng())
+        return min(MAX_BACKOFF_SECONDS, delay * factor)
+
+
+def concurrent_futures_executor():
+    import concurrent.futures
+    return concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS)
+
+
+def _parse_retry_after(header: str | None) -> float | None:
+    if header is None:
+        return None
+    text = str(header).strip()
+    if not text:
+        return None
+    try:
+        return float(text)
+    except ValueError:
+        pass
+    parsed = email.utils.parsedate_to_datetime(text)
+    if parsed is None:
+        return None
+    # HTTP-date is absolute. Compare with wall clock, not the monotonic test clock.
+    return max(0.0, parsed.timestamp() - time.time())

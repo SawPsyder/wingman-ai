@@ -66,14 +66,16 @@ class ConfigHandler:
         self.__helper = helper
         self.__wingman: "WingmanContext | None" = None
         self.__fine_config_path: str = get_writable_dir(os.path.join(self.__helper.get_data_path(), "config"))
-        self.__api_url: str = "https://api.uexcorp.space/2.0"
+        self.__api_url: str = "https://api.uexcorp.uk/2.0"
         self.__api_use_key: bool = False
         self.__api_key: str | None = None
         self.__api_timeout: int = 10
         self.__api_retries: int = 2
 
-        self.__cache_lifetime_short: int = 60 * 60# 30 minutes
-        self.__cache_lifetime_mid: int = 24 * 60 * 60 # 24 hours
+        # 30 minutes. Upstream Cache-Control for prices, routes, alerts, raw prices, and fuel.
+        self.__cache_lifetime_short: int = 30 * 60
+        # 12 hours. Upstream Cache-Control for item prices, vehicle prices, terminals, and the vehicle catalog.
+        self.__cache_lifetime_mid: int = 12 * 60 * 60
         self.__cache_lifetime_long: int = 14 * 24 * 60 * 60 # 14 days
 
         tools, needs_authentication = get_tools()
@@ -103,6 +105,10 @@ class ConfigHandler:
             self.set_behavior_commodity_route_advanced_info(
                 retrieve_custom_property_value("commodity_route_advanced_info", errors)
             )
+
+            api_url = retrieve_custom_property_value("api_url", errors)
+            if api_url:
+                self.set_api_url(str(api_url).rstrip("/"))
 
             if self.__behavior_enabled_tools_need_authentication:
                 api_key = await self.__helper.get_handler_secret().retrieve(
@@ -243,7 +249,13 @@ class ConfigHandler:
         self.set_api_key(api_key)
 
     def get_api_url(self) -> str:
-        return self.__api_url
+        # Read just-in-time so a UI change is picked up without restarting the import client.
+        if self.__property_retriever:
+            errors = []
+            value = self.__property_retriever("api_url", errors)
+            if not errors and value:
+                return str(value).rstrip("/")
+        return self.__api_url.rstrip("/")
 
     def set_api_url(self, api_url: str):
         self.__api_url = api_url

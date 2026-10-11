@@ -59,6 +59,13 @@ prompt: |
   - Present data efficiently for voice synthesis and readability
 
 custom_properties:
+  - id: api_url
+    name: UEX API base URL
+    hint: Base URL for the UEX API. The default is https://api.uexcorp.uk/2.0. Set https://api.uexcorp.space/2.0 only if you need that host.
+    value: https://api.uexcorp.uk/2.0
+    required: true
+    property_type: string
+
   ### Commodity Information Start ###
   # - id: tool_commodity_information
   #   name: Provide commodity information
@@ -98,7 +105,7 @@ custom_properties:
   ### Route Information Start ###
   # - id: tool_commodity_route
   #   name: Provide commodity routes
-  #   hint: If enabled, this skill can provide UEX trade routes for commodities (Only with legal commodities).
+  #   hint: If enabled, this skill can provide UEX trade routes. Legal commodities are shown by default; illegal commodities are included when requested.
   #   value: true
   #   required: true
   #   property_type: boolean

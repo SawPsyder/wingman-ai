@@ -92,6 +92,10 @@ class CommodityRouteDataAccess(DataAccess):
     def load_by_property(self, property: str, value: any) -> CommodityRoute:
         return super().load_by_property(property, value)
 
+    def add_filter_by_id_commodity(self, id_commodity: int | list[int], **params) -> "CommodityRouteDataAccess":
+        self.filter.where("id_commodity", id_commodity, **params)
+        return self
+
     def add_filter_by_commodity_name_whitelist(self, commodity_name_whitelist: list[str]) -> "CommodityRouteDataAccess":
         self.filter.where("commodity_name", commodity_name_whitelist)
         return self

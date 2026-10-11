@@ -8,6 +8,9 @@ if TYPE_CHECKING:
 
 class ImportHandler:
 
+    # Fetch failed. Do not stamp the cache and do not delete stored rows.
+    IMPORT_FAILED = object()
+
     def __init__(self, helper: "Helper"):
         self.__helper = helper
         self.__api = Uex(helper)
@@ -111,12 +114,40 @@ class ImportHandler:
         self.__import_started = True
         for importer in self.__importers.values():
             if self.active:
-                total_count += int(importer() or 0)
+                outcome = importer()
+                if outcome is self.IMPORT_FAILED:
+                    self.__helper.get_handler_debug().write(
+                        "UEX import step failed. Previous rows for that dataset were kept.",
+                        True,
+                    )
+                else:
+                    total_count += int(outcome or 0)
                 self.__imported_percent = int(
                     min(self.__imported_percent + (100 / len(self.__importers)), 100)
                 )
         self.__imported_percent = 100
         return total_count
+
+    def __require_fetch(self, endpoint: str, get: dict | None = None, params: dict | None = None):
+        """Return the payload, or None when the request failed.
+
+        None means the caller must return IMPORT_FAILED without stamping the
+        cache. A genuine empty payload is [] or another empty success value.
+        """
+        result = self.__api.fetch(endpoint, get, params)
+        if result.ok:
+            if result.data is None:
+                return []
+            return result.data
+        self.__helper.end_timer("import")
+        self.__helper.get_handler_debug().write(
+            f"Import of {endpoint} failed ({result.error or 'unknown'}). Previous data kept and will be retried.",
+            True,
+        )
+        return None
+
+    def __dependency_failed(self, outcome) -> bool:
+        return outcome is self.IMPORT_FAILED
 
     def __import_data_category(self) -> bool | int:
         from skills.uexcorp.uexcorp.model.import_data import ImportData
@@ -133,7 +164,9 @@ class ImportHandler:
 
         self.__helper.start_timer("import")
 
-        category_data = self.__api.fetch(self.__api.CATEGORIES)
+        category_data = self.__require_fetch(self.__api.CATEGORIES)
+        if category_data is None:
+            return self.IMPORT_FAILED
         if category_data:
             for index, data in enumerate(category_data):
                 category = Category(data["id"])
@@ -173,7 +206,9 @@ class ImportHandler:
 
         self.__helper.start_timer("import")
 
-        category_attribute_data = self.__api.fetch(self.__api.CATEGORIES_ATTRIBUTES)
+        category_attribute_data = self.__require_fetch(self.__api.CATEGORIES_ATTRIBUTES)
+        if category_attribute_data is None:
+            return self.IMPORT_FAILED
         if category_attribute_data:
             for index, data in enumerate(category_attribute_data):
                 category_attribute = CategoryAttribute(data["id"])
@@ -204,7 +239,9 @@ class ImportHandler:
 
         self.__helper.start_timer("import")
 
-        city_data = self.__api.fetch(self.__api.CITIES)
+        city_data = self.__require_fetch(self.__api.CITIES)
+        if city_data is None:
+            return self.IMPORT_FAILED
         if city_data:
             for index, data in enumerate(city_data):
                 city = City(data["id"])
@@ -235,7 +272,9 @@ class ImportHandler:
 
         self.__helper.start_timer("import")
 
-        commodity_data = self.__api.fetch(self.__api.COMMODITIES)
+        commodity_data = self.__require_fetch(self.__api.COMMODITIES)
+        if commodity_data is None:
+            return self.IMPORT_FAILED
         if commodity_data:
             for index, data in enumerate(commodity_data):
                 commodity = Commodity(data["id"])
@@ -266,7 +305,9 @@ class ImportHandler:
 
         self.__helper.start_timer("import")
 
-        commodity_alert_data = self.__api.fetch(self.__api.COMMODITIES_ALERTS)
+        commodity_alert_data = self.__require_fetch(self.__api.COMMODITIES_ALERTS)
+        if commodity_alert_data is None:
+            return self.IMPORT_FAILED
         if commodity_alert_data:
             for index, data in enumerate(commodity_alert_data):
                 commodity_alert = CommodityAlert(data["id"])
@@ -297,7 +338,9 @@ class ImportHandler:
 
         self.__helper.start_timer("import")
 
-        commodity_price_data = self.__api.fetch(self.__api.COMMODITIES_PRICES)
+        commodity_price_data = self.__require_fetch(self.__api.COMMODITIES_PRICES)
+        if commodity_price_data is None:
+            return self.IMPORT_FAILED
         if commodity_price_data:
             for index, data in enumerate(commodity_price_data):
                 commodity_price = CommodityPrice(data["id"])
@@ -330,7 +373,9 @@ class ImportHandler:
 
         self.__helper.start_timer("import")
 
-        commodity_raw_price_data = self.__api.fetch(self.__api.COMMODITIES_RAW_PRICES)
+        commodity_raw_price_data = self.__require_fetch(self.__api.COMMODITIES_RAW_PRICES)
+        if commodity_raw_price_data is None:
+            return self.IMPORT_FAILED
         if commodity_raw_price_data:
             for index, data in enumerate(commodity_raw_price_data):
                 commodity_raw_price = CommodityRawPrice(data["id"])
@@ -361,7 +406,9 @@ class ImportHandler:
 
         self.__helper.start_timer("import")
 
-        commodity_status_data = self.__api.fetch(self.__api.COMMODITIES_STATUS)
+        commodity_status_data = self.__require_fetch(self.__api.COMMODITIES_STATUS)
+        if commodity_status_data is None:
+            return self.IMPORT_FAILED
         if commodity_status_data:
             if "buy" in commodity_status_data:
                 for index, data in enumerate(commodity_status_data["buy"]):
@@ -390,9 +437,6 @@ class ImportHandler:
     def __import_data_commodity_route(self) -> bool | int:
         from skills.uexcorp.uexcorp.model.import_data import ImportData
         from skills.uexcorp.uexcorp.model.commodity_route import CommodityRoute
-        from skills.uexcorp.uexcorp.data_access.commodity_data_access import (
-            CommodityDataAccess,
-        )
 
         if not self.__helper.get_database().table_exists("commodity_route"):
             return False
@@ -403,24 +447,56 @@ class ImportHandler:
         ):
             return False
 
-        # Depends on commodity data
-        self.__import_data_commodity()
+        # Prices decide which commodities have a real buy and a real sell.
+        if self.__dependency_failed(self.__import_data_commodity()):
+            return self.IMPORT_FAILED
+        if self.__dependency_failed(self.__import_data_commodity_price()):
+            return self.IMPORT_FAILED
 
         self.__helper.start_timer("import")
 
-        commodities = (
-            CommodityDataAccess()
-            .add_filter_has_buy_price()
-            .add_filter_has_sell_price()
-            .load()
-        )
-        commodity_ids = []
-        for commodity in commodities:
-            commodity_ids.append(commodity.get_id())
+        from skills.uexcorp.uexcorp.api.route_pages import collect_commodity_routes
+        from skills.uexcorp.uexcorp.data_access.orbit_data_access import OrbitDataAccess
+        from skills.uexcorp.uexcorp.data_access.planet_data_access import PlanetDataAccess
 
-        commodity_route_data = self.__api.fetch(
-            self.__api.COMMODITIES_ROUTES, {"id_commodity": commodity_ids}
-        )
+        commodity_ids = self.__tradable_commodity_ids()
+        planet_ids = [
+            planet.get_id()
+            for planet in PlanetDataAccess().add_filter_by_is_available(True).load()
+        ]
+        available_orbits = OrbitDataAccess().add_filter_by_is_available(True).load()
+        lagrange_orbit_ids = [
+            orbit.get_id() for orbit in available_orbits if orbit.get_is_lagrange()
+        ]
+        all_orbit_ids = [orbit.get_id() for orbit in available_orbits]
+
+        def _fetch_route_page(query: dict):
+            return self.__api.fetch(self.__api.COMMODITIES_ROUTES, query)
+
+        commodity_route_data = []
+        seen_route_ids = set()
+        for commodity_id in commodity_ids:
+            page = collect_commodity_routes(
+                _fetch_route_page,
+                commodity_id,
+                planet_ids,
+                lagrange_orbit_ids,
+                extra_orbit_ids=all_orbit_ids,
+            )
+            if not page.ok:
+                self.__helper.end_timer("import")
+                self.__helper.get_handler_debug().write(
+                    f"Commodity route import failed ({page.error or 'unknown'}). Previous routes kept and will be retried.",
+                    True,
+                )
+                return self.IMPORT_FAILED
+            for data in page.data:
+                route_id = data.get("id")
+                if route_id in seen_route_ids:
+                    continue
+                seen_route_ids.add(route_id)
+                commodity_route_data.append(data)
+
         if commodity_route_data:
             for index, data in enumerate(commodity_route_data):
                 commodity_route = CommodityRoute(data["id"])
@@ -435,6 +511,23 @@ class ImportHandler:
             f"Commodity Route data imported: {commodity_route_import.get_dataset_count()} record(s) in {commodity_route_import.get_time_taken()}s"
         )
         return len(commodity_route_data)
+
+    def __tradable_commodity_ids(self) -> list[int]:
+        """Commodities with a terminal buy price and a terminal sell price.
+
+        Catalog price_buy / price_sell miss commodities such as Gold and Iron,
+        which are bought and sold at terminals while the catalog buy price is 0.
+        """
+        rows = self.__helper.get_database().execute_fetchall(
+            """
+            SELECT id_commodity FROM commodity_price
+            WHERE price_buy > 0
+            INTERSECT
+            SELECT id_commodity FROM commodity_price
+            WHERE price_sell > 0
+            """
+        )
+        return [row["id_commodity"] for row in rows]
 
     def __import_data_company(self) -> bool | int:
         from skills.uexcorp.uexcorp.model.import_data import ImportData
@@ -451,7 +544,9 @@ class ImportHandler:
 
         self.__helper.start_timer("import")
 
-        company_data = self.__api.fetch(self.__api.COMPANIES)
+        company_data = self.__require_fetch(self.__api.COMPANIES)
+        if company_data is None:
+            return self.IMPORT_FAILED
         if company_data:
             for index, data in enumerate(company_data):
                 company = Company(data["id"])
@@ -482,7 +577,9 @@ class ImportHandler:
 
         self.__helper.start_timer("import")
 
-        faction_data = self.__api.fetch(self.__api.FACTIONS)
+        faction_data = self.__require_fetch(self.__api.FACTIONS)
+        if faction_data is None:
+            return self.IMPORT_FAILED
         if faction_data:
             for index, data in enumerate(faction_data):
                 faction = Faction(data["id"])
@@ -507,13 +604,15 @@ class ImportHandler:
 
         fuel_price_import = ImportData("fuel_price", load=True)
         if not fuel_price_import.needs_import(
-            self.__helper.get_handler_config().get_cache_lifetime_mid()
+            self.__helper.get_handler_config().get_cache_lifetime_short()
         ):
             return False
 
         self.__helper.start_timer("import")
 
-        fuel_price_data = self.__api.fetch(self.__api.FUEL_PRICES)
+        fuel_price_data = self.__require_fetch(self.__api.FUEL_PRICES)
+        if fuel_price_data is None:
+            return self.IMPORT_FAILED
         if fuel_price_data:
             for index, data in enumerate(fuel_price_data):
                 fuel_price = FuelPrice(data["id"])
@@ -544,7 +643,9 @@ class ImportHandler:
 
         self.__helper.start_timer("import")
 
-        game_version_data = self.__api.fetch(self.__api.GAME_VERSIONS)
+        game_version_data = self.__require_fetch(self.__api.GAME_VERSIONS)
+        if game_version_data is None:
+            return self.IMPORT_FAILED
         if game_version_data:
             game_version = GameVersion()
             game_version.set_data(game_version_data)
@@ -575,14 +676,27 @@ class ImportHandler:
         ):
             return False
 
+        if self.__dependency_failed(self.__import_data_category()):
+            return self.IMPORT_FAILED
+
         self.__helper.start_timer("import")
 
+        # service and contract categories have no items. Skip them by type
+        # instead of calling the API once per empty category.
         category_ids = []
-        categories = CategoryDataAccess().load()
+        categories = CategoryDataAccess().add_filter_by_type("item").load()
         for category in categories:
             category_ids.append(category.get_id())
 
-        item_data = self.__api.fetch(self.__api.ITEMS, {"id_category": category_ids})
+        if not category_ids:
+            if not CategoryDataAccess().load():
+                self.__helper.end_timer("import")
+                return self.IMPORT_FAILED
+            item_data = []
+        else:
+            item_data = self.__require_fetch(self.__api.ITEMS, {"id_category": category_ids})
+        if item_data is None:
+            return self.IMPORT_FAILED
         if item_data:
             for index, data in enumerate(item_data):
                 item = Item(data["id"])
@@ -613,7 +727,9 @@ class ImportHandler:
 
         self.__helper.start_timer("import")
 
-        item_price_data = self.__api.fetch(self.__api.ITEMS_PRICES)
+        item_price_data = self.__require_fetch(self.__api.ITEMS_PRICES)
+        if item_price_data is None:
+            return self.IMPORT_FAILED
         if item_price_data:
             for index, data in enumerate(item_price_data):
                 item_price = ItemPrice(data["id"])
@@ -646,7 +762,8 @@ class ImportHandler:
             return False
 
         # depends on categories
-        self.__import_data_category()
+        if self.__dependency_failed(self.__import_data_category()):
+            return self.IMPORT_FAILED
 
         self.__helper.start_timer("import")
 
@@ -655,9 +772,14 @@ class ImportHandler:
         for category in categories:
             category_ids.append(category.get_id())
 
-        item_attribute_data = self.__api.fetch(
-            self.__api.ITEMS_ATTRIBUTES, {"id_category": category_ids}
-        )
+        if not category_ids:
+            item_attribute_data = []
+        else:
+            item_attribute_data = self.__require_fetch(
+                self.__api.ITEMS_ATTRIBUTES, {"id_category": category_ids}
+            )
+        if item_attribute_data is None:
+            return self.IMPORT_FAILED
         if item_attribute_data:
             for index, data in enumerate(item_attribute_data):
                 item_attribute = ItemAttribute(data["id"])
@@ -688,7 +810,9 @@ class ImportHandler:
 
         self.__helper.start_timer("import")
 
-        jurisdiction_data = self.__api.fetch(self.__api.JURISDICTIONS)
+        jurisdiction_data = self.__require_fetch(self.__api.JURISDICTIONS)
+        if jurisdiction_data is None:
+            return self.IMPORT_FAILED
         if jurisdiction_data:
             for index, data in enumerate(jurisdiction_data):
                 jurisdiction = Jurisdiction(data["id"])
@@ -719,7 +843,9 @@ class ImportHandler:
 
         self.__helper.start_timer("import")
 
-        moon_data = self.__api.fetch(self.__api.MOONS)
+        moon_data = self.__require_fetch(self.__api.MOONS)
+        if moon_data is None:
+            return self.IMPORT_FAILED
         if moon_data:
             for index, data in enumerate(moon_data):
                 moon = Moon(data["id"])
@@ -750,7 +876,9 @@ class ImportHandler:
 
         self.__helper.start_timer("import")
 
-        orbit_data = self.__api.fetch(self.__api.ORBITS)
+        orbit_data = self.__require_fetch(self.__api.ORBITS)
+        if orbit_data is None:
+            return self.IMPORT_FAILED
         if orbit_data:
             for index, data in enumerate(orbit_data):
                 orbit = Orbit(data["id"])
@@ -782,8 +910,9 @@ class ImportHandler:
         ):
             return False
 
-        # Depends on star_system data
-        self.__import_data_star_system()
+        # Depends on star_system data. id_star_system is deprecated.
+        if self.__dependency_failed(self.__import_data_star_system()):
+            return self.IMPORT_FAILED
 
         self.__helper.start_timer("import")
 
@@ -792,9 +921,19 @@ class ImportHandler:
         for star_system in star_systems:
             star_system_ids.append(star_system.get_id())
 
-        orbit_distance_data = self.__api.fetch(
-            self.__api.ORBITS_DISTANCES, {"id_star_system": star_system_ids}
+        if not star_system_ids:
+            self.__helper.end_timer("import")
+            self.__helper.get_handler_debug().write(
+                "Orbit distance import skipped: no available star systems. Previous distances kept.",
+                True,
+            )
+            return self.IMPORT_FAILED
+
+        orbit_distance_data = self.__require_fetch(
+            self.__api.ORBITS_DISTANCES, {"id_star_system_origin": star_system_ids}
         )
+        if orbit_distance_data is None:
+            return self.IMPORT_FAILED
         if orbit_distance_data:
             for index, data in enumerate(orbit_distance_data):
                 orbit_distance = OrbitDistance(data["id"])
@@ -825,7 +964,9 @@ class ImportHandler:
 
         self.__helper.start_timer("import")
 
-        outpost_data = self.__api.fetch(self.__api.OUTPOSTS)
+        outpost_data = self.__require_fetch(self.__api.OUTPOSTS)
+        if outpost_data is None:
+            return self.IMPORT_FAILED
         if outpost_data:
             for index, data in enumerate(outpost_data):
                 outpost = Outpost(data["id"])
@@ -856,7 +997,9 @@ class ImportHandler:
 
         self.__helper.start_timer("import")
 
-        planet_data = self.__api.fetch(self.__api.PLANETS)
+        planet_data = self.__require_fetch(self.__api.PLANETS)
+        if planet_data is None:
+            return self.IMPORT_FAILED
         if planet_data:
             for index, data in enumerate(planet_data):
                 planet = Planet(data["id"])
@@ -887,7 +1030,9 @@ class ImportHandler:
 
         self.__helper.start_timer("import")
 
-        poi_data = self.__api.fetch(self.__api.POI)
+        poi_data = self.__require_fetch(self.__api.POI)
+        if poi_data is None:
+            return self.IMPORT_FAILED
         if poi_data:
             for index, data in enumerate(poi_data):
                 poi = Poi(data["id"])
@@ -918,7 +1063,9 @@ class ImportHandler:
 
         self.__helper.start_timer("import")
 
-        refinery_audit_data = self.__api.fetch(self.__api.REFINERIES_AUDITS)
+        refinery_audit_data = self.__require_fetch(self.__api.REFINERIES_AUDITS)
+        if refinery_audit_data is None:
+            return self.IMPORT_FAILED
         if refinery_audit_data:
             for index, data in enumerate(refinery_audit_data):
                 refinery_audit = RefineryAudit(data["id"])
@@ -949,7 +1096,9 @@ class ImportHandler:
 
         self.__helper.start_timer("import")
 
-        refinery_method_data = self.__api.fetch(self.__api.REFINERIES_METHODS)
+        refinery_method_data = self.__require_fetch(self.__api.REFINERIES_METHODS)
+        if refinery_method_data is None:
+            return self.IMPORT_FAILED
         if refinery_method_data:
             for index, data in enumerate(refinery_method_data):
                 refinery_method = RefineryMethod(data["id"])
@@ -980,7 +1129,9 @@ class ImportHandler:
 
         self.__helper.start_timer("import")
 
-        space_station_data = self.__api.fetch(self.__api.SPACE_STATIONS)
+        space_station_data = self.__require_fetch(self.__api.SPACE_STATIONS)
+        if space_station_data is None:
+            return self.IMPORT_FAILED
         if space_station_data:
             for index, data in enumerate(space_station_data):
                 space_station = SpaceStation(data["id"])
@@ -1011,7 +1162,9 @@ class ImportHandler:
 
         self.__helper.start_timer("import")
 
-        star_system_data = self.__api.fetch(self.__api.STAR_SYSTEMS)
+        star_system_data = self.__require_fetch(self.__api.STAR_SYSTEMS)
+        if star_system_data is None:
+            return self.IMPORT_FAILED
         if star_system_data:
             for index, data in enumerate(star_system_data):
                 star_system = StarSystem(data["id"])
@@ -1036,13 +1189,15 @@ class ImportHandler:
 
         terminal_import = ImportData("terminal", load=True)
         if not terminal_import.needs_import(
-            self.__helper.get_handler_config().get_cache_lifetime_long()
+            self.__helper.get_handler_config().get_cache_lifetime_mid()
         ):
             return False
 
         self.__helper.start_timer("import")
 
-        terminal_data = self.__api.fetch(self.__api.TERMINALS)
+        terminal_data = self.__require_fetch(self.__api.TERMINALS)
+        if terminal_data is None:
+            return self.IMPORT_FAILED
         if terminal_data:
             for index, data in enumerate(terminal_data):
                 terminal = Terminal(data["id"])
@@ -1067,13 +1222,15 @@ class ImportHandler:
 
         vehicle_import = ImportData("vehicle", load=True)
         if not vehicle_import.needs_import(
-            self.__helper.get_handler_config().get_cache_lifetime_long()
+            self.__helper.get_handler_config().get_cache_lifetime_mid()
         ):
             return False
 
         self.__helper.start_timer("import")
 
-        vehicle_data = self.__api.fetch(self.__api.VEHICLES)
+        vehicle_data = self.__require_fetch(self.__api.VEHICLES)
+        if vehicle_data is None:
+            return self.IMPORT_FAILED
         if vehicle_data:
             for index, data in enumerate(vehicle_data):
                 vehicle = Vehicle(data["id"])
@@ -1106,7 +1263,9 @@ class ImportHandler:
 
         self.__helper.start_timer("import")
 
-        vehicle_price_data = self.__api.fetch(self.__api.VEHICLES_PURCHASES_PRICES)
+        vehicle_price_data = self.__require_fetch(self.__api.VEHICLES_PURCHASES_PRICES)
+        if vehicle_price_data is None:
+            return self.IMPORT_FAILED
         if vehicle_price_data:
             for index, data in enumerate(vehicle_price_data):
                 vehicle_price = VehiclePurchasePrice(data["id"])
@@ -1139,7 +1298,9 @@ class ImportHandler:
 
         self.__helper.start_timer("import")
 
-        vehicle_rental_data = self.__api.fetch(self.__api.VEHICLES_RENTALS_PRICES)
+        vehicle_rental_data = self.__require_fetch(self.__api.VEHICLES_RENTALS_PRICES)
+        if vehicle_rental_data is None:
+            return self.IMPORT_FAILED
         if vehicle_rental_data:
             for index, data in enumerate(vehicle_rental_data):
                 vehicle_rental = VehicleRentalPrice(data["id"])

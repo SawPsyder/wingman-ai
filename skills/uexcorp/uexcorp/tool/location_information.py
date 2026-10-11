@@ -198,7 +198,7 @@ class LocationInformation(Tool):
             "filter_locations": Validator(
                 Validator.VALIDATE_LOCATION,
                 multiple=True,
-                prompt="Provide one or multiple location names to filter by name. (e.g. \"Hurston\" or \"Stanton\")",
+                prompt="Provide one or multiple location names to filter by name. (e.g. \"Hurston\", \"Stanton\", or \"Nyx\")",
             ),
             "filter_location_types": Validator(
                 Validator.VALIDATE_ENUM,

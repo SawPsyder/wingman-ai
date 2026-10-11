@@ -70,6 +70,7 @@ class Commodity(DataModel):
             self.load_by_value("id", self.data["id"])
 
         self.profit_calculated = False
+        self.profit_from_route = False
         self.profit_min = None
         self.profit_max = None
         self.profit_margin_min = None
@@ -185,39 +186,41 @@ class Commodity(DataModel):
         return information
 
     def __calculate_profit(self) -> None:
-        from skills.uexcorp.uexcorp.data_access.commodity_price_data_access import CommodityPriceDataAccess
+        from skills.uexcorp.uexcorp.data_access.commodity_route_data_access import CommodityRouteDataAccess
 
-        buy_min = None
-        buy_max = None
-        sell_min = None
-        sell_max = None
-        prices = CommodityPriceDataAccess().add_filter_by_id_commodity(self.get_id()).load()
-        for price in prices:
-            if price.get_price_buy() and (buy_min is None or price.get_price_buy() < buy_min):
-                buy_min = price.get_price_buy()
-            if price.get_price_buy() and (buy_max is None or price.get_price_buy() > buy_max):
-                buy_max = price.get_price_buy()
-            if price.get_price_sell() and (sell_min is None or price.get_price_sell() < sell_min):
-                sell_min = price.get_price_sell()
-            if price.get_price_sell() and (sell_max is None or price.get_price_sell() > sell_max):
-                sell_max = price.get_price_sell()
+        # Best and worst stored routes. A cross-terminal spread (cheapest buy
+        # anywhere vs highest sell anywhere) is not a route the player can fly.
+        best = None
+        worst = None
+        routes = CommodityRouteDataAccess().add_filter_by_id_commodity(self.get_id()).load()
+        for route in routes:
+            buy = route.get_price_origin()
+            sell = route.get_price_destination()
+            if buy is None or sell is None or buy <= 0 or sell <= 0:
+                continue
+            profit = sell - buy
+            if best is None or profit > best[0]:
+                best = (profit, buy, sell)
+            if worst is None or profit < worst[0]:
+                worst = (profit, buy, sell)
 
         self.profit_calculated = True
-        self.profit_margin_max = 0
-        self.profit_margin_min = 0
-        self.profit_max = 0
-        self.profit_min = 0
-        self.base_profit_max = 0
-        self.base_profit_min = 0
+        self.profit_from_route = best is not None
+        self.profit_margin_max = None
+        self.profit_margin_min = None
+        self.profit_max = None
+        self.profit_min = None
+        self.base_profit_max = None
+        self.base_profit_min = None
 
-        if buy_min is not None and buy_min > 0 and sell_max is not None and sell_max > 0:
-            self.profit_max = sell_max - buy_min
-            self.profit_margin_max = self.profit_max / sell_max
-            self.base_profit_max = (sell_max / buy_min) - 1
-        if buy_max is not None and buy_max > 0 and sell_min is not None and sell_min > 0:
-            self.profit_min = sell_min - buy_max
-            self.profit_margin_min = self.profit_min / sell_min
-            self.base_profit_min = (sell_min / buy_max) - 1
+        if best is not None:
+            self.profit_max = best[0]
+            self.profit_margin_max = best[0] / best[2]
+            self.base_profit_max = (best[2] / best[1]) - 1
+        if worst is not None:
+            self.profit_min = worst[0]
+            self.profit_margin_min = worst[0] / worst[2]
+            self.base_profit_min = (worst[2] / worst[1]) - 1
 
     def get_id(self) -> int:
         return self.data["id"]
@@ -306,31 +309,43 @@ class Commodity(DataModel):
     def get_profit_min(self) -> float | None:
         if self.profit_calculated is False:
             self.__calculate_profit()
+        if not self.profit_from_route:
+            return None
         return self.profit_min
 
     def get_profit_max(self) -> float | None:
         if self.profit_calculated is False:
             self.__calculate_profit()
+        if not self.profit_from_route:
+            return None
         return self.profit_max
 
     def get_profit_margin_min(self) -> float | None:
         if self.profit_calculated is False:
             self.__calculate_profit()
+        if not self.profit_from_route or self.profit_margin_min is None:
+            return None
         return round(self.profit_margin_min * 100, 2)
 
     def get_profit_margin_max(self) -> float | None:
         if self.profit_calculated is False:
             self.__calculate_profit()
+        if not self.profit_from_route or self.profit_margin_max is None:
+            return None
         return round(self.profit_margin_max * 100, 2)
 
     def get_base_profit_min(self) -> float | None:
         if self.profit_calculated is False:
             self.__calculate_profit()
+        if not self.profit_from_route or self.base_profit_min is None:
+            return None
         return round(self.base_profit_min * 100, 2)
 
     def get_base_profit_max(self) -> float | None:
         if self.profit_calculated is False:
             self.__calculate_profit()
+        if not self.profit_from_route or self.base_profit_max is None:
+            return None
         return round(self.base_profit_max * 100, 2)
 
     def __str__(self):

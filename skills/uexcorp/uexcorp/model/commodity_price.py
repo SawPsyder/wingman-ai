@@ -1,6 +1,37 @@
 from datetime import datetime
 from skills.uexcorp.uexcorp.model.data_model import DataModel
 
+# Above any current cargo ship. Upstream sometimes reports stock like 12,481,600 SCU.
+MAX_SANE_SELL_SCU = 100_000
+
+
+def sell_volume_for_ai(scu_sell, scu_sell_stock, cap: float = MAX_SANE_SELL_SCU) -> dict:
+    """Separate the route-sized listing from terminal stock.
+
+    ``scu_sell`` is the figure trade routes use. ``scu_sell_stock`` is a stock
+    report and is not the same number. Values above ``cap`` are dropped.
+    """
+
+    def sane(value):
+        if value is None:
+            return None
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return None
+        if number < 0 or number > cap:
+            return None
+        return number
+
+    listing = sane(scu_sell)
+    stock = sane(scu_sell_stock)
+    fields = {}
+    if listing is not None and listing > 0:
+        fields["sell_listing_scu"] = listing
+    if stock is not None and stock > 0 and stock != listing:
+        fields["sell_stock_scu"] = stock
+    return fields
+
 class CommodityPrice(DataModel):
 
     required_keys = ["id"]
@@ -73,7 +104,7 @@ class CommodityPrice(DataModel):
         commodity_status_buy = CommodityStatus(self.get_status_buy(), True, load=True) if self.get_status_buy() else None
         commodity_status_sell = CommodityStatus(self.get_status_sell(), False, load=True) if self.get_status_sell() else None
 
-        return {
+        information = {
             "commodity": self.get_commodity_name(),
             "terminal": terminal.get_ai_location_string() if terminal else self.get_terminal_name(),
             "buy_price_from_terminal": self.get_price_buy(),
@@ -82,9 +113,9 @@ class CommodityPrice(DataModel):
             "sell_status": commodity_status_sell.get_data_for_ai_minimal() if commodity_status_sell else None,
             "buy_stock_in_scu": self.get_scu_buy(),
             "buy_stock_in_scu_avg": self.get_scu_buy_avg(),
-            "sell_demand_in_scu": self.get_scu_sell_stock(),
-            "sell_demand_in_scu_avg": self.get_scu_sell_stock_avg(),
         }
+        information.update(sell_volume_for_ai(self.get_scu_sell(), self.get_scu_sell_stock()))
+        return information
 
     def get_data_for_ai_minimal(self, show_terminal_information: bool = True, show_commodity_information: bool = True) -> dict:
         from skills.uexcorp.uexcorp.model.terminal import Terminal
@@ -115,8 +146,8 @@ class CommodityPrice(DataModel):
             information.update({
                 "sell_price_to_terminal": self.get_price_sell(),
                 "sell_status": commodity_status_sell.get_data_for_ai_minimal() if commodity_status_sell else None,
-                "sell_demand_in_scu": self.get_scu_sell_stock(),
             })
+            information.update(sell_volume_for_ai(self.get_scu_sell(), self.get_scu_sell_stock()))
 
         return information
 
