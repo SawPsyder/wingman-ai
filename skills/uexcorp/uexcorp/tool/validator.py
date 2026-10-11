@@ -253,6 +253,15 @@ class Validator:
         if closest_match:
             return closest_match, None
 
+        # Route start, destination, and location blacklist pass for_trading.
+        # A shop is a real terminal, so say that instead of "not recognized".
+        if for_trading:
+            from skills.uexcorp.uexcorp.resolver import shop_trade_note
+
+            shop = await shop_trade_note(self.__helper, name)
+            if shop:
+                return None, shop
+
         return None, f"Invalid location name, no match found for '{name}': Did you mean one of those?: {options}"
 
     def __definition_location(self, **kwargs) -> dict[str, any]:

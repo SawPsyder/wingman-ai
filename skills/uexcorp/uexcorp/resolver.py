@@ -193,6 +193,118 @@ async def resolve_location(
     )
 
 
+_NOT_SHOP_TYPES = {"", "commodity", "commodity_raw", "fuel", "refinery"}
+_PARENT_COLUMNS = (
+    "space_station_name",
+    "city_name",
+    "outpost_name",
+    "moon_name",
+    "planet_name",
+    "star_system_name",
+)
+
+
+def _is_shop_terminal(row: dict) -> bool:
+    if row.get("is_shop_fps") or row.get("is_shop_vehicle"):
+        return True
+    kind = str(row.get("type") or "").strip().lower()
+    return kind not in _NOT_SHOP_TYPES
+
+
+def _parent_place(row: dict) -> str | None:
+    name = str(row.get("name") or "")
+    for column in _PARENT_COLUMNS:
+        value = str(row.get(column) or "").strip()
+        if value and value.casefold() != name.casefold():
+            return value
+    return None
+
+
+def shop_sentence(name: str, parent: str | None) -> str:
+    """``Casaba Outlet is a shop, not a trade terminal. Try Everus Harbor.``"""
+    text = f"{name} is a shop, not a trade terminal"
+    if parent:
+        text += f". Try {parent}"
+    return text + "."
+
+
+def _shop_records(helper) -> list[dict]:
+    """Non-trade shop terminals, in the same row shape the place matcher uses."""
+    try:
+        fetched = helper.get_database().execute_fetchall(
+            """
+            SELECT id, name, nickname, code, type, is_shop_fps, is_shop_vehicle,
+                   star_system_name, planet_name, space_station_name,
+                   city_name, moon_name, outpost_name
+            FROM terminal
+            """
+        )
+    except Exception:
+        return []
+    rows = []
+    for raw in fetched:
+        row = dict(raw)
+        if not row.get("name") or not _is_shop_terminal(row):
+            continue
+        name = str(row["name"])
+        aliases = []
+        for column in ("nickname", "code"):
+            value = row.get(column)
+            if value:
+                aliases.append(str(value).casefold())
+        rows.append(
+            {
+                "scope": "terminal",
+                "id": int(row["id"]),
+                "name": name,
+                "key": f"terminal:{int(row['id'])}",
+                "label": name,
+                "aliases": aliases,
+                "parents": {},
+                "path": "",
+                "system_name": str(row.get("star_system_name") or ""),
+                "system_id": None,
+                "parent_name": _parent_place(row),
+            }
+        )
+    return rows
+
+
+async def shop_trade_note(helper, name: str) -> str | None:
+    """Sentence when ``name`` is a shop the trade filters cannot use.
+
+    An exact stored name, or a matcher resolution onto one shop, names that
+    terminal and its parent place. Anything else returns None so the caller
+    keeps the generic unrecognized message.
+    """
+    text = strip_type_tag((name or "").strip())
+    if not text or text == "None":
+        return None
+    shops = _shop_records(helper)
+    if not shops:
+        return None
+    exact = [row for row in shops if row["name"] == text]
+    if exact:
+        parents = {row.get("parent_name") for row in exact}
+        parent = next(iter(parents)) if len(parents) == 1 else None
+        return shop_sentence(exact[0]["name"], parent)
+    found = await _llm(helper).find_closest_key(
+        text,
+        {row["key"]: row["name"] for row in shops},
+        {row["key"]: row["label"] for row in shops},
+        records=shops,
+        allow_llm=True,
+        allow_dumb=True,
+        ask_system_one=True,
+    )
+    if not found.key:
+        return None
+    match = next((row for row in shops if row["key"] == found.key), None)
+    if match is None:
+        return None
+    return shop_sentence(match["name"], match.get("parent_name"))
+
+
 async def resolve_location_name(helper, name: str, for_trading: bool = False):
     """Validator entry. Returns ``(canonical name, note)``.
 

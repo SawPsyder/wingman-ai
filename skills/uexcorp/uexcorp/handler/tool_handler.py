@@ -83,13 +83,27 @@ class ToolHandler:
                         invalid_parameters[key] = f"unknown parameter '{key}'"
                         continue
 
+                    note_count = len(self._current_notes())
                     if key in mandatory_fields:
                         validated_value = await mandatory_fields[key].validate(value)
                     else:
                         validated_value = await optional_fields[key].validate(value)
 
                     if validated_value is None or validated_value == (None, None):
-                        invalid_parameters[key] = f"'{key}': value '{value}' not recognized, see notes"
+                        fresh = self._current_notes()[note_count:]
+                        shop = next(
+                            (
+                                note
+                                for note in fresh
+                                if "is a shop, not a trade terminal" in note
+                            ),
+                            None,
+                        )
+                        if shop:
+                            invalid_parameters[key] = f"'{key}': {shop}"
+                            self._drop_note(shop)
+                        else:
+                            invalid_parameters[key] = f"'{key}': value '{value}' not recognized, see notes"
                     else:
                         valid_parameters[key] = validated_value
 
@@ -208,6 +222,29 @@ class ToolHandler:
         if clear:
             self.__notes = []
         return notes
+
+    def _current_notes(self) -> list[str]:
+        """Notes the validator just wrote.
+
+        Production stores them on this handler. Tests use a separate helper
+        handler with a public ``notes`` list.
+        """
+        tool = self.__helper.get_handler_tool()
+        if tool is self:
+            return self.__notes
+        notes = getattr(tool, "notes", None)
+        if isinstance(notes, list):
+            return notes
+        return self.__notes
+
+    def _drop_note(self, note: str) -> None:
+        tool = self.__helper.get_handler_tool()
+        if tool is self:
+            self.__notes = [item for item in self.__notes if item != note]
+            return
+        notes = getattr(tool, "notes", None)
+        if isinstance(notes, list):
+            tool.notes = [item for item in notes if item != note]
 
     def add_note(self, note: str):
         self.__notes.append(note)

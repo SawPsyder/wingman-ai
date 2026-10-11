@@ -1627,6 +1627,55 @@ class LocationBlocklistTest(_SqliteCase):
         self.assertEqual(match, "Carrack")
         self.assertIsNone(options)
 
+    def test_route_filter_names_a_shop_instead_of_not_recognized(self) -> None:
+        from skills.uexcorp.uexcorp.handler.tool_handler import ToolHandler
+
+        self._seed_trade()
+        self._db.execute(
+            """
+            INSERT INTO terminal (
+                id, name, type, is_available, id_star_system, star_system_name,
+                id_space_station, space_station_name, id_city, city_name
+            ) VALUES
+                (130, 'Casaba Outlet', 'clothing', 1, 1, 'Stanton', 52, 'Everus Harbor', NULL, NULL),
+                (131, 'Teach''s', 'clothing', 1, 1, 'Stanton', NULL, NULL, 40, 'Lorville'),
+                (132, 'Cubby Blast', 'item', 1, 1, 'Stanton', 53, 'Quiet Harbor', NULL, NULL)
+            """
+        )
+        self._db.commit()
+        handler = ToolHandler(self._helper)
+        cases = (
+            ("filter_start_location", "Casaba Outlet", "Everus Harbor"),
+            ("filter_destination_location", "Teach's", "Lorville"),
+            ("filter_location_blacklist", ["Cubby Blast"], "Quiet Harbor"),
+            ("filter_start_location", "Casaba Outlett", "Everus Harbor"),
+        )
+        for field, value, parent in cases:
+            text, _instant = asyncio.run(
+                handler.execute_tool("uex_get_trade_routes", {field: value})
+            )
+            shown = value[0] if isinstance(value, list) else value
+            self.assertIn("is a shop, not a trade terminal", text, shown)
+            self.assertIn(f"Try {parent}", text, shown)
+            self.assertNotIn("not recognized", text, shown)
+
+        fuel, _instant = asyncio.run(
+            handler.execute_tool(
+                "uex_get_trade_routes",
+                {"filter_start_location": "Hurston Fuel"},
+            )
+        )
+        self.assertIn("not recognized", fuel)
+        self.assertNotIn("is a shop", fuel)
+
+        unknown, _instant = asyncio.run(
+            handler.execute_tool(
+                "uex_get_trade_routes",
+                {"filter_destination_location": "Nowhereville"},
+            )
+        )
+        self.assertIn("not recognized", unknown)
+
 
 if __name__ == "__main__":
     unittest.main()
