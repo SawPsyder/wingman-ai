@@ -524,9 +524,9 @@ class Validator:
                 commodity_data_access.add_filter_by_id(ids).load() if ids else []
             )
             catalog = CommodityDataAccess().load()
-            decided = _decide_exact(
-                _commodity_records(catalog), name, None, match_code=False
-            )
+            exact_pool = _commodity_records(catalog)
+            pool = _commodity_records(tradable)
+            decided = _decide_exact(exact_pool, name, None, match_code=False)
             tradable_names = {str(item) for item in tradable}
             if decided is not None:
                 if decided.key:
@@ -545,9 +545,7 @@ class Validator:
                     buy, sell = _price_sides(self.__helper, row.get_id())
                     return None, _untradable_sentence(decided.key, buy, sell)
                 return None, _commodity_miss_note(name, decided.note, catalog)
-            closest_match, options = await _closest_record(
-                self.__helper, name, _commodity_records(tradable)
-            )
+            closest_match, options = await _closest_record(self.__helper, name, pool)
             # Spelling only. A second find_closest_match asks System One
             # again and can note the raw twin of the commodity we return.
             catalog_match = _closest_catalog_name(name, catalog)
