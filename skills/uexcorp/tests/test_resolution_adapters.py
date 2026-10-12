@@ -126,3 +126,8 @@ def test_profiles_keep_the_pinned_ranker_values():
     assert stage_ref(pool, "poi:13")["key"] == "poi:13"
     assert stage_ref(pool, "station:99") is False
     assert stage_ref(pool, "Levski") is None
+    assert stage_ref(pool, "13") is None
+    assert stage_ref(pool, "13", scope="poi")["key"] == "poi:13"
+    assert stage_ref(pool, "99", scope="poi") is False
+    assert stage_ref(pool, "13", scope="unknown") is False
+    assert stage_ref(pool, "unknown:5") is False

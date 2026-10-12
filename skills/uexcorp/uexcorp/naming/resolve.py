@@ -9,15 +9,29 @@ from __future__ import annotations
 
 import difflib
 
-def stage_ref(pool: list[dict], text: str):
-    """Today's scope:id short-circuit.
+def stage_ref(pool: list[dict], text: str, scope: str | None = None):
+    """Scope:id, or a digit id when the caller already gave a scope.
 
     Returns the matching row, False when the ref is unknown, or None when
-    the text is not a ref. A digit-only id is not a ref here.
+    the text is not a ref. A digit-only id with no scope is not a ref, so a
+    plain query that happens to be digits still ranks.
     """
-    from skills.uexcorp.uexcorp.location_blocklist import _ids_equal, _parse_block_ref
+    from skills.uexcorp.uexcorp.location_blocklist import (
+        _SCOPE,
+        _ids_equal,
+        _parse_block_ref,
+    )
 
     ref = _parse_block_ref(text)
+    if ref is None and _unknown_scope_ref(text):
+        return False
+    if ref is None and scope and str(text).isdigit():
+        if scope not in _SCOPE:
+            return False
+        for row in pool:
+            if row.get("scope") == scope and _ids_equal(row.get("id"), text):
+                return row
+        return False
     if ref is None:
         return None
     ref_scope, ref_id = ref
@@ -25,6 +39,24 @@ def stage_ref(pool: list[dict], text: str):
         if row.get("scope") == ref_scope and _ids_equal(row.get("id"), ref_id):
             return row
     return False
+
+
+def _unknown_scope_ref(text: str) -> bool:
+    """``unknown:5`` is a ref with a scope this skill does not have.
+
+    The right side has to be digits and the left side one token, so a title
+    that merely contains a colon still ranks.
+    """
+    if ":" not in text:
+        return False
+    left, _, right = text.partition(":")
+    scope = left.strip().lower()
+    token = right.strip()
+    if not scope or not token.isdigit() or any(char.isspace() for char in scope):
+        return False
+    from skills.uexcorp.uexcorp.location_blocklist import _SCOPE
+
+    return scope not in _SCOPE
 
 
 async def resolve(
@@ -42,12 +74,13 @@ async def resolve(
     system_one_min_confidence: float | None = None,
     match_code: bool = False,
     allow_whole_word: bool = True,
+    scope: str | None = None,
 ):
     """Run stage 0 when asked, then the same ranker find_closest_key used."""
     if match_refs and records is not None:
         from skills.uexcorp.uexcorp.api.llm import _KeyMatch
 
-        ref = stage_ref(records, (search or "").strip())
+        ref = stage_ref(records, (search or "").strip(), scope=scope)
         if ref is False:
             missed = _KeyMatch()
             missed.ref_miss = True

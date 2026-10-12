@@ -193,6 +193,7 @@ async def resolve_location(
         pool,
         profile_for(pool),
         match_refs=True,
+        scope=scope,
         allow_llm=not for_write,
         allow_dumb=not for_write,
         allow_whole_word=not for_write,
