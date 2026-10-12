@@ -657,6 +657,12 @@ def _decide_exact(records: list[dict], search: str | None, descriptions: dict | 
         if len(_unique_row_names(alias_hits)) == 1:
             return _exact_result(alias_hits[0], descriptions, "alias")
         return _unpicked_result(alias_hits, descriptions)
+    # An alias the alias stage declined (a terminal nickname, a deferred
+    # set) must not come back as a normalized pick.
+    declined = {id(row) for row in alias_hits}
+    normalized_hits = [row for row in index.rows_normalized(text) if id(row) not in declined]
+    if len(normalized_hits) == 1:
+        return _exact_result(normalized_hits[0], descriptions, "normalized")
     return None
 
 

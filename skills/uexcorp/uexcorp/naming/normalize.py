@@ -1,4 +1,4 @@
-"""Index keys for name matching. Not used by the ranker until step 8.
+"""Index keys for name matching.
 
 Display text stays as stored. ``normalize`` is the folded key, and
 ``compact`` is that key with the spaces removed.

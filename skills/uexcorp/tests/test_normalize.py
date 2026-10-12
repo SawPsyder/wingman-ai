@@ -1,4 +1,4 @@
-"""normalize() is unit-tested here and is not called by the ranker yet."""
+"""normalize() folds a name into the index key. Display text stays as stored."""
 
 from skills.uexcorp.uexcorp.naming.normalize import compact, normalize
 

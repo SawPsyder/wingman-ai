@@ -1049,7 +1049,7 @@
   query: GrimHEX
   expect:
     pick: Green Imperial Housing Exchange
-    method: dumb
+    method: normalized
     candidates:
     - Green Imperial Housing Exchange
     note: null

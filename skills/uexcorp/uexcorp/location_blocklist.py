@@ -407,8 +407,12 @@ class LocationBlocklist:
                 for entry in entries
                 if entry.get("scope") == scoped[0] and _ids_equal(entry.get("id"), scoped[1])
             ]
-        folded = text.casefold()
-        by_name = [entry for entry in entries if str(entry.get("name") or "").casefold() == folded]
+        from skills.uexcorp.uexcorp.naming.normalize import normalize
+
+        folded = normalize(text)
+        by_name = [
+            entry for entry in entries if folded and normalize(entry.get("name")) == folded
+        ]
         if by_name:
             return by_name
         if text.isdigit():
@@ -571,10 +575,12 @@ class LocationBlocklist:
         matches = self._exact_name(meta[0], entry.get("name"))
         system = _system_of(entry)
         if system and meta[0] != "star_system":
+            from skills.uexcorp.uexcorp.naming.normalize import normalize
+
             matches = [
                 item
                 for item in matches
-                if str(item.get("star_system_name") or "").casefold() == system.casefold()
+                if normalize(item.get("star_system_name")) == normalize(system)
             ]
         if len(matches) == 1:
             updated["id"] = int(matches[0]["id"])

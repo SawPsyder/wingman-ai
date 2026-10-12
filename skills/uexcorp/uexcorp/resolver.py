@@ -439,7 +439,7 @@ async def shop_trade_note(helper, name: str) -> str | None:
         ask_system_one=False,
         allow_whole_word=True,
     )
-    if found.method in ("exact", "alias", "prefix"):
+    if found.method in ("exact", "alias", "prefix", "normalized"):
         chosen = _rows_for_keys(shops, found)
         decided = _decided_name(text, chosen, found)
         if decided is not None:

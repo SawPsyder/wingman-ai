@@ -18,6 +18,8 @@ class NameIndex:
         self._unscoped_key: dict[str, list[int]] = {}
         self._code: dict[str, list[int]] = {}
         self._alias: dict[str, list[int]] = {}
+        self._normalized: dict[str, list[int]] = {}
+        self._compact: dict[str, list[int]] = {}
 
     def add(self, row: dict) -> None:
         public = row.get("id", row.get("key"))
@@ -45,6 +47,13 @@ class NameIndex:
             token = str(alias).casefold()
             if token:
                 self._append(self._alias, token, seq)
+        from skills.uexcorp.uexcorp.naming.normalize import compact, normalize
+
+        for form in [name, *[str(alias) for alias in (row.get("aliases") or [])]]:
+            folded = normalize(form)
+            if folded:
+                self._append(self._normalized, folded, seq)
+                self._append(self._compact, compact(form), seq)
 
     def get(self, row_id):
         if row_id in self.by_key:
@@ -66,6 +75,22 @@ class NameIndex:
 
     def rows_alias(self, folded: str) -> list[dict]:
         return self._take(self._alias.get(folded, ()))
+
+    def rows_normalized(self, text: str) -> list[dict]:
+        """Rows whose name or alias folds or compacts to ``text``.
+
+        Case-only twins are decided before this runs.
+        """
+        from skills.uexcorp.uexcorp.naming.normalize import compact, normalize
+
+        folded = normalize(text)
+        packed = compact(text)
+        groups = []
+        if folded:
+            groups.append(self._normalized.get(folded, ()))
+        if packed:
+            groups.append(self._compact.get(packed, ()))
+        return self._take(*groups) if groups else []
 
     def _take(self, *groups) -> list[dict]:
         wanted = set()
