@@ -11,6 +11,20 @@ import difflib
 from skills.uexcorp.uexcorp.naming.profile import BRAND
 
 
+def sequence_ratio(left: str, right: str) -> float:
+    """difflib ratio of the two strings, in the order the caller passes them."""
+    return difflib.SequenceMatcher(None, left, right).ratio()
+
+
+def plain_ratio(label: str, query: str) -> float:
+    """Same argument order as difflib.get_close_matches (possibility, word)."""
+    return sequence_ratio(label, query)
+
+
+def plain_casefold_ratio(label: str, query: str) -> float:
+    return sequence_ratio(query.casefold(), label.casefold())
+
+
 def brand_query_ok(query: str, brand: str) -> bool:
     """The typed words are that shop, a whole-word prefix, or a close typo."""
     from skills.uexcorp.uexcorp.api.llm import _whole_word_name

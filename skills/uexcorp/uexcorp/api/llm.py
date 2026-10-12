@@ -1,4 +1,3 @@
-import difflib
 import json
 import re
 from typing import TYPE_CHECKING
@@ -754,11 +753,15 @@ def _plain_model_pick_ok(query: str, label: str) -> bool:
 
 def _plain_ratio(label: str, query: str) -> float:
     # Same argument order as difflib.get_close_matches (possibility, word).
-    return difflib.SequenceMatcher(None, label, query).ratio()
+    from skills.uexcorp.uexcorp.naming.ratios import plain_ratio
+
+    return plain_ratio(label, query)
 
 
 def _plain_casefold_ratio(label: str, query: str) -> float:
-    return difflib.SequenceMatcher(None, query.casefold(), label.casefold()).ratio()
+    from skills.uexcorp.uexcorp.naming.ratios import plain_casefold_ratio
+
+    return plain_casefold_ratio(label, query)
 
 
 def _candidate(key: str, label: str, score: float, descriptions: dict | None) -> dict:
@@ -802,7 +805,9 @@ def _place_score(query: str, name: str) -> float:
         return 0.0
     if left == right:
         return 1.0
-    ratio = difflib.SequenceMatcher(None, left, right).ratio()
+    from skills.uexcorp.uexcorp.naming.ratios import sequence_ratio
+
+    ratio = sequence_ratio(left, right)
     if right.startswith(left):
         # "ruin" vs "ruin station" is 0.5 raw, which would miss the place.
         ratio = max(ratio, 0.6 + 0.35 * (len(left) / len(right)))
