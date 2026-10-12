@@ -116,12 +116,24 @@ def _commodity_code(commodity) -> str:
     return str(getter() or "").casefold()
 
 
+def _exclude_expands(catalog, query: str) -> bool:
+    """ALL-CAPS ``GOLD`` expands to every holder. ``Gold`` and ``gold`` stay the name."""
+    text = (query or "").strip()
+    if (
+        text.isupper()
+        and any(char.isalpha() for char in text)
+        and any(_commodity_code(item) == text.casefold() for item in catalog)
+    ):
+        return True
+    return _query_is_code(catalog, query)
+
+
 def _query_is_code(catalog, query: str) -> bool:
     """True when ``query`` is a commodity code and not a commodity name.
 
     ``Borase`` and ``Gold (Ore)`` are names, so they stay those rows.
     ``BORA`` is only a code. ``Gold`` is a name that shares its code, so
-    ``GOLD`` is the name, not a code lookup.
+    a route read of ``GOLD`` is the name, not a code lookup.
     """
     folded = (query or "").strip().casefold()
     if not folded:
@@ -570,7 +582,7 @@ class Validator:
         # Exclusion is the safe side: a shared code drops every holder.
         # An exact name stays that one commodity. A stoplisted casing
         # such as "Alum" is still not treated as the code.
-        if exclude_code_holders and _query_is_code(commodities, name):
+        if exclude_code_holders and _exclude_expands(commodities, name):
             from skills.uexcorp.uexcorp.api.llm import _stoplist_blocks_pick
 
             if not _stoplist_blocks_pick(name):

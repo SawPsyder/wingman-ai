@@ -1143,8 +1143,10 @@ class RouteReproTest(_SqliteCase):
                 self._helper.get_handler_tool().notes.clear()
                 result = asyncio.run(black.validate([query]))
                 literal = literal_names.get(query.casefold())
-                if literal is not None:
-                    # GOLD is the name Gold, so it excludes Gold only.
+                # ALL-CAPS GOLD is the code, so both holders go. Gold and gold stay the name.
+                if literal is not None and not (
+                    query.isupper() and any(char.isalpha() for char in query)
+                ):
                     self.assertEqual(result, [literal], query)
                     continue
                 if _stoplist_blocks_pick(query):
