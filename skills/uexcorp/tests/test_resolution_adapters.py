@@ -92,3 +92,37 @@ def test_budget_only_counts():
     assert budget.count() == 2
     assert Intent.READ.value == "read"
     assert Kind.TERMINAL.value == "terminal"
+
+
+def test_profiles_keep_the_pinned_ranker_values():
+    from skills.uexcorp.uexcorp.api.llm import (
+        LISTING_MIN_SCORE,
+        SHORTLIST_LIMIT,
+        _BRAND_PROFILE,
+        _PLAIN_PROFILE,
+        _PLACES_PROFILE,
+    )
+    from skills.uexcorp.uexcorp.naming.resolve import stage_ref
+
+    assert _PLAIN_PROFILE.floor == 0.4
+    assert _PLAIN_PROFILE.limit == 10
+    assert _PLAIN_PROFILE.substring is True
+    assert _PLAIN_PROFILE.dumb_cutoff == 0.8
+    assert _PLAIN_PROFILE.guard_model is True
+    assert _PLAIN_PROFILE.whole_word is False
+    assert _PLAIN_PROFILE.scorer == "plain_ratio"
+    assert _PLACES_PROFILE.floor == LISTING_MIN_SCORE == 0.6
+    assert _PLACES_PROFILE.limit == SHORTLIST_LIMIT == 5
+    assert _PLACES_PROFILE.substring is False
+    assert _PLACES_PROFILE.guard_model is False
+    assert _PLACES_PROFILE.whole_word is True
+    assert _PLACES_PROFILE.scorer == "place_score"
+    assert _BRAND_PROFILE.floor == 0.84
+    assert _BRAND_PROFILE.limit == 5
+    pool = [
+        {"scope": "poi", "id": 13, "key": "poi:13", "name": "MT DataCenter"},
+        {"scope": "station", "id": 1, "key": "station:1", "name": "Levski"},
+    ]
+    assert stage_ref(pool, "poi:13")["key"] == "poi:13"
+    assert stage_ref(pool, "station:99") is False
+    assert stage_ref(pool, "Levski") is None

@@ -3,6 +3,13 @@ import json
 import re
 from typing import TYPE_CHECKING
 
+from skills.uexcorp.uexcorp.naming.profile import (
+    BRAND as _BRAND_PROFILE,
+    PLAIN as _PLAIN_PROFILE,
+    PLACE as _PLACES_PROFILE,
+    Profile as _RankProfile,
+)
+
 if TYPE_CHECKING:
     from skills.uexcorp.uexcorp.helper import Helper
 
@@ -233,14 +240,18 @@ class Llm:
         uses that for the 0.8 pick. Confirming the preview asks System One
         again, via noul, and that check does not depend on ``allow_llm``.
         """
+        from skills.uexcorp.uexcorp.naming.profile import profile_for
+        from skills.uexcorp.uexcorp.naming.resolve import resolve
+
         search = strip_type_tag(search)
-        scoped = records is not None and any(row.get("scope") for row in records)
-        found = await self._rank(
+        found = await resolve(
+            self,
             search,
             options,
             descriptions,
             records,
-            _PLACES_PROFILE if scoped else _PLAIN_PROFILE,
+            profile_for(records),
+            match_refs=False,
             allow_llm=allow_llm,
             allow_dumb=allow_dumb,
             ask_system_one=ask_system_one,
@@ -259,7 +270,7 @@ class Llm:
         options: dict[str, str],
         descriptions: dict[str, str] | None,
         records: list[dict] | None,
-        profile: "_RankProfile",
+        profile,
         *,
         allow_llm: bool,
         allow_dumb: bool,
@@ -268,277 +279,23 @@ class Llm:
         match_code: bool = False,
         allow_whole_word: bool = True,
     ):
-        """One entry point. Scoring stays profile-specific.
+        """Delegate. The ranker lives in naming.resolve.rank."""
+        from skills.uexcorp.uexcorp.naming.resolve import rank
 
-        The exact step above the branch is shared. Plain scoring is the
-        close-string list: floor 0.4, 10 results, substring pass on, the
-        0.8 dumb fallback. Place scoring is the place rules: floor 0.6,
-        5 results. These are two scorers selected by the profile, not one
-        scorer with a boost switch.
-        """
-        def dumb_plain(search: str, close_labels: list[str]) -> str | None:
-            """The 0.8 dumb pick, with the two known case fixes applied on top.
-
-            A tie on the case-sensitive score prefers the label that also matches
-            ignoring case, so Freelancer Max beats Freelancer MIS. When nothing
-            clears 0.8, a manufacturer-prefixed name can still win if ignoring case
-            puts it clearly ahead (Freelancer Max → MISC Freelancer MAX) without
-            treating a pure case variant such as gold → Gold as that kind of hit.
-            """
-            cutoff = profile.dumb_cutoff
-            base_list = difflib.get_close_matches(search, close_labels, n=1, cutoff=cutoff)
-            base = base_list[0] if base_list else None
-            if not any(char.islower() for char in search):
-                return base
-            if base is not None:
-                best = base
-                best_cf = _plain_casefold_ratio(base, search)
-                for label in close_labels:
-                    if _plain_ratio(label, search) < cutoff:
-                        continue
-                    casefold_ratio = _plain_casefold_ratio(label, search)
-                    if casefold_ratio > best_cf + 1e-12:
-                        best = label
-                        best_cf = casefold_ratio
-                return best
-            # A single token such as a slug or a commodity code stays on the old
-            # cutoff. "Freelancer Max" is two words, which is what clears this.
-            if " " not in search:
-                return None
-            best = None
-            best_key = None
-            for label in close_labels:
-                case_ratio = _plain_ratio(label, search)
-                casefold_ratio = _plain_casefold_ratio(label, search)
-                if casefold_ratio >= 0.84 and case_ratio >= 0.72 and casefold_ratio < 0.999:
-                    key = (casefold_ratio, case_ratio)
-                    if best_key is None or key > best_key:
-                        best_key = key
-                        best = label
-            return best
-
-        rows = list(records) if records is not None else _rows_from_options(options)
-        decided = _decide_exact(rows, search, descriptions, match_code=match_code)
-        if decided is not None:
-            return decided
-
-        if profile.boosts:
-            result = _KeyMatch()
-            text = (search or "").strip()
-            if not text or text == "None" or not records:
-                if text and text != "None":
-                    result.note = "No approximate matches found, given name too abstract."
-                return result
-
-            ranked = rank_places(records, text, floor=profile.floor)
-            if not ranked:
-                self.__helper.get_handler_debug().write(
-                    f"No close matches found for '{text}' in list. Returning None.", True
-                )
-                result.note = "No approximate matches found, given name too abstract."
-                return result
-
-            shown = shortlist_places(ranked, text, profile.limit)
-            exacts = [hit for hit in ranked if hit.get("via") in ("exact", "case")]
-
-            def use(hits: list[dict]) -> None:
-                result.candidates = [_place_candidate(hit) for hit in hits]
-
-            if len(exacts) == 1 and len(ranked) == 1:
-                use(shown)
-                result.key = exacts[0]["key"]
-                result.keys = [exacts[0]["key"]]
-                result.score = 1.0
-                result.method = "exact"
-                return result
-            if exacts:
-                # Two spellings that differ only by case, or two places that share
-                # a name, stay candidates. Do not ask a model to pick one.
-                exact_shown = shortlist_places(exacts, text, profile.limit)
-                use(exact_shown)
-                result.note = ", ".join(
-                    (hit.get("label") or hit["name"]) for hit in exact_shown[:3]
-                )
-                return result
-            if len(ranked) == 1 and ranked[0].get("via") == "alias":
-                use(shown)
-                result.key = ranked[0]["key"]
-                result.keys = [ranked[0]["key"]]
-                result.score = ranked[0].get("score")
-                result.method = "alias"
-                return result
-
-            # A blocklist write leaves both switches off, so a non-exact
-            # station still previews instead of being saved. Read filters
-            # keep the unique whole-word pick and turn the dumb fallback off.
-            # The whole-word hit has to be unique in the full ranked set.
-            # The 5-row shortlist is only what gets shown.
-            if allow_whole_word:
-                winner = _single_whole_word_place(text, ranked)
-                if winner is not None:
-                    if not any(hit.get("key") == winner.get("key") for hit in shown):
-                        shown = [winner, *shown]
-                    use(shown)
-                    result.key = winner["key"]
-                    result.keys = [winner["key"]]
-                    result.method = "prefix"
-                    result.score = winner.get("score")
-                    return result
-
-            def hit_for(key):
-                for hit in ranked:
-                    if hit.get("key") == key:
-                        return hit
-                return None
-
-            if ask_system_one and shown:
-                by_label = _choice_labels(shown)
-                picked = await self.__system_one_match(
-                    text,
-                    list(by_label.keys()),
-                    min_confidence=system_one_min_confidence,
-                )
-                if picked is not None and picked in by_label:
-                    key = by_label[picked]
-                    hit = hit_for(key)
-                    if _ambiguous_word_pick_ok(text, ranked, hit):
-                        use(shown)
-                        result.key = key
-                        result.keys = [key]
-                        result.method = "system_one"
-                        result.score = next(
-                            (item.get("score") for item in shown if item["key"] == key),
-                            None,
-                        )
-                        return result
-
-            names = _unique_names(shown)
-            if allow_llm and names:
-                answer = await self._llm_name(text, names)
-                if answer is not None:
-                    key = _key_for_name(shown, answer)
-                    hit = hit_for(key) if key is not None else None
-                    if key is not None and _ambiguous_word_pick_ok(text, ranked, hit):
-                        use(shown)
-                        result.key = key
-                        result.keys = [key]
-                        result.method = "llm"
-                        result.score = next(
-                            (item.get("score") for item in shown if item["key"] == key),
-                            None,
-                        )
-                        return result
-
-            if allow_dumb:
-                dumb = best_name_match(text, ranked, cutoff=profile.dumb_cutoff)
-                if dumb is not None and _ambiguous_word_pick_ok(text, ranked, dumb):
-                    use(shown)
-                    result.key = dumb["key"]
-                    result.keys = [dumb["key"]]
-                    result.method = "dumb"
-                    result.score = dumb.get("score")
-                    return result
-
-            use(shown)
-            # The shortlist above is what System One sees. The note prefers
-            # stations, cities, and systems over shop terminals, taken from
-            # the full ranked set so a shop code cannot fill every slot.
-            result.note = _place_candidate_note(ranked)
-            return result
-
-        else:
-            result = _KeyMatch()
-            if not search or search == "None" or not options:
-                if search and search != "None":
-                    result.note = "No approximate matches found, given name too abstract."
-                return result
-
-            by_label: dict[str, list[str]] = {}
-            for key, label in options.items():
-                by_label.setdefault(str(label), []).append(str(key))
-            labels = list(by_label.keys())
-
-            close_labels = difflib.get_close_matches(search, labels, n=profile.limit, cutoff=profile.floor)
-            if profile.substring:
-                close_labels.extend(
-                    label for label in labels
-                    if search.lower() in label.lower() and label not in close_labels
-                )
-            self.__helper.get_handler_debug().write(
-                f"Creating a list of close matches for search term '{search}': {', '.join(close_labels)}"
-            )
-            if not close_labels:
-                self.__helper.get_handler_debug().write(
-                    f"No close matches found for '{search}' in list. Returning None.", True
-                )
-                result.note = "No approximate matches found, given name too abstract."
-                return result
-
-            seen = set()
-            for label in close_labels:
-                ratio = difflib.SequenceMatcher(None, search, label).ratio()
-                for key in by_label.get(label, []):
-                    if key in seen:
-                        continue
-                    seen.add(key)
-                    result.candidates.append(_candidate(key, label, ratio, descriptions))
-            result.candidates.sort(key=lambda item: (-item["score"], item["key"]))
-
-            # A query that is some commodity's code must not fall through to
-            # a lookalike. The exact step already kept the code's own row.
-            code_locked = _query_equals_code(rows, search)
-            if ask_system_one and not code_locked:
-                picked = await self.__system_one_match(
-                    search, close_labels, min_confidence=system_one_min_confidence
-                )
-                if (
-                    picked is not None
-                    and picked in by_label
-                    and _system_one_pick_ok(search, picked)
-                ):
-                    key = by_label[picked][0]
-                    result.key = key
-                    result.keys = [key]
-                    result.method = "system_one"
-                    result.score = next(
-                        (item["score"] for item in result.candidates if item["key"] == key),
-                        None,
-                    )
-                    return result
-
-            if allow_llm and not code_locked:
-                answer = await self._llm_name(search, close_labels)
-                if answer is not None:
-                    key = by_label[answer][0]
-                    result.key = key
-                    result.keys = [key]
-                    result.method = "llm"
-                    result.score = next(
-                        (item["score"] for item in result.candidates if item["key"] == key),
-                        None,
-                    )
-                    return result
-
-            if allow_dumb and not code_locked:
-                dumb_match = dumb_plain(search, close_labels)
-                if dumb_match:
-                    if allow_llm:
-                        self.__helper.get_handler_debug().write(
-                            f"LLM did not answer for '{search}'. Using dumb match '{dumb_match}'",
-                            True,
-                        )
-                    key = by_label[dumb_match][0]
-                    result.key = key
-                    result.keys = [key]
-                    result.method = "dumb"
-                    result.score = next(
-                        (item["score"] for item in result.candidates if item["key"] == key),
-                        None,
-                    )
-                    return result
-            result.note = ", ".join(close_labels[:3])
-            return result
-
+        return await rank(
+            self,
+            search,
+            options,
+            descriptions,
+            records,
+            profile,
+            allow_llm=allow_llm,
+            allow_dumb=allow_dumb,
+            ask_system_one=ask_system_one,
+            system_one_min_confidence=system_one_min_confidence,
+            match_code=match_code,
+            allow_whole_word=allow_whole_word,
+        )
 
     async def _llm_name(self, search: str, names: list[str]) -> str | None:
         """Main-model pick of a place name. Missing wingman skips the call."""
@@ -1120,32 +877,6 @@ def _place_candidate_note(ranked: list[dict], limit: int = 3) -> str:
 
 
 
-class _RankProfile:
-    """Settings for one of the two scorers behind :meth:`Llm._rank`.
-
-    ``boosts`` selects the place scorer. It does not toggle boosts inside
-    a shared scoring function. Plain scoring leaves that flag off.
-    """
-
-    def __init__(
-        self,
-        boosts: bool,
-        floor: float,
-        limit: int,
-        substring: bool,
-        dumb_cutoff: float,
-        guard_model: bool,
-    ):
-        self.boosts = boosts
-        self.floor = floor
-        self.limit = limit
-        self.substring = substring
-        self.dumb_cutoff = dumb_cutoff
-        self.guard_model = guard_model
-
-
-_PLAIN_PROFILE = _RankProfile(False, 0.4, 10, True, 0.8, True)
-_PLACES_PROFILE = _RankProfile(True, LISTING_MIN_SCORE, SHORTLIST_LIMIT, False, 0.8, False)
 
 
 def rank_places(records: list[dict], query: str, floor: float = LISTING_MIN_SCORE) -> list[dict]:

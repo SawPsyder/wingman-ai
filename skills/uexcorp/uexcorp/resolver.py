@@ -19,8 +19,6 @@ from skills.uexcorp.uexcorp.api.llm import (
 from skills.uexcorp.uexcorp.location_blocklist import (
     SCOPES,
     _SCOPE,
-    _ids_equal,
-    _parse_block_ref,
 )
 
 WRITE_SYSTEM_ONE_CONFIDENCE = 0.8
@@ -183,29 +181,31 @@ async def resolve_location(
     )
     if scope in _SCOPE and rows is not None:
         pool = [row for row in pool if row["scope"] == scope]
-    # poi:13 is the row with that id. It does not go through the name ranker,
-    # so a case collision on the display name cannot swallow it.
-    ref = _parse_block_ref(text)
-    if ref is not None:
-        ref_scope, ref_id = ref
-        for row in pool:
-            if row.get("scope") == ref_scope and _ids_equal(row.get("id"), ref_id):
-                return Resolution(match=row, method="exact", candidates=[row], query=text)
-        return Resolution(query=text)
-    # allow_llm is false for a write: no main model and no dumb match.
-    # ask_system_one stays true, so the 0.8 pick still runs. Confirm's noul
-    # check is a second System One call and is not affected by allow_llm.
-    found = await _llm(helper).find_closest_key(
+    # poi:13 is the row with that id. Stage 0 lives in resolve() and does not
+    # fall through to a fuzzy pick. find_closest_key leaves that stage off.
+    from skills.uexcorp.uexcorp.naming.profile import profile_for
+    from skills.uexcorp.uexcorp.naming.resolve import resolve
+
+    found = await resolve(
+        _llm(helper),
         text,
         {row["key"]: row["name"] for row in pool},
         {row["key"]: row["label"] for row in pool},
-        records=pool,
+        pool,
+        profile_for(pool),
+        match_refs=True,
         allow_llm=not for_write,
         allow_dumb=not for_write,
+        allow_whole_word=not for_write,
         ask_system_one=True,
         system_one_min_confidence=WRITE_SYSTEM_ONE_CONFIDENCE if for_write else None,
     )
+    if getattr(found, "ref_miss", False):
+        return Resolution(query=text)
     by_key = {row["key"]: row for row in pool}
+    if getattr(found, "ref_hit", False):
+        row = by_key.get(found.key)
+        return Resolution(match=row, method="exact", candidates=[row] if row is not None else [], query=text)
     candidates = []
     for item in found.candidates:
         row = by_key.get(item.get("key"))
