@@ -202,6 +202,9 @@ async def rank(
                 result.note = "No approximate matches found, given name too abstract."
             return result
 
+        from skills.uexcorp.uexcorp.resolver import _bare_generic_place
+
+        generic = _bare_generic_place(text)
         ranked = rank_places(records, text, floor=profile.floor)
         if not ranked:
             llm._Llm__helper.get_handler_debug().write(
@@ -245,7 +248,7 @@ async def rank(
         # keep the unique whole-word pick and turn the dumb fallback off.
         # The whole-word hit has to be unique in the full ranked set.
         # The 5-row shortlist is only what gets shown.
-        if allow_whole_word:
+        if allow_whole_word and not generic:
             winner = _single_whole_word_place(text, ranked)
             if winner is not None:
                 if not any(hit.get("key") == winner.get("key") for hit in shown):
@@ -263,7 +266,7 @@ async def rank(
                     return hit
             return None
 
-        if ask_system_one and shown:
+        if ask_system_one and shown and not generic:
             from skills.uexcorp.uexcorp.naming.types import active_budget
 
             budget = active_budget()
@@ -308,7 +311,7 @@ async def rank(
                     )
                     return result
 
-        if allow_dumb:
+        if allow_dumb and not generic:
             dumb = best_name_match(text, ranked, cutoff=profile.dumb_cutoff)
             if dumb is not None and _ambiguous_word_pick_ok(text, ranked, dumb):
                 use(shown)

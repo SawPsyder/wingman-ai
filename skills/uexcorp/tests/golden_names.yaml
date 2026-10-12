@@ -1111,12 +1111,12 @@
   pool: places
   query: Deal
   expect:
-    pick: Goner's Deal
-    method: prefix
+    pick: null
+    method: null
     candidates:
     - Goner's Deal
     - Devlin Scrap & Salvage
-    note: null
+    note: Goner's Deal, Devlin Scrap & Salvage
 - id: place-Babbage
   kind: place
   pool: places
@@ -1133,14 +1133,14 @@
   pool: places
   query: Mine
   expect:
-    pick: Kudre Ore Mine (Closed)
-    method: prefix
+    pick: null
+    method: null
     candidates:
     - Kudre Ore Mine (Closed)
     - Miner's Lament
     - Humboldt Mines
     - Loveridge Mineral Reserve
-    note: null
+    note: Kudre Ore Mine (Closed), Miner's Lament, Humboldt Mines
 - id: place-Fuel
   kind: place
   pool: places
@@ -1158,14 +1158,14 @@
   pool: places
   query: mine
   expect:
-    pick: Kudre Ore Mine (Closed)
-    method: prefix
+    pick: null
+    method: null
     candidates:
     - Kudre Ore Mine (Closed)
     - Miner's Lament
     - Humboldt Mines
     - Loveridge Mineral Reserve
-    note: null
+    note: Kudre Ore Mine (Closed), Miner's Lament, Humboldt Mines
 - id: generic-star
   kind: place
   pool: places
@@ -1213,15 +1213,15 @@
   pool: places
   query: port
   expect:
-    pick: Port Tressler
-    method: prefix
+    pick: null
+    method: null
     candidates:
     - Port Tressler
     - Teasa Spaceport
     - August Dunlow Spaceport
     - Riker Memorial Spaceport
     - New Babbage Interstellar Spaceport
-    note: null
+    note: Port Tressler, Teasa Spaceport, August Dunlow Spaceport
 - id: generic-gateway
   kind: place
   pool: places
@@ -1241,11 +1241,11 @@
   pool: places
   query: city
   expect:
-    pick: Patch City
-    method: prefix
+    pick: null
+    method: null
     candidates:
     - Patch City
-    note: null
+    note: Patch City
 - id: generic-depot
   kind: place
   pool: places

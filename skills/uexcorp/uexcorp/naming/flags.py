@@ -6,11 +6,6 @@ byte-identical with the frozen note it was derived from.
 
 from __future__ import annotations
 
-_GENERIC_WORDS = frozenset({
-    "mine", "star", "station", "outpost", "port", "gateway", "city", "depot", "hub",
-})
-
-
 def flags_for(note: str | None, query: str | None = None) -> list[str]:
     """Flags in a stable order. ``note`` is not rewritten."""
     from skills.uexcorp.uexcorp.api.llm import _strip_scope_words
@@ -31,7 +26,9 @@ def flags_for(note: str | None, query: str | None = None) -> list[str]:
         stripped = _strip_scope_words(query)
         if stripped and stripped.casefold() != query.casefold():
             flags.append("scope_stripped")
+        from skills.uexcorp.uexcorp.resolver import _GENERIC_PLACE_WORDS
+
         token = query.casefold().strip()
-        if token in _GENERIC_WORDS:
+        if token in _GENERIC_PLACE_WORDS:
             flags.append("generic_word")
     return flags

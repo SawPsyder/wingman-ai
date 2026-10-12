@@ -280,6 +280,7 @@ def shop_chain_sentence(brand: str, parents: list[str]) -> str:
 # station out of Station. Fuel is not in this set.
 _GENERIC_PLACE_WORDS = frozenset({
     "mine", "star", "station", "outpost", "port", "gateway", "city", "depot", "hub",
+    "deal",
 })
 _PLACE_SCOPES = frozenset({
     "system", "planet", "moon", "city", "station", "outpost", "poi", "orbit",
