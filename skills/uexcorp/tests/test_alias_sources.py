@@ -62,3 +62,12 @@ def test_planet_and_orbit_alias_name_origin_and_not_the_code():
     assert _SCOPE["orbit"][2] == ("name_origin",)
     assert "code" not in _SCOPE["planet"][2]
     assert "code" not in _SCOPE["orbit"][2]
+
+
+def test_moon_alias_is_name_origin_and_not_the_code():
+    from skills.uexcorp.uexcorp.location_blocklist import _SCOPE
+
+    assert _SCOPE["moon"][2] == ("name_origin",)
+    assert "code" not in _SCOPE["moon"][2]
+    assert _SCOPE["city"][2] == ("code",)
+    assert _SCOPE["system"][2] == ("code",)

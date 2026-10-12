@@ -320,7 +320,7 @@ class LocationBlocklistTest(_SqliteCase):
         self.assertEqual(everus.method, "alias")
         self.assertEqual(everus.match["name"], "Everus Harbor")
         self.assertEqual(everus.match["scope"], "station")
-        self.assertEqual(asyncio.run(resolve_location(helper, "CAL")).match["scope"], "moon")
+        self.assertIsNone(asyncio.run(resolve_location(helper, "CAL")).match)
         self.assertEqual(asyncio.run(resolve_location(helper, "PYR")).match["scope"], "system")
         self.assertEqual(asyncio.run(resolve_location(helper, "Everus Harbor")).method, "exact")
         self.assertEqual(asyncio.run(resolve_location(helper, "Everus Harbor")).match["scope"], "station")
@@ -645,7 +645,7 @@ class LocationBlocklistTest(_SqliteCase):
             limit=8,
         )
         partial_text = " ".join(partial_notes)
-        self.assertIn("1 of 2 terminals at Hurston are blocked and were skipped.", partial_text)
+        self.assertIn("1 of 6 terminals at Hurston are blocked and were skipped.", partial_text)
         self.assertIn("Teasa", partial)
         self.assertNotIn("Lorville Admin", partial)
 
