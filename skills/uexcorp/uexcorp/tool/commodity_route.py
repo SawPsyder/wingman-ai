@@ -17,20 +17,102 @@ def _quoted_price_positive(value) -> bool:
         return False
 
 
-def _commodity_terminal_ids_at(location_names: str | list[str]) -> list[int]:
-    """Ids of available commodity terminals whose location columns match.
+# Place scope to the terminal column that stores that place's id.
+_PLACE_ID_COLUMN = {
+    "system": "id_star_system",
+    "planet": "id_planet",
+    "orbit": "id_orbit",
+    "moon": "id_moon",
+    "city": "id_city",
+    "station": "id_space_station",
+    "outpost": "id_outpost",
+    "poi": "id_poi",
+    "terminal": "id",
+}
 
-    Equality is OR across columns, so a NULL planet name does not hide a
-    terminal that sits in the named star system.
+
+def _places_named(name: str) -> list[tuple[str, int]]:
+    """Places whose stored name is ``name``, as ``(scope, id)``."""
+    from skills.uexcorp.uexcorp.helper import Helper
+    from skills.uexcorp.uexcorp.location_blocklist import _SCOPE
+
+    text = str(name or "").strip()
+    if not text:
+        return []
+    database = Helper.get_instance().get_database()
+    found = []
+    for scope, meta in _SCOPE.items():
+        try:
+            rows = database.execute_fetchall(
+                f"SELECT id FROM {meta[0]} WHERE name = ?",
+                (text,),
+            )
+        except Exception:
+            continue
+        for row in rows:
+            place_id = row["id"]
+            if isinstance(place_id, bool) or not isinstance(place_id, int):
+                continue
+            found.append((scope, place_id))
+    return found
+
+
+def terminal_ids_for_places(
+    location_names: str | list[str],
+    *,
+    terminal_type: str | None = None,
+    available_only: bool = False,
+) -> list[int]:
+    """Commodity or item terminals that belong to the named places.
+
+    The names are resolved to place ids first. Terminals are then filtered
+    by those ids, never by a location-name column.
     """
     from skills.uexcorp.uexcorp.data_access.terminal_data_access import TerminalDataAccess
+    from skills.uexcorp.uexcorp.database.filter import Filter
+
+    names = [location_names] if isinstance(location_names, str) else list(location_names)
+    places = []
+    for name in names:
+        for place in _places_named(name):
+            if place not in places:
+                places.append(place)
+    if not places:
+        return []
+    columns: dict[str, list[int]] = {}
+    for scope, place_id in places:
+        column = _PLACE_ID_COLUMN[scope]
+        bucket = columns.setdefault(column, [])
+        if place_id not in bucket:
+            bucket.append(place_id)
+    grouped = Filter()
+    first = True
+    for column, ids in columns.items():
+        grouped.where(column, ids if len(ids) > 1 else ids[0], is_or=not first)
+        first = False
+    access = TerminalDataAccess()
+    access.filter.apply_filter(grouped)
+    if terminal_type:
+        access.add_filter_by_type(terminal_type)
+    if available_only:
+        access.add_filter_by_is_available(True)
+    found = []
+    for terminal in access.load():
+        terminal_id = terminal.get_id()
+        if terminal_id not in found:
+            found.append(terminal_id)
+    return found
+
+
+def _commodity_terminal_ids_at(location_names: str | list[str]) -> list[int]:
+    """Ids of available commodity terminals at the named places."""
     from skills.uexcorp.uexcorp.model.terminal import Terminal
 
-    access = TerminalDataAccess()
-    access.add_filter_by_location_name_whitelist(location_names)
-    access.add_filter_by_type(Terminal.TYPE_COMMODITY)
-    access.add_filter_by_is_available(True)
-    return [terminal.get_id() for terminal in access.load()]
+    return terminal_ids_for_places(
+        location_names,
+        terminal_type=Terminal.TYPE_COMMODITY,
+        available_only=True,
+    )
 
 
 def _persistent_blocked_ids(helper) -> list[int]:

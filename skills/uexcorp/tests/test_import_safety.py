@@ -1393,15 +1393,23 @@ class LocationFilterTest(_SqliteCase):
             """
             INSERT INTO terminal (
                 id, name, type, is_available,
+                id_star_system, id_planet,
                 star_system_name, planet_name, orbit_name, moon_name,
                 space_station_name, outpost_name, city_name
             ) VALUES
-                (?, 'Checkmate Admin', 'commodity', 1, 'Pyro', NULL, 'Checkmate', NULL, 'Checkmate', NULL, NULL),
-                (?, 'Lorville TDD', 'commodity', 1, 'Stanton', 'Hurston', NULL, NULL, NULL, NULL, 'Lorville'),
-                (?, 'Area18 TDD', 'commodity', 1, 'Stanton', 'ArcCorp', NULL, NULL, NULL, NULL, 'Area18'),
-                (?, 'Orbituary Admin', 'commodity', 1, 'Nyx', NULL, 'Orbituary', NULL, 'Orbituary', NULL, NULL)
+                (?, 'Checkmate Admin', 'commodity', 1, 64, NULL, 'Pyro', NULL, 'Checkmate', NULL, 'Checkmate', NULL, NULL),
+                (?, 'Lorville TDD', 'commodity', 1, 68, 2, 'Stanton', 'Hurston', NULL, NULL, NULL, NULL, 'Lorville'),
+                (?, 'Area18 TDD', 'commodity', 1, 68, 4, 'Stanton', 'ArcCorp', NULL, NULL, NULL, NULL, 'Area18'),
+                (?, 'Orbituary Admin', 'commodity', 1, 55, NULL, 'Nyx', NULL, 'Orbituary', NULL, 'Orbituary', NULL, NULL)
             """,
             (PYRO, HURSTON, ARCCORP, NYX),
+        )
+        self._db.execute(
+            """
+            INSERT INTO planet (id, name, is_available) VALUES
+                (2, 'Hurston', 1),
+                (4, 'ArcCorp', 1)
+            """
         )
         self._db.execute(
             """

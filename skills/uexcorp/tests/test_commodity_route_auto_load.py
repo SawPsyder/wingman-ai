@@ -136,14 +136,26 @@ class CommodityRouteAutoLoadFilterTest(unittest.TestCase):
     def _seed(self) -> None:
         self._db.execute(
             """
-            INSERT INTO terminal (id, name, type, is_available, is_auto_load, city_name, outpost_name)
+            INSERT INTO city (id, name, is_available) VALUES (1, 'Auto City', 1)
+            """
+        )
+        self._db.execute(
+            """
+            INSERT INTO outpost (id, name, is_available) VALUES (2, 'Manual Outpost', 1)
+            """
+        )
+        self._db.execute(
+            """
+            INSERT INTO terminal (
+                id, name, type, is_available, is_auto_load, id_city, id_outpost, city_name, outpost_name
+            )
             VALUES
-                (?, 'Auto City TDD', 'commodity', 1, 1, 'Auto City', NULL),
-                (?, 'Auto Station TDD', 'commodity', 1, 1, NULL, NULL),
-                (?, 'Manual Outpost TDD', 'commodity', 1, 0, NULL, 'Manual Outpost'),
-                (?, 'Manual Pad TDD', 'commodity', 1, 0, NULL, NULL),
-                (?, 'Auto Fuel', 'fuel', 1, 1, NULL, NULL),
-                (?, 'Auto Unavailable TDD', 'commodity', 0, 1, NULL, NULL)
+                (?, 'Auto City TDD', 'commodity', 1, 1, 1, NULL, 'Auto City', NULL),
+                (?, 'Auto Station TDD', 'commodity', 1, 1, NULL, NULL, NULL, NULL),
+                (?, 'Manual Outpost TDD', 'commodity', 1, 0, NULL, 2, NULL, 'Manual Outpost'),
+                (?, 'Manual Pad TDD', 'commodity', 1, 0, NULL, NULL, NULL, NULL),
+                (?, 'Auto Fuel', 'fuel', 1, 1, NULL, NULL, NULL, NULL),
+                (?, 'Auto Unavailable TDD', 'commodity', 0, 1, NULL, NULL, NULL, NULL)
             """,
             (AUTO_CITY, AUTO_STATION, MANUAL_OUTPOST, MANUAL_PAD, AUTO_FUEL, AUTO_UNAVAILABLE),
         )

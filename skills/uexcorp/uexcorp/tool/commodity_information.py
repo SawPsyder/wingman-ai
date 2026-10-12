@@ -51,17 +51,23 @@ class CommodityInformation(Tool):
                 commodity_data_access.add_filter_by_is_illegal(not filter_is_legal)
 
             if filter_location_whitelist is not None or filter_location_blacklist is not None:
-                terminal_data_access = TerminalDataAccess()
-                terminal_data_access.add_filter_by_type(Terminal.TYPE_COMMODITY)
-                # terminal_data_access.add_filter_by_is_available(True)
+                from skills.uexcorp.uexcorp.tool.commodity_route import terminal_ids_for_places
 
+                # Availability stays unfiltered here, matching the previous lookup.
                 if filter_location_whitelist is not None:
-                    terminal_data_access.add_filter_by_location_name_whitelist(filter_location_whitelist)
-
-                if filter_location_blacklist is not None:
-                    terminal_data_access.add_filter_by_location_name_blacklist(filter_location_blacklist)
-
-                matched_ids = [terminal.get_id() for terminal in terminal_data_access.load()]
+                    matched_ids = terminal_ids_for_places(
+                        filter_location_whitelist,
+                        terminal_type=Terminal.TYPE_COMMODITY,
+                    )
+                else:
+                    excluded = set(terminal_ids_for_places(
+                        filter_location_blacklist,
+                        terminal_type=Terminal.TYPE_COMMODITY,
+                    ))
+                    every = TerminalDataAccess().add_filter_by_type(Terminal.TYPE_COMMODITY).load()
+                    matched_ids = [
+                        terminal.get_id() for terminal in every if terminal.get_id() not in excluded
+                    ]
                 from skills.uexcorp.uexcorp.tool.commodity_route import _persistent_blocked_ids
 
                 blocked_ids = set(_persistent_blocked_ids(helper))

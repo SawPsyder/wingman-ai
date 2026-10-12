@@ -21,7 +21,6 @@ class ItemInformation(Tool):
     ) -> (str, str):
         from skills.uexcorp.uexcorp.data_access.item_data_acceess import ItemDataAccess
         from skills.uexcorp.uexcorp.data_access.category_data_access import CategoryDataAccess
-        from skills.uexcorp.uexcorp.data_access.terminal_data_access import TerminalDataAccess
         from skills.uexcorp.uexcorp.data_access.item_price_data_access import ItemPriceDataAccess
         from skills.uexcorp.uexcorp.data_access.company_data_access import CompanyDataAccess
         from skills.uexcorp.uexcorp.data_access.item_attribute_data_access import ItemAttributeDataAccess
@@ -57,18 +56,20 @@ class ItemInformation(Tool):
                 item_data_access.add_filter_by_id_category([category.get_id() for category in categories])
 
             if filter_buy_location:
-                terminal_data_access = TerminalDataAccess()
-                terminal_data_access.add_filter_by_location_name_whitelist(filter_buy_location)
-                terminal_data_access.add_filter_by_type(Terminal.TYPE_ITEM)
-                terminals = terminal_data_access.load(debug=True)
-                if not terminals:
+                from skills.uexcorp.uexcorp.tool.commodity_route import terminal_ids_for_places
+
+                buy_ids = terminal_ids_for_places(
+                    filter_buy_location,
+                    terminal_type=Terminal.TYPE_ITEM,
+                )
+                if not buy_ids:
                     helper.get_handler_tool().add_note(
                         f"No terminal matches buy location {', '.join(filter_buy_location)}."
                     )
                     return [], ""
 
                 item_price_data_access = ItemPriceDataAccess()
-                item_price_data_access.add_filter_by_id_terminal([terminal.get_id() for terminal in terminals])
+                item_price_data_access.add_filter_by_id_terminal(buy_ids)
                 item_price_data_access.add_filter_by_price_buy(0, operation=">")
                 item_prices = item_price_data_access.load(debug=True)
                 item_price_item_ids = []
