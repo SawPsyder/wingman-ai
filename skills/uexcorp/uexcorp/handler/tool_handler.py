@@ -91,11 +91,13 @@ class ToolHandler:
 
                     if validated_value is None or validated_value == (None, None):
                         fresh = self._current_notes()[note_count:]
+                        from skills.uexcorp.uexcorp.naming.flags import flags_for
+
                         shop = next(
                             (
                                 note
                                 for note in fresh
-                                if "is a shop" in note and "not a trade terminal" in note
+                                if "shop_hint" in flags_for(note)
                             ),
                             None,
                         )

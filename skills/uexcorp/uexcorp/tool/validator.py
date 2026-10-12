@@ -593,11 +593,9 @@ class Validator:
             return closest_match, None
         # A shop chain is not one branch. Location info and route filters
         # both say so, instead of keeping a System One pick of one terminal.
-        if (
-            options
-            and "is a shop" in options
-            and "not a trade terminal" in options
-        ):
+        from skills.uexcorp.uexcorp.naming.flags import flags_for
+
+        if options and "shop_hint" in flags_for(options):
             return None, options
 
         # Route start, destination, and location blacklist pass for_trading.
