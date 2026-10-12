@@ -7,6 +7,13 @@ def warn(message: str) -> None:
     Printr().print(message, color=LogType.WARNING, server_only=True, source_name="UEX")
 
 
+def debug(message: str) -> None:
+    from api.enums import LogType
+    from services.printr import Printr
+
+    Printr().print(message, color=LogType.SYSTEM, server_only=True, source_name="UEX")
+
+
 def info(message: str) -> None:
     from api.enums import LogType
     from services.printr import Printr

@@ -55,8 +55,15 @@ def _vehicle_records(vehicles) -> list[dict]:
         remainder = vehicle_slug_remainder(slug, short, full)
         if remainder and remainder.casefold() not in {alias.casefold() for alias in aliases}:
             aliases.append(remainder)
-        records.append({"key": full, "name": full, "aliases": aliases, "codes": []})
-    return records
+        getter = getattr(vehicle, "get_id", None)
+        row_id = getter() if callable(getter) else None
+        record = {"key": full, "name": full, "aliases": aliases, "codes": []}
+        if row_id is not None and not isinstance(row_id, bool):
+            record["id"] = row_id
+        records.append(record)
+    from skills.uexcorp.uexcorp.naming.duplicates import collapse_same_name
+
+    return collapse_same_name(records)
 
 
 def _item_records(items) -> list[dict]:

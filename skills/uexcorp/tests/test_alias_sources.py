@@ -72,6 +72,22 @@ def test_moon_alias_is_name_origin_and_not_the_code():
     assert _SCOPE["city"][2] == ("code",)
     assert _SCOPE["system"][2] == ("code",)
 
+def test_a_duplicate_vehicle_name_keeps_the_lower_id(monkeypatch):
+    from skills.uexcorp.uexcorp.naming import duplicates
+    import skills.uexcorp.uexcorp.log as log
+
+    logged = []
+    monkeypatch.setattr(log, "debug", lambda message: logged.append(message))
+    rows = [
+        {"name": "Aegis Sabre Raven EX", "id": 291, "key": "Aegis Sabre Raven EX"},
+        {"name": "Aegis Sabre Raven EX", "id": 290, "key": "Aegis Sabre Raven EX"},
+        {"name": "Other", "id": 1, "key": "Other"},
+    ]
+    kept = duplicates.collapse_same_name(rows)
+    assert [row["id"] for row in kept] == [290, 1]
+    assert logged and "290" in logged[0] and "291" in logged[0]
+
+
 def test_terminal_nickname_is_an_alias_and_its_code_is_not():
     from skills.uexcorp.uexcorp.location_blocklist import _SCOPE
 
