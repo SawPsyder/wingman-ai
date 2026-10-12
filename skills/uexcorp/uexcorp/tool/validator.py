@@ -711,7 +711,11 @@ class Validator:
             if item_attribute.get_attribute_name() not in item_attribute_names:
                 item_attribute_names.append(item_attribute.get_attribute_name())
 
-        closest_match, options = await self.__helper.get_llm().find_closest_match(item_attribute_filter["attribute"], item_attribute_names)
+        from skills.uexcorp.uexcorp.naming.match import match_names
+
+        closest_match, options = await match_names(
+            self.__helper.get_llm(), item_attribute_filter["attribute"], item_attribute_names
+        )
 
         if closest_match:
             return {
