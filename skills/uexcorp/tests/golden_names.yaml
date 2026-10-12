@@ -1,0 +1,1296 @@
+- id: code-LARA
+  kind: commodity
+  pool: catalog
+  query: LARA
+  expect:
+    pick: Laranite
+    method: alias
+    candidates:
+    - Laranite
+    note: null
+- id: code-Lara
+  kind: commodity
+  pool: catalog
+  query: Lara
+  expect:
+    pick: Laranite
+    method: alias
+    candidates:
+    - Laranite
+    note: null
+- id: code-lara
+  kind: commodity
+  pool: catalog
+  query: lara
+  expect:
+    pick: Laranite
+    method: alias
+    candidates:
+    - Laranite
+    note: null
+- id: code-CARA
+  kind: commodity
+  pool: catalog
+  query: CARA
+  expect:
+    pick: Caranite
+    method: alias
+    candidates:
+    - Caranite
+    note: null
+- id: code-Cara
+  kind: commodity
+  pool: catalog
+  query: Cara
+  expect:
+    pick: Caranite
+    method: alias
+    candidates:
+    - Caranite
+    note: null
+- id: code-cara
+  kind: commodity
+  pool: catalog
+  query: cara
+  expect:
+    pick: Caranite
+    method: alias
+    candidates:
+    - Caranite
+    note: null
+- id: code-TRIT
+  kind: commodity
+  pool: catalog
+  query: TRIT
+  expect:
+    pick: Tritium
+    method: alias
+    candidates:
+    - Tritium
+    note: null
+- id: code-Trit
+  kind: commodity
+  pool: catalog
+  query: Trit
+  expect:
+    pick: Tritium
+    method: alias
+    candidates:
+    - Tritium
+    note: null
+- id: code-trit
+  kind: commodity
+  pool: catalog
+  query: trit
+  expect:
+    pick: Tritium
+    method: alias
+    candidates:
+    - Tritium
+    note: null
+- id: code-POTA
+  kind: commodity
+  pool: catalog
+  query: POTA
+  expect:
+    pick: Potassium
+    method: alias
+    candidates:
+    - Potassium
+    note: null
+- id: code-Pota
+  kind: commodity
+  pool: catalog
+  query: Pota
+  expect:
+    pick: Potassium
+    method: alias
+    candidates:
+    - Potassium
+    note: null
+- id: code-pota
+  kind: commodity
+  pool: catalog
+  query: pota
+  expect:
+    pick: Potassium
+    method: alias
+    candidates:
+    - Potassium
+    note: null
+- id: code-IRONO
+  kind: commodity
+  pool: catalog
+  query: IRONO
+  expect:
+    pick: Iron (Ore)
+    method: alias
+    candidates:
+    - Iron (Ore)
+    note: null
+- id: code-Irono
+  kind: commodity
+  pool: catalog
+  query: Irono
+  expect:
+    pick: Iron (Ore)
+    method: alias
+    candidates:
+    - Iron (Ore)
+    note: null
+- id: code-irono
+  kind: commodity
+  pool: catalog
+  query: irono
+  expect:
+    pick: Iron (Ore)
+    method: alias
+    candidates:
+    - Iron (Ore)
+    note: null
+- id: stop-ALUM
+  kind: commodity
+  pool: catalog
+  query: ALUM
+  expect:
+    pick: Aluminum
+    method: alias
+    candidates:
+    - Aluminum
+    note: null
+- id: stop-Alum
+  kind: commodity
+  pool: catalog
+  query: Alum
+  expect:
+    pick: null
+    method: null
+    candidates:
+    - Aluminum
+    note: Aluminum
+- id: stop-alum
+  kind: commodity
+  pool: catalog
+  query: alum
+  expect:
+    pick: null
+    method: null
+    candidates:
+    - Aluminum
+    note: Aluminum
+- id: stop-AMMO
+  kind: commodity
+  pool: catalog
+  query: AMMO
+  expect:
+    pick: Ammonia
+    method: alias
+    candidates:
+    - Ammonia
+    note: null
+- id: stop-Ammo
+  kind: commodity
+  pool: catalog
+  query: Ammo
+  expect:
+    pick: null
+    method: null
+    candidates:
+    - Ammonia
+    note: Ammonia
+- id: stop-ammo
+  kind: commodity
+  pool: catalog
+  query: ammo
+  expect:
+    pick: null
+    method: null
+    candidates:
+    - Ammonia
+    note: Ammonia
+- id: stop-ARGO
+  kind: commodity
+  pool: catalog
+  query: ARGO
+  expect:
+    pick: Argon
+    method: alias
+    candidates:
+    - Argon
+    note: null
+- id: stop-Argo
+  kind: commodity
+  pool: catalog
+  query: Argo
+  expect:
+    pick: null
+    method: null
+    candidates:
+    - Argon
+    note: Argon
+- id: stop-argo
+  kind: commodity
+  pool: catalog
+  query: argo
+  expect:
+    pick: null
+    method: null
+    candidates:
+    - Argon
+    note: Argon
+- id: stop-ARSE
+  kind: commodity
+  pool: catalog
+  query: ARSE
+  expect:
+    pick: null
+    method: null
+    candidates: []
+    note: No approximate matches found, given name too abstract.
+- id: stop-Arse
+  kind: commodity
+  pool: catalog
+  query: Arse
+  expect:
+    pick: null
+    method: null
+    candidates:
+    - Argon
+    - Freeze
+    - Torite
+    note: Argon, Torite, Freeze
+- id: stop-arse
+  kind: commodity
+  pool: catalog
+  query: arse
+  expect:
+    pick: null
+    method: null
+    candidates:
+    - Caranite
+    - Laranite
+    - Freeze
+    - Lycara
+    - Torite
+    note: Laranite, Caranite, Torite
+- id: stop-AUDI
+  kind: commodity
+  pool: catalog
+  query: AUDI
+  expect:
+    pick: null
+    method: null
+    candidates: []
+    note: No approximate matches found, given name too abstract.
+- id: stop-Audi
+  kind: commodity
+  pool: catalog
+  query: Audi
+  expect:
+    pick: null
+    method: null
+    candidates:
+    - Aluminum
+    note: Aluminum
+- id: stop-audi
+  kind: commodity
+  pool: catalog
+  query: audi
+  expect:
+    pick: null
+    method: null
+    candidates:
+    - Hadinite
+    note: Hadinite
+- id: stop-BLUE
+  kind: commodity
+  pool: catalog
+  query: BLUE
+  expect:
+    pick: null
+    method: null
+    candidates: []
+    note: No approximate matches found, given name too abstract.
+- id: stop-Blue
+  kind: commodity
+  pool: catalog
+  query: Blue
+  expect:
+    pick: null
+    method: null
+    candidates: []
+    note: No approximate matches found, given name too abstract.
+- id: stop-blue
+  kind: commodity
+  pool: catalog
+  query: blue
+  expect:
+    pick: null
+    method: null
+    candidates: []
+    note: No approximate matches found, given name too abstract.
+- id: stop-CARP
+  kind: commodity
+  pool: catalog
+  query: CARP
+  expect:
+    pick: null
+    method: null
+    candidates: []
+    note: No approximate matches found, given name too abstract.
+- id: stop-Carp
+  kind: commodity
+  pool: catalog
+  query: Carp
+  expect:
+    pick: null
+    method: null
+    candidates:
+    - Caranite
+    - Lycara
+    note: Caranite, Lycara
+- id: stop-carp
+  kind: commodity
+  pool: catalog
+  query: carp
+  expect:
+    pick: null
+    method: null
+    candidates:
+    - Lycara
+    note: Lycara
+- id: stop-COIL
+  kind: commodity
+  pool: catalog
+  query: COIL
+  expect:
+    pick: null
+    method: null
+    candidates: []
+    note: No approximate matches found, given name too abstract.
+- id: stop-Coil
+  kind: commodity
+  pool: catalog
+  query: Coil
+  expect:
+    pick: null
+    method: null
+    candidates:
+    - Gold
+    - Torite
+    note: Gold, Torite
+- id: stop-coil
+  kind: commodity
+  pool: catalog
+  query: coil
+  expect:
+    pick: null
+    method: null
+    candidates:
+    - Gold
+    - Torite
+    note: Gold, Torite
+- id: stop-DIAL
+  kind: commodity
+  pool: catalog
+  query: DIAL
+  expect:
+    pick: null
+    method: null
+    candidates: []
+    note: No approximate matches found, given name too abstract.
+- id: stop-Dial
+  kind: commodity
+  pool: catalog
+  query: Dial
+  expect:
+    pick: null
+    method: null
+    candidates: []
+    note: No approximate matches found, given name too abstract.
+- id: stop-dial
+  kind: commodity
+  pool: catalog
+  query: dial
+  expect:
+    pick: null
+    method: null
+    candidates: []
+    note: No approximate matches found, given name too abstract.
+- id: stop-FIRE
+  kind: commodity
+  pool: catalog
+  query: FIRE
+  expect:
+    pick: null
+    method: null
+    candidates: []
+    note: No approximate matches found, given name too abstract.
+- id: stop-Fire
+  kind: commodity
+  pool: catalog
+  query: Fire
+  expect:
+    pick: null
+    method: null
+    candidates:
+    - Freeze
+    - Torite
+    note: Freeze, Torite
+- id: stop-fire
+  kind: commodity
+  pool: catalog
+  query: fire
+  expect:
+    pick: null
+    method: null
+    candidates:
+    - Freeze
+    - Torite
+    note: Torite, Freeze
+- id: stop-FOAM
+  kind: commodity
+  pool: catalog
+  query: FOAM
+  expect:
+    pick: Thermalfoam
+    method: alias
+    candidates:
+    - Thermalfoam
+    note: null
+- id: stop-Foam
+  kind: commodity
+  pool: catalog
+  query: Foam
+  expect:
+    pick: null
+    method: null
+    candidates:
+    - Thermalfoam
+    note: Thermalfoam
+- id: stop-foam
+  kind: commodity
+  pool: catalog
+  query: foam
+  expect:
+    pick: null
+    method: null
+    candidates:
+    - Thermalfoam
+    note: Thermalfoam
+- id: stop-FREE
+  kind: commodity
+  pool: catalog
+  query: FREE
+  expect:
+    pick: Freeze
+    method: alias
+    candidates:
+    - Freeze
+    note: null
+- id: stop-Free
+  kind: commodity
+  pool: catalog
+  query: Free
+  expect:
+    pick: null
+    method: null
+    candidates:
+    - Freeze
+    note: Freeze
+- id: stop-free
+  kind: commodity
+  pool: catalog
+  query: free
+  expect:
+    pick: null
+    method: null
+    candidates:
+    - Freeze
+    note: Freeze
+- id: stop-JUMP
+  kind: commodity
+  pool: catalog
+  query: JUMP
+  expect:
+    pick: null
+    method: null
+    candidates: []
+    note: No approximate matches found, given name too abstract.
+- id: stop-Jump
+  kind: commodity
+  pool: catalog
+  query: Jump
+  expect:
+    pick: null
+    method: null
+    candidates: []
+    note: No approximate matches found, given name too abstract.
+- id: stop-jump
+  kind: commodity
+  pool: catalog
+  query: jump
+  expect:
+    pick: null
+    method: null
+    candidates: []
+    note: No approximate matches found, given name too abstract.
+- id: stop-LAST
+  kind: commodity
+  pool: catalog
+  query: LAST
+  expect:
+    pick: null
+    method: null
+    candidates: []
+    note: No approximate matches found, given name too abstract.
+- id: stop-Last
+  kind: commodity
+  pool: catalog
+  query: Last
+  expect:
+    pick: null
+    method: null
+    candidates:
+    - Laranite
+    - Lycara
+    note: Laranite, Lycara
+- id: stop-last
+  kind: commodity
+  pool: catalog
+  query: last
+  expect:
+    pick: null
+    method: null
+    candidates: []
+    note: No approximate matches found, given name too abstract.
+- id: stop-MERC
+  kind: commodity
+  pool: catalog
+  query: MERC
+  expect:
+    pick: null
+    method: null
+    candidates: []
+    note: No approximate matches found, given name too abstract.
+- id: stop-Merc
+  kind: commodity
+  pool: catalog
+  query: Merc
+  expect:
+    pick: null
+    method: null
+    candidates: []
+    note: No approximate matches found, given name too abstract.
+- id: stop-merc
+  kind: commodity
+  pool: catalog
+  query: merc
+  expect:
+    pick: null
+    method: null
+    candidates: []
+    note: No approximate matches found, given name too abstract.
+- id: stop-METH
+  kind: commodity
+  pool: catalog
+  query: METH
+  expect:
+    pick: null
+    method: null
+    candidates: []
+    note: No approximate matches found, given name too abstract.
+- id: stop-Meth
+  kind: commodity
+  pool: catalog
+  query: Meth
+  expect:
+    pick: null
+    method: null
+    candidates: []
+    note: No approximate matches found, given name too abstract.
+- id: stop-meth
+  kind: commodity
+  pool: catalog
+  query: meth
+  expect:
+    pick: null
+    method: null
+    candidates: []
+    note: No approximate matches found, given name too abstract.
+- id: stop-PART
+  kind: commodity
+  pool: catalog
+  query: PART
+  expect:
+    pick: null
+    method: null
+    candidates: []
+    note: No approximate matches found, given name too abstract.
+- id: stop-Part
+  kind: commodity
+  pool: catalog
+  query: Part
+  expect:
+    pick: null
+    method: null
+    candidates:
+    - Caranite
+    - Laranite
+    - Prota
+    - Lycara
+    - Torite
+    note: Prota, Laranite, Caranite
+- id: stop-part
+  kind: commodity
+  pool: catalog
+  query: part
+  expect:
+    pick: null
+    method: null
+    candidates:
+    - Caranite
+    - Laranite
+    - Lycara
+    - Torite
+    - Prota
+    note: Laranite, Caranite, Prota
+- id: stop-PITA
+  kind: commodity
+  pool: catalog
+  query: PITA
+  expect:
+    pick: null
+    method: null
+    candidates: []
+    note: No approximate matches found, given name too abstract.
+- id: stop-Pita
+  kind: commodity
+  pool: catalog
+  query: Pita
+  expect:
+    pick: null
+    method: null
+    candidates:
+    - Prota
+    - Potassium
+    - Torite
+    note: Prota, Potassium, Torite
+- id: stop-pita
+  kind: commodity
+  pool: catalog
+  query: pita
+  expect:
+    pick: null
+    method: null
+    candidates:
+    - Prota
+    - Torite
+    note: Prota, Torite
+- id: stop-SARI
+  kind: commodity
+  pool: catalog
+  query: SARI
+  expect:
+    pick: null
+    method: null
+    candidates: []
+    note: No approximate matches found, given name too abstract.
+- id: stop-Sari
+  kind: commodity
+  pool: catalog
+  query: Sari
+  expect:
+    pick: null
+    method: null
+    candidates:
+    - Caranite
+    - Laranite
+    - Lycara
+    - Torite
+    note: Laranite, Caranite, Torite
+- id: stop-sari
+  kind: commodity
+  pool: catalog
+  query: sari
+  expect:
+    pick: null
+    method: null
+    candidates:
+    - Caranite
+    - Laranite
+    - Lycara
+    - Torite
+    note: Laranite, Caranite, Torite
+- id: stop-TELL
+  kind: commodity
+  pool: catalog
+  query: TELL
+  expect:
+    pick: null
+    method: null
+    candidates: []
+    note: No approximate matches found, given name too abstract.
+- id: stop-Tell
+  kind: commodity
+  pool: catalog
+  query: Tell
+  expect:
+    pick: null
+    method: null
+    candidates:
+    - Thermalfoam
+    - Torite
+    note: Torite, Thermalfoam
+- id: stop-tell
+  kind: commodity
+  pool: catalog
+  query: tell
+  expect:
+    pick: null
+    method: null
+    candidates:
+    - Torite
+    note: Torite
+- id: stop-THRU
+  kind: commodity
+  pool: catalog
+  query: THRU
+  expect:
+    pick: null
+    method: null
+    candidates: []
+    note: No approximate matches found, given name too abstract.
+- id: stop-Thru
+  kind: commodity
+  pool: catalog
+  query: Thru
+  expect:
+    pick: null
+    method: null
+    candidates:
+    - Tritium
+    - Thermalfoam
+    - Torite
+    note: Tritium, Torite, Thermalfoam
+- id: stop-thru
+  kind: commodity
+  pool: catalog
+  query: thru
+  expect:
+    pick: null
+    method: null
+    candidates: []
+    note: No approximate matches found, given name too abstract.
+- id: name-Ice
+  kind: commodity
+  pool: catalog
+  query: Ice
+  expect:
+    pick: null
+    method: null
+    candidates:
+    - Ice (Raw)
+    - Pressurized Ice
+    note: Ice (Raw), Pressurized Ice
+- id: name-Ice (Raw)
+  kind: commodity
+  pool: catalog
+  query: Ice (Raw)
+  expect:
+    pick: Ice (Raw)
+    method: exact
+    candidates:
+    - Ice (Raw)
+    note: null
+- id: name-Pressurized Ice
+  kind: commodity
+  pool: catalog
+  query: Pressurized Ice
+  expect:
+    pick: Pressurized Ice
+    method: exact
+    candidates:
+    - Pressurized Ice
+    note: null
+- id: name-Hadinite
+  kind: commodity
+  pool: catalog
+  query: Hadinite
+  expect:
+    pick: Hadinite
+    method: exact
+    candidates:
+    - Hadinite
+    note: null
+- id: name-Quantanium
+  kind: commodity
+  pool: catalog
+  query: Quantanium
+  expect:
+    pick: Quantainium
+    method: dumb
+    candidates:
+    - Quantainium
+    - Quantainium (Raw)
+    - Potassium
+    - Tritium
+    - Caranite
+    - Laranite
+    note: null
+- id: name-Quantainium
+  kind: commodity
+  pool: catalog
+  query: Quantainium
+  expect:
+    pick: Quantainium
+    method: exact
+    candidates:
+    - Quantainium
+    note: null
+- id: name-Laranit
+  kind: commodity
+  pool: catalog
+  query: Laranit
+  expect:
+    pick: Laranite
+    method: dumb
+    candidates:
+    - Laranite
+    - Caranite
+    - Laranite (Raw)
+    - Lycara
+    - Caranite (Raw)
+    - Hadinite
+    - Torite
+    - Tritium
+    note: null
+- id: name-GOLD
+  kind: commodity
+  pool: catalog
+  query: GOLD
+  expect:
+    pick: Gold
+    method: exact
+    candidates:
+    - Gold
+    note: null
+- id: name-Gold
+  kind: commodity
+  pool: catalog
+  query: Gold
+  expect:
+    pick: Gold
+    method: exact
+    candidates:
+    - Gold
+    note: null
+- id: name-gold
+  kind: commodity
+  pool: catalog
+  query: gold
+  expect:
+    pick: Gold
+    method: exact
+    candidates:
+    - Gold
+    note: null
+- id: name-Gold (Ore)
+  kind: commodity
+  pool: catalog
+  query: Gold (Ore)
+  expect:
+    pick: Gold (Ore)
+    method: exact
+    candidates:
+    - Gold (Ore)
+    note: null
+- id: vehicle-Freelancer Max
+  kind: vehicle
+  pool: vehicles
+  query: Freelancer Max
+  expect:
+    pick: MISC Freelancer MAX
+    method: dumb
+    candidates:
+    - MISC Freelancer MAX
+    - MISC Freelancer MIS
+    - MISC Freelancer
+    - MISC Freelancer DUR
+    - MISC Starlancer MAX
+    - MISC Starlancer BLD
+    - MISC Starlancer TAC
+    - Tumbril Ranger CV
+    - Tumbril Ranger RC
+    - Tumbril Ranger TR
+    note: null
+- id: vehicle-Mole
+  kind: vehicle
+  pool: vehicles
+  query: Mole
+  expect:
+    pick: null
+    method: null
+    candidates:
+    - Drake Golem
+    - Mirai Pulse
+    - Argo MOLE
+    - Argo MOLE Talus Edition
+    - Argo MOLE Carbon Edition
+    note: Mirai Pulse, Drake Golem, Argo MOLE
+- id: vehicle-Hornet
+  kind: vehicle
+  pool: vehicles
+  query: Hornet
+  expect:
+    pick: null
+    method: null
+    candidates:
+    - Anvil F7A Hornet Mk I
+    - Anvil F7C Hornet Mk I
+    - MISC Fortune
+    - Anvil F7A Hornet Mk II
+    - Anvil F7C Hornet Mk II
+    - Anvil F7C-M Super Hornet Mk I
+    - Anvil F7C-S Hornet Ghost Mk I
+    - Anvil F7C Hornet Wildfire Mk I
+    - Anvil F7C-M Super Hornet Mk II
+    - Anvil F7C-S Hornet Ghost Mk II
+    - Anvil F7C-R Hornet Tracker Mk I
+    - Anvil F7C-R Hornet Tracker Mk II
+    - Anvil F7C-M Super Hornet Heartseeker Mk I
+    note: MISC Fortune, Anvil F7C Hornet Mk I, Anvil F7A Hornet Mk I
+- id: vehicle-Carrack
+  kind: vehicle
+  pool: vehicles
+  query: Carrack
+  expect:
+    pick: null
+    method: null
+    candidates:
+    - Anvil Carrack
+    - Anvil Carrack Expedition
+    note: Anvil Carrack, Anvil Carrack Expedition
+- id: place-Ruin
+  kind: place
+  pool: places
+  query: Ruin
+  expect:
+    pick: Ruin Station
+    method: prefix
+    candidates:
+    - Ruin Station
+    - Orison
+    note: null
+- id: place-Starlight
+  kind: place
+  pool: places
+  query: Starlight
+  expect:
+    pick: Starlight Service Station
+    method: prefix
+    candidates:
+    - Starlight Service Station
+    - Gaslight
+    note: null
+- id: place-Star
+  kind: place
+  pool: places
+  query: Star
+  expect:
+    pick: null
+    method: null
+    candidates:
+    - Starlight Service Station
+    - Nyx (Star)
+    - Pyro (Star)
+    - Stanton (Star)
+    note: Starlight Service Station, Nyx (Star), Pyro (Star)
+- id: place-Levski station
+  kind: place
+  pool: places
+  query: Levski station
+  expect:
+    pick: Levski
+    method: dumb
+    candidates:
+    - Levski
+    - Ruin Station
+    - Seraphim Station
+    - Checkmate Station
+    - Starlight Service Station
+    note: null
+- id: place-Daymar Station
+  kind: place
+  pool: places
+  query: Daymar Station
+  expect:
+    pick: Daymar
+    method: dumb
+    candidates:
+    - Daymar
+    - Delamar
+    - Ruin Station
+    - Seraphim Station
+    - Checkmate Station
+    note: null
+- id: place-Grim HEX
+  kind: place
+  pool: places
+  query: Grim HEX
+  expect:
+    pick: Green Imperial Housing Exchange
+    method: alias
+    candidates:
+    - Green Imperial Housing Exchange
+    note: null
+- id: place-GrimHEX
+  kind: place
+  pool: places
+  query: GrimHEX
+  expect:
+    pick: Green Imperial Housing Exchange
+    method: dumb
+    candidates:
+    - Green Imperial Housing Exchange
+    note: null
+- id: place-grim hex
+  kind: place
+  pool: places
+  query: grim hex
+  expect:
+    pick: Green Imperial Housing Exchange
+    method: alias
+    candidates:
+    - Green Imperial Housing Exchange
+    note: null
+- id: place-Seraphim
+  kind: place
+  pool: places
+  query: Seraphim
+  expect:
+    pick: Seraphim Station
+    method: alias
+    candidates:
+    - Seraphim Station
+    note: null
+- id: place-Checkmate
+  kind: place
+  pool: places
+  query: Checkmate
+  expect:
+    pick: Checkmate Station
+    method: alias
+    candidates:
+    - Checkmate Station
+    note: null
+- id: place-Baijini
+  kind: place
+  pool: places
+  query: Baijini
+  expect:
+    pick: Baijini Point
+    method: alias
+    candidates:
+    - Baijini Point
+    note: null
+- id: place-Jumptown
+  kind: place
+  pool: places
+  query: Jumptown
+  expect:
+    pick: null
+    method: null
+    candidates:
+    - Jumptown
+    - Jumptown
+    note: Jumptown, Jumptown
+- id: place-Olisar
+  kind: place
+  pool: places
+  query: Olisar
+  expect:
+    pick: null
+    method: null
+    candidates: []
+    note: No approximate matches found, given name too abstract.
+- id: place-Deal
+  kind: place
+  pool: places
+  query: Deal
+  expect:
+    pick: Goner's Deal
+    method: prefix
+    candidates:
+    - Goner's Deal
+    - Devlin Scrap & Salvage
+    note: null
+- id: place-Babbage
+  kind: place
+  pool: places
+  query: Babbage
+  expect:
+    pick: New Babbage
+    method: dumb
+    candidates:
+    - New Babbage
+    - New Babbage Interstellar Spaceport
+    note: null
+- id: place-Mine
+  kind: place
+  pool: places
+  query: Mine
+  expect:
+    pick: Kudre Ore Mine (Closed)
+    method: prefix
+    candidates:
+    - Kudre Ore Mine (Closed)
+    - Miner's Lament
+    - Humboldt Mines
+    - Loveridge Mineral Reserve
+    note: null
+- id: place-Fuel
+  kind: place
+  pool: places
+  query: Fuel
+  expect:
+    pick: Rod's Fuel 'N Supplies
+    method: prefix
+    candidates:
+    - Rod's Fuel 'N Supplies
+    - Fuego
+    - Megumi Refueling
+    note: null
+- id: generic-mine
+  kind: place
+  pool: places
+  query: mine
+  expect:
+    pick: Kudre Ore Mine (Closed)
+    method: prefix
+    candidates:
+    - Kudre Ore Mine (Closed)
+    - Miner's Lament
+    - Humboldt Mines
+    - Loveridge Mineral Reserve
+    note: null
+- id: generic-star
+  kind: place
+  pool: places
+  query: star
+  expect:
+    pick: null
+    method: null
+    candidates:
+    - Starlight Service Station
+    - Nyx (Star)
+    - Pyro (Star)
+    - Stanton (Star)
+    note: Starlight Service Station, Nyx (Star), Pyro (Star)
+- id: generic-station
+  kind: place
+  pool: places
+  query: station
+  expect:
+    pick: null
+    method: null
+    candidates:
+    - Stanton
+    - Ruin Station
+    - Seraphim Station
+    - Checkmate Station
+    - ARC-L4 Faint Glen Station
+    note: Stanton, Ruin Station, Seraphim Station
+- id: generic-outpost
+  kind: place
+  pool: places
+  query: outpost
+  expect:
+    pick: null
+    method: null
+    candidates:
+    - Benson Mining Outpost
+    - Rayari Anvik Research Outpost
+    - Rayari Kaltag Research Outpost
+    - Rayari Deltana Research Outpost
+    - Rayari McGrath Research Outpost
+    note: Benson Mining Outpost, Rayari Anvik Research Outpost, Rayari Kaltag Research
+      Outpost
+- id: generic-port
+  kind: place
+  pool: places
+  query: port
+  expect:
+    pick: Port Tressler
+    method: prefix
+    candidates:
+    - Port Tressler
+    - Teasa Spaceport
+    - August Dunlow Spaceport
+    - Riker Memorial Spaceport
+    - New Babbage Interstellar Spaceport
+    note: null
+- id: generic-gateway
+  kind: place
+  pool: places
+  query: gateway
+  expect:
+    pick: null
+    method: null
+    candidates:
+    - Nyx Gateway (Pyro)
+    - Pyro Gateway (Nyx)
+    - Nyx Gateway (Stanton)
+    - Stanton Gateway (Nyx)
+    - Pyro Gateway (Stanton)
+    note: Nyx Gateway (Pyro), Pyro Gateway (Nyx), Nyx Gateway (Stanton)
+- id: generic-city
+  kind: place
+  pool: places
+  query: city
+  expect:
+    pick: Patch City
+    method: prefix
+    candidates:
+    - Patch City
+    note: null
+- id: generic-depot
+  kind: place
+  pool: places
+  query: depot
+  expect:
+    pick: null
+    method: null
+    candidates:
+    - Prospect Depot
+    - Slowburn Depot
+    - Feo Canyon Depot
+    - Gray Gardens Depot
+    - Security Depot Lyria
+    note: Prospect Depot, Slowburn Depot, Feo Canyon Depot
+- id: generic-hub
+  kind: place
+  pool: places
+  query: hub
+  expect:
+    pick: null
+    method: null
+    candidates:
+    - Shubin Mining Facility SAL-2
+    - Shubin Mining Facility SAL-5
+    - Shubin Mining Facility SCD-1
+    - Shubin Mining Facility SM0-10
+    - Shubin Mining Facility SM0-13
+    note: Shubin Mining Facility SAL-2, Shubin Mining Facility SAL-5, Shubin Mining
+      Facility SCD-1
+- id: adversarial-lorvil
+  kind: place
+  pool: places
+  query: Lorvil
+  expect:
+    pick: Lorville
+    method: dumb
+    candidates:
+    - city:3|Lorville
+    note: null
+    model_calls: 1
