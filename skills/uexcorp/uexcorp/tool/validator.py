@@ -48,14 +48,21 @@ def _vehicle_records(vehicles) -> list[dict]:
 
 
 def _item_records(items) -> list[dict]:
+    from skills.uexcorp.uexcorp.naming.aliases import item_company_alias
+
     records = []
     for item in items:
         name = str(item)
         slug = item.get_slug() if hasattr(item, "get_slug") else None
+        company = item.get_company_name() if hasattr(item, "get_company_name") else None
+        aliases = [str(slug)] if slug else []
+        combined = item_company_alias(company, name)
+        if combined and combined.casefold() not in {alias.casefold() for alias in aliases}:
+            aliases.append(combined)
         records.append({
             "key": name,
             "name": name,
-            "aliases": [str(slug)] if slug else [],
+            "aliases": aliases,
             "codes": [],
         })
     return records
