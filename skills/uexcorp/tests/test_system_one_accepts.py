@@ -1,9 +1,8 @@
-"""System One keeps a correct shortlisted name, except code lookalikes.
+"""System One keeps a correct shortlisted name, except weak code lookalikes.
 
-At 5c789eb a pick that was already on the shortlist was accepted. The
-plausibility guard now applies only to code-shaped queries, and a
-code-shaped pick under a 0.8 casefold score (FOAM to Thermalfoam) still
-stands. LARA, CARA, TRIT, POTA, and IRONO stay off their lookalikes.
+A code-shaped query has to pass the same plausibility check as other model
+picks. FOAM does not become Thermalfoam. LARA, CARA, TRIT, POTA, and IRONO
+stay off their lookalikes.
 """
 
 from __future__ import annotations
@@ -54,7 +53,6 @@ _TYPOS = (
     ("Polaris", "RSI Polaris", "vehicles"),
     ("Agri Supplies", "Agricultural Supplies", "commodities"),
     ("Ore Gold", "Gold (Ore)", "commodities"),
-    ("FOAM", "Thermalfoam", "commodities"),
 )
 
 
@@ -133,8 +131,15 @@ def test_vehicle_nicknames_accept_the_shortlisted_full_name():
         assert nickname in seen, nickname
 
 
+def test_foam_does_not_accept_a_weak_system_one_pick():
+    names = _CORPUS["commodities"]
+    match, oracle = _match("FOAM", names, "Thermalfoam")
+    assert "Thermalfoam" in oracle.offered
+    assert match != "Thermalfoam"
+
+
 def test_typos_accept_the_shortlisted_name():
-    assert len(_TYPOS) == 36
+    assert len(_TYPOS) == 35
     for query, target, corpus in _TYPOS:
         names = _CORPUS[corpus]
         match, oracle = _match(query, names, target)

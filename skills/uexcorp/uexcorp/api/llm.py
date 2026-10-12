@@ -492,19 +492,16 @@ def _collapse_terminal_alias_hits(alias_hits: list[dict], records: list[dict], q
 
 
 def _system_one_pick_ok(query: str, label: str) -> bool:
-    """Plausibility guard for code-shaped queries only.
+    """Plausibility guard for code-shaped queries.
 
     Other queries keep a System One pick that is already on the shortlist,
-    including manufacturer prefixes and word swaps. A code-shaped lookalike
-    such as ``LARA`` to ``Lycara`` still has to pass
-    :func:`_plain_model_pick_ok`. ``FOAM`` to ``Thermalfoam`` stays because
-    its casefold score is under 0.8; the pinned lookalikes sit at 0.8 or above.
+    including manufacturer prefixes and word swaps. A code-shaped query has
+    to pass :func:`_plain_model_pick_ok`. ``FOAM`` to ``Thermalfoam`` does
+    not: the casefold score is 0.533. ``LARA`` to ``Lycara`` stays rejected.
     """
     if not _is_code_shaped(query):
         return True
-    if _plain_model_pick_ok(query, label):
-        return True
-    return _plain_casefold_ratio(label, query) < 0.8
+    return _plain_model_pick_ok(query, label)
 
 
 def _rows_from_options(options: dict[str, str] | None) -> list[dict]:
