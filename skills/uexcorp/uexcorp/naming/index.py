@@ -7,6 +7,31 @@ is also stored under its ``scope:id`` key so two tables can share a number.
 
 from __future__ import annotations
 
+from collections import OrderedDict
+
+# One index per unchanged record list. Building it walks every voice form,
+# and the capture asks the same list thousands of times.
+_INDEX_CACHE: OrderedDict = OrderedDict()
+_INDEX_CACHE_MAX = 16
+
+
+def _record_key(row: dict) -> tuple:
+    aliases = row.get("aliases") or ()
+    codes = row.get("codes") or ()
+    if isinstance(aliases, str):
+        aliases = (aliases,)
+    if isinstance(codes, str):
+        codes = (codes,)
+    return (
+        row.get("key"),
+        row.get("name"),
+        row.get("scope"),
+        row.get("id"),
+        row.get("kind"),
+        tuple(aliases),
+        tuple(codes),
+    )
+
 
 class NameIndex:
     def __init__(self):
@@ -129,9 +154,17 @@ class NameIndex:
 
     @classmethod
     def from_records(cls, records) -> "NameIndex":
-        index = cls()
         if isinstance(records, NameIndex):
             return records
+        key = tuple(_record_key(row) for row in records or [])
+        cached = _INDEX_CACHE.get(key)
+        if cached is not None:
+            _INDEX_CACHE.move_to_end(key)
+            return cached
+        index = cls()
         for row in records or []:
             index.add(row)
+        _INDEX_CACHE[key] = index
+        if len(_INDEX_CACHE) > _INDEX_CACHE_MAX:
+            _INDEX_CACHE.popitem(last=False)
         return index
