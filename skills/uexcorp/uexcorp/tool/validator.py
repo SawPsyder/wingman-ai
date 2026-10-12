@@ -484,7 +484,9 @@ class Validator:
         for star_system in star_systems:
             star_system_names.append(str(star_system))
 
-        closest_match, options = await self.__helper.get_llm().find_closest_match(name, star_system_names)
+        from skills.uexcorp.uexcorp.naming.match import match_names
+
+        closest_match, options = await match_names(self.__helper.get_llm(), name, star_system_names)
         if closest_match:
             return closest_match, None
 
