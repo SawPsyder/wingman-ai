@@ -53,3 +53,12 @@ def test_vehicle_slug_alias_drops_a_four_letter_maker_prefix():
     assert "freelancer-max" in records[0]["aliases"]
     assert "Freelancer MAX" in records[0]["aliases"]
     assert records[0]["name"] == "MISC Freelancer MAX"
+
+
+def test_planet_and_orbit_alias_name_origin_and_not_the_code():
+    from skills.uexcorp.uexcorp.location_blocklist import _SCOPE
+
+    assert _SCOPE["planet"][2] == ("name_origin",)
+    assert _SCOPE["orbit"][2] == ("name_origin",)
+    assert "code" not in _SCOPE["planet"][2]
+    assert "code" not in _SCOPE["orbit"][2]

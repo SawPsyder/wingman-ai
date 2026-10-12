@@ -40,12 +40,12 @@ SCOPES = (
 # scope -> (table, terminal column, alias columns, path name columns, parent id columns)
 _SCOPE = {
     "system": ("star_system", "id_star_system", ("code",), (), {}),
-    "planet": ("planet", "id_planet", ("code",), ("star_system_name",), {"system": "id_star_system"}),
-    "orbit": ("orbit", "id_orbit", ("code",), ("star_system_name",), {"system": "id_star_system"}),
+    "planet": ("planet", "id_planet", ("name_origin",), ("star_system_name",), {"system": "id_star_system"}),
+    "orbit": ("orbit", "id_orbit", ("name_origin",), ("star_system_name",), {"system": "id_star_system"}),
     "moon": (
         "moon",
         "id_moon",
-        ("code",),
+        ("name_origin",),
         ("star_system_name", "planet_name"),
         {"system": "id_star_system", "planet": "id_planet", "orbit": "id_orbit"},
     ),
