@@ -2449,10 +2449,10 @@ class ShortRoutePageTest(_SqliteCase):
 class _OverlapClock:
     """One timeline for overlapping sleeps.
 
-    ``now`` jumps to the soonest wake once every in-flight task is blocked
-    and every worker slot that still has queued work has checked in.
-    A worker that just finished stays runnable when another task is queued,
-    so the jump does not skip a rate-limit slot that worker is about to take.
+    ``now`` jumps to the soonest wake once every in-flight task is blocked.
+    A worker that just finished only holds the clock when the pool queue
+    still has a task for it. Idle workers left over after that queue drains
+    do not freeze the timeline.
     """
 
     def __init__(self):
@@ -2460,7 +2460,8 @@ class _OverlapClock:
         self._cond = threading.Condition()
         self._active = 0
         self._sleepers: dict[int, float] = {}
-        self._handoff: set[int] = set()
+        # Threads that have left a task and not entered the next one.
+        self._between: set[int] = set()
         self._queue = None
         self._target = 0
         self.peak_active = 0
@@ -2495,7 +2496,7 @@ class _OverlapClock:
 
     def enter(self) -> None:
         with self._cond:
-            self._handoff.discard(threading.get_ident())
+            self._between.discard(threading.get_ident())
             self._active += 1
             if self._active > self.peak_active:
                 self.peak_active = self._active
@@ -2504,12 +2505,7 @@ class _OverlapClock:
     def leave(self) -> None:
         with self._cond:
             self._active -= 1
-            ident = threading.get_ident()
-            queued = self._queue is not None and self._queue.qsize() > 0
-            if queued:
-                self._handoff.add(ident)
-            else:
-                self._handoff.discard(ident)
+            self._between.add(threading.get_ident())
             self._advance()
             self._cond.notify_all()
 
@@ -2535,7 +2531,12 @@ class _OverlapClock:
             self._cond.notify_all()
 
     def _busy(self) -> int:
-        return (self._active - len(self._sleepers)) + len(self._handoff)
+        queued = 0 if self._queue is None else self._queue.qsize()
+        # Several workers can finish on the same jumped instant. Only as
+        # many as there are queued tasks are about to run; the rest block
+        # in the pool and must not keep ``now`` from moving.
+        blocking = min(len(self._between), queued)
+        return (self._active - len(self._sleepers)) + blocking
 
     def _advance(self) -> None:
         if self._busy() > 0 or not self._sleepers:
