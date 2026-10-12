@@ -541,11 +541,14 @@ class RouteReproTest(_SqliteCase):
         star, star_note = asyncio.run(resolve_location_name(self._helper, "Star", for_trading=True))
         self.assertIsNone(star)
         star_labels = [part.strip() for part in (star_note or "").split(",")]
-        self.assertGreaterEqual(len(star_labels), 3, star_note)
-        self.assertIn("Starlight Service Station", star_labels[0])
-        self.assertEqual(star_labels[1], "Stanton")
+        # A terminal code is not an alias, so the shortlist is the station and the system.
+        self.assertEqual(
+            star_labels,
+            ["Starlight Service Station (Pyro)", "Stanton"],
+            star_note,
+        )
         self.assertTrue(
-            all(not label.startswith("Shop Terminal") for label in star_labels[:3]),
+            all(not label.startswith("Shop Terminal") for label in star_labels),
             star_note,
         )
         starred, _instant = asyncio.run(
