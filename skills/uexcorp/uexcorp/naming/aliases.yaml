@@ -3,3 +3,4 @@
 - {alias: "Lorvil", target: "city:3", reason: "voice", voice: true}
 - {alias: "Port Tresler", target: "station:23", reason: "voice", voice: true}
 - {alias: "Laranit", target: "commodity:47", reason: "German / STT", voice: true}
+- {alias: "Babbage", target: "city:4", reason: "short form"}

@@ -1123,10 +1123,9 @@
   query: Babbage
   expect:
     pick: New Babbage
-    method: dumb
+    method: alias
     candidates:
     - New Babbage
-    - New Babbage Interstellar Spaceport
     note: null
 - id: place-Mine
   kind: place
