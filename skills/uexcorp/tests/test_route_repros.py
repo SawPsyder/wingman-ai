@@ -333,11 +333,8 @@ class RouteReproTest(_SqliteCase):
                 {"filter_commodity_whitelist": ["Ice"]},
             )
         )
-        self.assertIn(
-            "Pressurized Ice. Note: Ice (Raw) exists but isn't tradable",
-            text,
-        )
-        self.assertNotIn("Pressurized Ice Ice", text)
+        self.assertIn("Ice (Raw) has no buy/sell prices", text)
+        self.assertNotIn("Pressurized Ice", text)
         self.assertNotIn("too abstract", text)
 
     def _seed_shared_nicknames(self) -> None:

@@ -60,6 +60,9 @@ def _records(tradable_only: bool = False) -> list[dict]:
             "codes": [code],
             "is_raw": "(Ore)" in name or "(Raw)" in name,
         })
+    from skills.uexcorp.uexcorp.naming.aliases import add_commodity_base_aliases
+
+    add_commodity_base_aliases(records)
     return records
 
 

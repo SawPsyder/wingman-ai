@@ -139,7 +139,6 @@ class ExactCodeAndSlugTest(_SqliteCase):
             "IRONO": "Iron (Ore)",
             "Irono": "Iron (Ore)",
             "irono": "Iron (Ore)",
-            "iron-ore": "Iron (Ore)",
             "QUAN": "Quantainium",
             "Quan": "Quantainium",
             "quan": "Quantainium",
@@ -160,6 +159,8 @@ class ExactCodeAndSlugTest(_SqliteCase):
                 self.assertNotIn("Did you mean", notes, query)
             if picker is not None:
                 self.assertEqual(picker.decisions, 0)
+        self._llm(None)
+        self.assertIsNone(self._commodity("iron-ore"))
 
     def test_lowercase_everyday_words_do_not_use_the_code_field(self) -> None:
         """Stoplisted codes need ALL CAPS. ``lara`` is not stoplisted."""
@@ -228,14 +229,28 @@ class ExactCodeAndSlugTest(_SqliteCase):
         self.assertNotEqual(_WRONG["gold"], "Gold")
         self.assertNotEqual(_WRONG["lara"], "Laranite")
 
-    def test_ice_suggestions_include_the_raw_variant(self) -> None:
+    def test_parenthetical_base_is_an_alias_only_when_it_is_not_a_name(self) -> None:
+        from skills.uexcorp.uexcorp.naming.aliases import add_commodity_base_aliases
+
+        records = [
+            {"name": "Gold", "aliases": []},
+            {"name": "Gold (Ore)", "aliases": []},
+            {"name": "Ice (Raw)", "aliases": []},
+            {"name": "Pressurized Ice", "aliases": []},
+        ]
+        add_commodity_base_aliases(records)
+        by_name = {row["name"]: row["aliases"] for row in records}
+        self.assertEqual(by_name["Gold (Ore)"], [])
+        self.assertEqual(by_name["Ice (Raw)"], ["Ice"])
+        self.assertEqual(by_name["Pressurized Ice"], [])
+
+    def test_ice_picks_the_raw_variant_and_not_pressurized_ice(self) -> None:
         self._commodities()
         self._llm(None)
         self._helper.get_handler_tool().notes.clear()
-        self.assertIsNone(self._commodity("Ice"))
+        self.assertEqual(self._commodity("Ice"), "Ice (Raw)")
         notes = " ".join(self._helper.get_handler_tool().notes)
-        self.assertIn("Ice (Raw)", notes)
-        self.assertIn("Did you mean", notes)
+        self.assertNotIn("Pressurized Ice", notes)
 
         self._helper.get_handler_tool().notes.clear()
         self.assertIsNone(self._commodity("Ore"))

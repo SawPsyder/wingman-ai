@@ -787,12 +787,11 @@
   pool: catalog
   query: Ice
   expect:
-    pick: null
-    method: null
+    pick: Ice (Raw)
+    method: alias
     candidates:
     - Ice (Raw)
-    - Pressurized Ice
-    note: Ice (Raw), Pressurized Ice
+    note: null
 - id: name-Ice (Raw)
   kind: commodity
   pool: catalog

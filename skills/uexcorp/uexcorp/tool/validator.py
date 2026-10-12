@@ -12,20 +12,22 @@ _NO_PLACE_MATCH = "No approximate matches found, given name too abstract."
 
 
 def _commodity_records(commodities) -> list[dict]:
-    """Names, plus code and slug aliases, for the shared exact step."""
+    """Names and codes. A parenthetical base is an alias when it is not a name."""
     records = []
     for commodity in commodities:
         name = str(commodity)
         code = commodity.get_code() if hasattr(commodity, "get_code") else None
-        slug = commodity.get_slug() if hasattr(commodity, "get_slug") else None
         raw = bool(commodity.get_is_raw()) if hasattr(commodity, "get_is_raw") else False
         records.append({
             "key": name,
             "name": name,
-            "aliases": [str(slug)] if slug else [],
+            "aliases": [],
             "codes": [str(code)] if code else [],
             "is_raw": raw or "(Ore)" in name or "(Raw)" in name,
         })
+    from skills.uexcorp.uexcorp.naming.aliases import add_commodity_base_aliases
+
+    add_commodity_base_aliases(records)
     return records
 
 
