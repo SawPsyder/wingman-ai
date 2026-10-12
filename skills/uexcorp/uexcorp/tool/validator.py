@@ -32,7 +32,9 @@ def _commodity_records(commodities) -> list[dict]:
 
 
 def _vehicle_records(vehicles) -> list[dict]:
-    """Full names, plus the short name and slug as aliases."""
+    """Full names, plus the short name, slug, and slug without the maker prefix."""
+    from skills.uexcorp.uexcorp.naming.aliases import vehicle_slug_remainder
+
     records = []
     for vehicle in vehicles:
         full = str(vehicle)
@@ -43,6 +45,9 @@ def _vehicle_records(vehicles) -> list[dict]:
         slug = vehicle.get_slug() if hasattr(vehicle, "get_slug") else None
         if slug:
             aliases.append(str(slug))
+        remainder = vehicle_slug_remainder(slug, short, full)
+        if remainder and remainder.casefold() not in {alias.casefold() for alias in aliases}:
+            aliases.append(remainder)
         records.append({"key": full, "name": full, "aliases": aliases, "codes": []})
     return records
 

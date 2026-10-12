@@ -1,7 +1,7 @@
 """Alias strings added on top of the stored name."""
 
-from skills.uexcorp.uexcorp.naming.aliases import item_company_alias
-from skills.uexcorp.uexcorp.tool.validator import _item_records
+from skills.uexcorp.uexcorp.naming.aliases import item_company_alias, vehicle_slug_remainder
+from skills.uexcorp.uexcorp.tool.validator import _item_records, _vehicle_records
 
 
 class _Item:
@@ -27,3 +27,29 @@ def test_item_alias_is_company_plus_name_not_the_company_alone():
     records = _item_records([_Item("P4-AR", "p4-ar", "Behring")])
     assert records[0]["aliases"] == ["p4-ar", "Behring P4-AR"]
     assert "Behring" not in records[0]["aliases"]
+
+
+class _Vehicle:
+    def __init__(self, short, full, slug):
+        self._short = short
+        self._full = full
+        self._slug = slug
+
+    def __str__(self):
+        return self._full
+
+    def get_name(self):
+        return self._short
+
+    def get_slug(self):
+        return self._slug
+
+
+def test_vehicle_slug_alias_drops_a_four_letter_maker_prefix():
+    assert vehicle_slug_remainder("orig-100i", "100i", "Origin 100i") is None
+    assert vehicle_slug_remainder("misc-freelancer-max", "Freelancer MAX", "MISC Freelancer MAX") == "freelancer-max"
+    assert vehicle_slug_remainder("n-100i", "100i", "Origin 100i") is None
+    records = _vehicle_records([_Vehicle("Freelancer MAX", "MISC Freelancer MAX", "misc-freelancer-max")])
+    assert "freelancer-max" in records[0]["aliases"]
+    assert "Freelancer MAX" in records[0]["aliases"]
+    assert records[0]["name"] == "MISC Freelancer MAX"
