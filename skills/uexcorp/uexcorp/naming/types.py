@@ -6,6 +6,7 @@ receive ``_KeyMatch``, the place ``Resolution``, or a ``(key, note)`` pair.
 
 from __future__ import annotations
 
+import contextvars
 from dataclasses import dataclass
 from enum import Enum
 
@@ -62,12 +63,40 @@ class Resolution:
     score: float | None = None
 
 
+# One tool call may ask System One this many times. Later values ask.
+SYSTEM_ONE_CALL_CAP = 3
+
+_BUDGET: contextvars.ContextVar["ModelBudget | None"] = contextvars.ContextVar(
+    "uex_model_budget",
+    default=None,
+)
+
+
 @dataclass
 class ModelBudget:
-    """Counts System One calls. Steps 1-6 do not cap them."""
+    """Counts System One calls for one tool call."""
 
     calls: int = 0
+    limit: int = SYSTEM_ONE_CALL_CAP
 
     def count(self) -> int:
         self.calls += 1
         return self.calls
+
+    def exhausted(self) -> bool:
+        return self.calls >= self.limit
+
+
+def install_budget(limit: int = SYSTEM_ONE_CALL_CAP):
+    """Start a budget for this tool call. Reset the returned token afterwards."""
+    budget = ModelBudget(limit=limit)
+    return _BUDGET.set(budget), budget
+
+
+def reset_budget(token) -> None:
+    _BUDGET.reset(token)
+
+
+def active_budget() -> ModelBudget | None:
+    """The tool-call budget, or None when the caller did not install one."""
+    return _BUDGET.get()

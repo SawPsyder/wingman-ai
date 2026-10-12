@@ -152,6 +152,11 @@ class Llm:
 
         criteria = {name: None for name in close_matches}
         criteria["none_of_these"] = "none of the names above is what was meant"
+        from skills.uexcorp.uexcorp.naming.types import active_budget
+
+        budget = active_budget()
+        if budget is not None:
+            budget.count()
         try:
             answers = await system_one.decide(
                 state={"heard": search, "context": "Star Citizen, spoken to a ship assistant"},

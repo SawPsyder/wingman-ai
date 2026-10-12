@@ -264,6 +264,13 @@ async def rank(
             return None
 
         if ask_system_one and shown:
+            from skills.uexcorp.uexcorp.naming.types import active_budget
+
+            budget = active_budget()
+            if budget is not None and budget.exhausted():
+                use(shown)
+                result.note = _place_candidate_note(ranked)
+                return result
             by_label = _choice_labels(shown)
             picked = await llm._Llm__system_one_match(
                 text,
@@ -360,6 +367,12 @@ async def rank(
         # a lookalike. The exact step already kept the code's own row.
         code_locked = _query_equals_code(rows, search)
         if ask_system_one and not code_locked:
+            from skills.uexcorp.uexcorp.naming.types import active_budget
+
+            budget = active_budget()
+            if budget is not None and budget.exhausted():
+                result.note = ", ".join(close_labels[:3])
+                return result
             picked = await llm._Llm__system_one_match(
                 search, close_labels, min_confidence=system_one_min_confidence
             )

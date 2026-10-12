@@ -71,94 +71,101 @@ class ToolHandler:
                     else:
                         self.__helper.set_request_while_not_loaded(False)
 
-                self.__helper.start_timer(tool_name)
-                tool = self.__functions[tool_name]()
-                mandatory_fields = tool.get_mandatory_fields()
-                optional_fields = tool.get_optional_fields()
+                from skills.uexcorp.uexcorp.naming.types import install_budget, reset_budget
 
-                valid_parameters = {}
-                invalid_parameters = {}
-                for key, value in parameters.items():
-                    if key not in mandatory_fields and key not in optional_fields:
-                        invalid_parameters[key] = f"unknown parameter '{key}'"
-                        continue
+                budget_token, _budget = install_budget()
+                try:
+                    self.__helper.start_timer(tool_name)
+                    tool = self.__functions[tool_name]()
+                    mandatory_fields = tool.get_mandatory_fields()
+                    optional_fields = tool.get_optional_fields()
 
-                    note_count = len(self._current_notes())
-                    if key in mandatory_fields:
-                        validated_value = await mandatory_fields[key].validate(value)
-                    else:
-                        validated_value = await optional_fields[key].validate(value)
+                    valid_parameters = {}
+                    invalid_parameters = {}
+                    for key, value in parameters.items():
+                        if key not in mandatory_fields and key not in optional_fields:
+                            invalid_parameters[key] = f"unknown parameter '{key}'"
+                            continue
 
-                    if validated_value is None or validated_value == (None, None):
-                        fresh = self._current_notes()[note_count:]
-                        from skills.uexcorp.uexcorp.naming.flags import flags_for
-
-                        shop = next(
-                            (
-                                note
-                                for note in fresh
-                                if "shop_hint" in flags_for(note)
-                            ),
-                            None,
-                        )
-                        if shop:
-                            invalid_parameters[key] = f"'{key}': {shop}"
-                            self._drop_note(shop)
+                        note_count = len(self._current_notes())
+                        if key in mandatory_fields:
+                            validated_value = await mandatory_fields[key].validate(value)
                         else:
-                            invalid_parameters[key] = f"'{key}': value '{value}' not recognized, see notes"
+                            validated_value = await optional_fields[key].validate(value)
+
+                        if validated_value is None or validated_value == (None, None):
+                            fresh = self._current_notes()[note_count:]
+                            from skills.uexcorp.uexcorp.naming.flags import flags_for
+
+                            shop = next(
+                                (
+                                    note
+                                    for note in fresh
+                                    if "shop_hint" in flags_for(note)
+                                ),
+                                None,
+                            )
+                            if shop:
+                                invalid_parameters[key] = f"'{key}': {shop}"
+                                self._drop_note(shop)
+                            else:
+                                invalid_parameters[key] = f"'{key}': value '{value}' not recognized, see notes"
+                        else:
+                            valid_parameters[key] = validated_value
+
+                    missing_parameters = []
+                    for key, value in mandatory_fields.items():
+                        if key not in parameters:
+                            missing_parameters.append(key)
+
+                    if invalid_parameters or missing_parameters:
+                        function_response = f"Parameter errors for '{tool_name}':"
+                        for key, value in invalid_parameters.items():
+                            function_response += f"\n- {value}"
+                        for key in missing_parameters:
+                            function_response += f"\n- '{key}' is mandatory, but missing"
+
+                        notes = self.get_notes(clear=True)
+                        if notes:
+                            function_response += "\n\nNotes:\n-" + '\n-'.join(dict.fromkeys(notes))
+
+                        self.__helper.get_handler_debug().write(function_response)
+                        return function_response, instant_response
+
+                    self.__helper.get_handler_debug().write(
+                        f"Executing '{tool_name}' with validated parameters: {valid_parameters}"
+                    )
+
+                    if inspect.iscoroutinefunction(tool.execute):
+                        function_response, instant_response = await tool.execute(**valid_parameters)
                     else:
-                        valid_parameters[key] = validated_value
+                        function_response, instant_response = tool.execute(**valid_parameters)
 
-                missing_parameters = []
-                for key, value in mandatory_fields.items():
-                    if key not in parameters:
-                        missing_parameters.append(key)
-
-                if invalid_parameters or missing_parameters:
-                    function_response = f"Parameter errors for '{tool_name}':"
-                    for key, value in invalid_parameters.items():
-                        function_response += f"\n- {value}"
-                    for key in missing_parameters:
-                        function_response += f"\n- '{key}' is mandatory, but missing"
+                    function_response_pretty = function_response
+                    try:
+                        import json
+                        function_response_pretty = json.dumps(json.loads(function_response), indent=4)
+                    except Exception:
+                        pass
 
                     notes = self.get_notes(clear=True)
                     if notes:
-                        function_response += "\n\nNotes:\n-" + '\n-'.join(dict.fromkeys(notes))
+                        notes = '\n-'.join(dict.fromkeys(notes))
+                        function_response = str(function_response) + f"\n\nRelay to user:\n-{notes}"
+                        function_response_pretty = str(function_response_pretty) + f"\n\nRelay to user:\n-{notes}"
 
-                    self.__helper.get_handler_debug().write(function_response)
-                    return function_response, instant_response
+                    self.__helper.get_handler_debug().write(
+                        f"Execution of '{tool_name}' took {self.__helper.end_timer(tool_name)} ms."
+                    )
+                    self.__helper.get_handler_debug().write(
+                        f"Response of '{tool_name}': {function_response_pretty}"
+                    )
+                    self.__helper.get_handler_debug().write(
+                        f"Instant response of '{tool_name}': {instant_response if instant_response else 'None'}"
+                    )
 
-                self.__helper.get_handler_debug().write(
-                    f"Executing '{tool_name}' with validated parameters: {valid_parameters}"
-                )
-
-                if inspect.iscoroutinefunction(tool.execute):
-                    function_response, instant_response = await tool.execute(**valid_parameters)
-                else:
-                    function_response, instant_response = tool.execute(**valid_parameters)
-
-                function_response_pretty = function_response
-                try:
-                    import json
-                    function_response_pretty = json.dumps(json.loads(function_response), indent=4)
-                except Exception:
-                    pass
-
-                notes = self.get_notes(clear=True)
-                if notes:
-                    notes = '\n-'.join(dict.fromkeys(notes))
-                    function_response = str(function_response) + f"\n\nRelay to user:\n-{notes}"
-                    function_response_pretty = str(function_response_pretty) + f"\n\nRelay to user:\n-{notes}"
-
-                self.__helper.get_handler_debug().write(
-                    f"Execution of '{tool_name}' took {self.__helper.end_timer(tool_name)} ms."
-                )
-                self.__helper.get_handler_debug().write(
-                    f"Response of '{tool_name}': {function_response_pretty}"
-                )
-                self.__helper.get_handler_debug().write(
-                    f"Instant response of '{tool_name}': {instant_response if instant_response else 'None'}"
-                )
+                finally:
+                    reset_budget(budget_token)
 
         except Exception as e:
             await self.__helper.get_handler_debug().write_async(
