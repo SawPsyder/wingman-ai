@@ -235,7 +235,7 @@ class Llm:
         """
         search = strip_type_tag(search)
         scoped = records is not None and any(row.get("scope") for row in records)
-        return await self._rank(
+        found = await self._rank(
             search,
             options,
             descriptions,
@@ -248,6 +248,10 @@ class Llm:
             match_code=match_code,
             allow_whole_word=allow_dumb if allow_whole_word is None else allow_whole_word,
         )
+        # Flags sit beside the note. The note text is unchanged.
+        from skills.uexcorp.uexcorp.naming.flags import flags_for
+        found.flags = flags_for(found.note, search)
+        return found
 
     async def _rank(
         self,

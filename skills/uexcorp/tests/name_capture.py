@@ -14,37 +14,14 @@ import re
 import tempfile
 from pathlib import Path
 
-from skills.uexcorp.uexcorp.api.llm import _CODE_STOPLIST, _strip_scope_words
+from skills.uexcorp.uexcorp.api.llm import _CODE_STOPLIST
+from skills.uexcorp.uexcorp.naming.flags import flags_for
 from skills.uexcorp.tests.test_name_ranker import CASES, CORPORA, _offline_llm, run_case
 from skills.uexcorp.tests.test_read_place_typos import _FIXTURE as _PLACE_FIXTURE
 from skills.uexcorp.tests.test_system_one_accepts import _TYPOS
 
 _CAPTURE_PATH = Path(__file__).with_name("name_capture.json")
 _WORD = re.compile(r"[A-Za-z0-9']+")
-
-
-def flags_for(note: str | None, query: str | None = None) -> list[str]:
-    """Structured facts implied by today's note text and scope-word strip."""
-    text = note or ""
-    flags: list[str] = []
-    if "is a shop" in text and "not a trade terminal" in text:
-        flags.append("shop_hint")
-    if "has no trade terminal" in text:
-        flags.append("no_trade_terminal")
-    if "is sell-only" in text:
-        flags.append("sell_only")
-    if "is buy-only" in text:
-        flags.append("buy_only")
-    if "has no buy/sell prices" in text:
-        flags.append("no_prices")
-    if query:
-        stripped = _strip_scope_words(query)
-        if stripped and stripped.casefold() != query.casefold():
-            flags.append("scope_stripped")
-        token = query.casefold().strip()
-        if token in {"mine", "star", "station", "outpost", "port", "gateway", "city", "depot", "hub"}:
-            flags.append("generic_word")
-    return flags
 
 
 def _place_rows() -> list[dict]:

@@ -46,11 +46,14 @@ _TRADE_SQL = {
 class Resolution:
     """``match`` is set only when a write may proceed (exact, alias, system_one)."""
 
-    def __init__(self, match=None, method=None, candidates=None, note=None):
+    def __init__(self, match=None, method=None, candidates=None, note=None, *, query=None):
+        from skills.uexcorp.uexcorp.naming.flags import flags_for
+
         self.match = match
         self.method = method
         self.candidates = candidates or []
         self.note = note
+        self.flags = flags_for(note, query)
 
 
 def collect_locations(
@@ -171,7 +174,7 @@ async def resolve_location(
     """
     text = strip_type_tag((name or "").strip())
     if not text:
-        return Resolution()
+        return Resolution(query=text)
     pool = rows if rows is not None else collect_locations(
         helper,
         scope=scope,
@@ -187,8 +190,8 @@ async def resolve_location(
         ref_scope, ref_id = ref
         for row in pool:
             if row.get("scope") == ref_scope and _ids_equal(row.get("id"), ref_id):
-                return Resolution(match=row, method="exact", candidates=[row])
-        return Resolution()
+                return Resolution(match=row, method="exact", candidates=[row], query=text)
+        return Resolution(query=text)
     # allow_llm is false for a write: no main model and no dumb match.
     # ask_system_one stays true, so the 0.8 pick still runs. Confirm's noul
     # check is a second System One call and is not affected by allow_llm.
@@ -217,6 +220,7 @@ async def resolve_location(
         method=found.method if match is not None else None,
         candidates=candidates,
         note=found.note,
+        query=text,
     )
 
 
