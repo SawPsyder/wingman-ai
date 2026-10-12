@@ -71,3 +71,9 @@ def test_moon_alias_is_name_origin_and_not_the_code():
     assert "code" not in _SCOPE["moon"][2]
     assert _SCOPE["city"][2] == ("code",)
     assert _SCOPE["system"][2] == ("code",)
+
+def test_terminal_nickname_is_an_alias_and_its_code_is_not():
+    from skills.uexcorp.uexcorp.location_blocklist import _SCOPE
+
+    assert _SCOPE["terminal"][2] == ("nickname",)
+

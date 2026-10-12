@@ -94,7 +94,7 @@ _SCOPE = {
     "terminal": (
         "terminal",
         "id",
-        ("nickname", "code"),
+        ("nickname",),
         ("star_system_name", "planet_name", "space_station_name", "city_name", "moon_name", "outpost_name"),
         {
             "system": "id_star_system",
