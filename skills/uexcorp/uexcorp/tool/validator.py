@@ -74,7 +74,9 @@ async def _closest_record(helper, query: str, records: list[dict]):
         name = str(row.get("name") or "")
         if name and name not in names:
             names.append(name)
-    return await helper.get_llm().find_closest_match(query, names, records=records)
+    from skills.uexcorp.uexcorp.naming.match import match_names
+
+    return await match_names(helper.get_llm(), query, names, records)
 
 
 def _price_sides(helper, commodity_id: int) -> tuple[bool, bool]:
