@@ -53,13 +53,18 @@ def _records(tradable_only: bool = False) -> list[dict]:
     for name, code, tradable in _CATALOG:
         if tradable_only and not tradable:
             continue
-        records.append({
+        record = {
             "key": name,
             "name": name,
             "aliases": [],
             "codes": [code],
             "is_raw": "(Ore)" in name or "(Raw)" in name,
-        })
+        }
+        # The reviewed alias file targets commodity:47, this catalog's Laranite.
+        if name == "Laranite":
+            record["id"] = 47
+            record["kind"] = "commodity"
+        records.append(record)
     from skills.uexcorp.uexcorp.naming.aliases import add_commodity_base_aliases
 
     add_commodity_base_aliases(records)

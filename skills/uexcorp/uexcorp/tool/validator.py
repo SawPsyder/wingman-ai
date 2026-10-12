@@ -18,13 +18,20 @@ def _commodity_records(commodities) -> list[dict]:
         name = str(commodity)
         code = commodity.get_code() if hasattr(commodity, "get_code") else None
         raw = bool(commodity.get_is_raw()) if hasattr(commodity, "get_is_raw") else False
-        records.append({
+        getter = getattr(commodity, "get_id", None)
+        row_id = getter() if callable(getter) else None
+        record = {
             "key": name,
             "name": name,
             "aliases": [],
             "codes": [str(code)] if code else [],
             "is_raw": raw or "(Ore)" in name or "(Raw)" in name,
-        })
+        }
+        # kind, not scope: a scope would switch this pool onto the place profile.
+        if row_id is not None and not isinstance(row_id, bool):
+            record["id"] = row_id
+            record["kind"] = "commodity"
+        records.append(record)
     from skills.uexcorp.uexcorp.naming.aliases import add_commodity_base_aliases
 
     add_commodity_base_aliases(records)

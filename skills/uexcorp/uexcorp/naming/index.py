@@ -44,22 +44,28 @@ class NameIndex:
             token = str(code).casefold()
             if token:
                 self._append(self._code, token, seq)
-        for alias in row.get("aliases") or []:
-            token = str(alias).casefold()
+        from skills.uexcorp.uexcorp.naming.aliases import aliases_for_row
+
+        alias_values = [str(alias) for alias in (row.get("aliases") or []) if str(alias).strip()]
+        for extra in aliases_for_row(row):
+            if extra.casefold() not in {item.casefold() for item in alias_values}:
+                alias_values.append(extra)
+        for alias in alias_values:
+            token = alias.casefold()
             if token:
                 self._append(self._alias, token, seq)
         from skills.uexcorp.uexcorp.naming.normalize import compact, normalize
         from skills.uexcorp.uexcorp.naming.voice import voice_forms
 
         spoken = []
-        for form in [name, *[str(alias) for alias in (row.get("aliases") or [])]]:
+        for form in [name, *alias_values]:
             for extra in voice_forms(form, scope=row.get("scope")):
                 token = extra.casefold()
                 if token in {item.casefold() for item in spoken}:
                     continue
                 spoken.append(extra)
                 self._append(self._voice, token, seq)
-        for form in [name, *[str(alias) for alias in (row.get("aliases") or [])], *spoken]:
+        for form in [name, *alias_values, *spoken]:
             folded = normalize(form)
             if folded:
                 self._append(self._normalized, folded, seq)

@@ -853,16 +853,9 @@
   query: Laranit
   expect:
     pick: Laranite
-    method: dumb
+    method: alias
     candidates:
     - Laranite
-    - Caranite
-    - Laranite (Raw)
-    - Lycara
-    - Caranite (Raw)
-    - Hadinite
-    - Torite
-    - Tritium
     note: null
 - id: name-GOLD
   kind: commodity
@@ -1288,8 +1281,8 @@
   query: Lorvil
   expect:
     pick: Lorville
-    method: dumb
+    method: alias
     candidates:
     - city:3|Lorville
     note: null
-    model_calls: 1
+    model_calls: 0

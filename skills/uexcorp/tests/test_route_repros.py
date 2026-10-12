@@ -1287,7 +1287,6 @@ class RouteReproTest(_SqliteCase):
             config={"for_trading": True},
         )
         expected = {
-            "Laranit": "Laranite",
             "Agricum": "Agricium",
             "Tungstn": "Tungsten",
         }
@@ -1301,6 +1300,12 @@ class RouteReproTest(_SqliteCase):
             self.assertIn(f"Use '{name}' instead of '{query}'", note, query)
             self.assertNotIn("(Raw)", note, query)
             self.assertNotIn("(Ore)", note, query)
+        # Laranit is a reviewed alias of commodity 47, so System One is not asked.
+        picker.calls = 0
+        contexts.clear()
+        self.assertEqual(asyncio.run(validator.validate("Laranit")), "Laranite")
+        self.assertEqual(picker.calls, 0)
+        self.assertFalse(any("instead of" in item for item in contexts))
 
     def test_untradable_typos_keep_the_sell_only_note(self) -> None:
         self._install_llm(None)

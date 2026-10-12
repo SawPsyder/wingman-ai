@@ -21,6 +21,12 @@ _FIXTURE = json.loads(Path(__file__).with_name("read_place_typos.json").read_tex
 # Measured on this frozen set: every intended place is on the shortlist.
 READ_TYPO_CORRECT = 96
 READ_TYPO_WRONG = 0
+# These three are reviewed id aliases, so they never reach System One.
+_ALIAS_PICKS = {
+    "Levsky": "Levski",
+    "Lorvil": "Lorville",
+    "Port Tresler": "Port Tressler",
+}
 
 
 def _rows() -> list[dict]:
@@ -125,6 +131,13 @@ def test_read_typos_follow_system_one_and_ignore_a_wrong_stub():
     for case in cases:
         query = case["query"]
         target = case["target"]
+        if query in _ALIAS_PICKS:
+            assert _resolve(query, None) == _ALIAS_PICKS[query], query
+            missed = _Stub("wrong", target)
+            assert _resolve(query, missed) == target, query
+            assert missed.calls == 0, query
+            correct += 1
+            continue
         stub = _Stub("correct", target)
         assert _resolve(query, stub) == target, query
         correct += 1
@@ -136,7 +149,9 @@ def test_read_typos_follow_system_one_and_ignore_a_wrong_stub():
         assert missed.calls >= 1, query
     assert correct == READ_TYPO_CORRECT
     assert wrong == READ_TYPO_WRONG
-    assert asked == 96
-    # These typos are not exact, alias, or unique whole-word picks.
+    assert asked == 93
+    # The rest are not exact, alias, or unique whole-word picks.
     for case in cases:
+        if case["query"] in _ALIAS_PICKS:
+            continue
         assert _resolve(case["query"], None) is None, case["query"]

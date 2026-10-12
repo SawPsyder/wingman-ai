@@ -77,3 +77,37 @@ def test_terminal_nickname_is_an_alias_and_its_code_is_not():
 
     assert _SCOPE["terminal"][2] == ("nickname",)
 
+
+def test_alias_file_attaches_only_to_the_target_id():
+    from skills.uexcorp.uexcorp.api.llm import _decide_exact
+
+    levski = {"name": "Levski", "key": "city:2", "scope": "city", "id": 2, "aliases": []}
+    other = {"name": "Levski", "key": "station:80", "scope": "station", "id": 80, "aliases": []}
+    found = _decide_exact([levski, other], "Levsky", None, match_code=False)
+    assert found.method == "alias"
+    assert found.key == "city:2"
+    assert _decide_exact([other], "Levsky", None, match_code=False) is None
+    exact = _decide_exact([levski], "Levski", None, match_code=False)
+    assert exact.method == "exact"
+
+    laranite = {
+        "name": "Laranite",
+        "key": "Laranite",
+        "id": 47,
+        "kind": "commodity",
+        "aliases": [],
+        "codes": ["LARA"],
+    }
+    wrong_id = {
+        "name": "Laranite",
+        "key": "Laranite",
+        "id": 99,
+        "kind": "commodity",
+        "aliases": [],
+        "codes": ["LARA"],
+    }
+    picked = _decide_exact([laranite], "Laranit", None, match_code=False)
+    assert picked.method == "alias"
+    assert picked.key == "Laranite"
+    assert _decide_exact([wrong_id], "Laranit", None, match_code=False) is None
+

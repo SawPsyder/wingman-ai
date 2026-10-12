@@ -2,9 +2,14 @@
 
 Each builder adds aliases. It does not remove a stored name. A slug, a
 code, or a company name on its own is not an alias here.
+
+``aliases.yaml`` adds reviewed spellings. A row receives one only when its
+id is the target. A different id with the same name does not.
 """
 
 from __future__ import annotations
+
+from pathlib import Path
 
 
 def parenthetical_base(name: str | None) -> str | None:
@@ -63,3 +68,61 @@ def vehicle_slug_remainder(slug: str | None, short_name: str | None, full_name: 
     if remainder.casefold() in folded:
         return None
     return remainder
+
+
+_OVERRIDE_PATH = Path(__file__).with_name("aliases.yaml")
+_OVERRIDES: dict[str, tuple[str, ...]] | None = None
+
+
+def _load_overrides() -> dict[str, tuple[str, ...]]:
+    """target -> alias spellings. An empty or missing file adds nothing."""
+    global _OVERRIDES
+    if _OVERRIDES is not None:
+        return _OVERRIDES
+    grouped: dict[str, list[str]] = {}
+    if _OVERRIDE_PATH.is_file():
+        import yaml
+
+        loaded = yaml.safe_load(_OVERRIDE_PATH.read_text(encoding="utf-8")) or []
+        for entry in loaded:
+            if not isinstance(entry, dict):
+                continue
+            alias = str(entry.get("alias") or "").strip()
+            target = str(entry.get("target") or "").strip()
+            if not alias or not target or ":" not in target:
+                continue
+            bucket = grouped.setdefault(target, [])
+            if alias.casefold() not in {item.casefold() for item in bucket}:
+                bucket.append(alias)
+    _OVERRIDES = {target: tuple(aliases) for target, aliases in grouped.items()}
+    return _OVERRIDES
+
+
+def _row_targets(row: dict) -> set[str]:
+    """Ids this row may be addressed by. A name is not one of them."""
+    found = set()
+    key = row.get("key")
+    if key is not None and str(key):
+        found.add(str(key))
+    row_id = row.get("id")
+    if row_id is None or isinstance(row_id, bool):
+        return found
+    for label in (row.get("scope"), row.get("kind")):
+        if label:
+            found.add(f"{label}:{row_id}")
+    return found
+
+
+def aliases_for_row(row: dict) -> list[str]:
+    """Spellings from ``aliases.yaml`` whose target is this row's id."""
+    overrides = _load_overrides()
+    found = []
+    seen = set()
+    for target in _row_targets(row):
+        for alias in overrides.get(target, ()):
+            token = alias.casefold()
+            if token in seen:
+                continue
+            seen.add(token)
+            found.append(alias)
+    return found
