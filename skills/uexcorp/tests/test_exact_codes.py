@@ -160,7 +160,8 @@ class ExactCodeAndSlugTest(_SqliteCase):
             if picker is not None:
                 self.assertEqual(picker.decisions, 0)
         self._llm(None)
-        self.assertIsNone(self._commodity("iron-ore"))
+        # The slug is not stored. The hyphen still folds, so this is Iron (Ore).
+        self.assertEqual(self._commodity("iron-ore"), "Iron (Ore)")
 
     def test_lowercase_everyday_words_do_not_use_the_code_field(self) -> None:
         """Stoplisted codes need ALL CAPS. ``lara`` is not stoplisted."""
