@@ -342,28 +342,9 @@ class Llm:
         length cap stay as they were. Cache and context notes still apply
         only to a System One or main-model pick.
         """
-        search = strip_type_tag(search)
-        if not search or search == "None":
-            return None, None
+        from skills.uexcorp.uexcorp.naming.match import match_names
 
-        self.__helper.get_handler_debug().write(f"Searching for closest match for '{search}' in list.")
-
-        checksum = f"{hash(frozenset(lst))}-{hash(search)}"
-        if checksum in self.__cache_search:
-            match = self.__cache_search[checksum]
-            self.__helper.get_handler_debug().write(f"Found closest match for '{search}' in cache: '{match}'")
-            return match, None
-
-        options = {str(item): str(item) for item in lst}
-        found = await self.find_closest_key(search, options, records=records)
-        if found.key:
-            if found.method in ("system_one", "llm"):
-                self.__helper.add_context(
-                    f"Note for function parameters: Use '{found.key}' instead of '{search}'."
-                )
-                self.__cache_search[checksum] = found.key
-            return found.key, None
-        return None, found.note
+        return await match_names(self, search, lst, records)
 
 
 class _KeyMatch:

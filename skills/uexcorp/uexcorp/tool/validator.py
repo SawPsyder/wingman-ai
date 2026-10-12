@@ -459,8 +459,11 @@ class Validator:
 
     async def __validate_vehicle_role(self, name: str) -> (str | None, str | None):
         from skills.uexcorp.uexcorp.model.vehicle import Vehicle
+        from skills.uexcorp.uexcorp.naming.match import match_names
 
-        closest_match, options = await self.__helper.get_llm().find_closest_match(name, list(Vehicle.VEHICLE_ROLES.keys()))
+        closest_match, options = await match_names(
+            self.__helper.get_llm(), name, list(Vehicle.VEHICLE_ROLES.keys())
+        )
         if closest_match:
             return closest_match, None
 
