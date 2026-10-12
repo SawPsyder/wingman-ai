@@ -156,19 +156,22 @@ class _ScriptedSession:
         self.mode = "limit"
         self.urls: list[str] = []
         self.headers: list[dict] = []
+        self._lock = threading.Lock()
 
     def get(self, url, params=None, timeout=None, headers=None, stream=None):
-        self.urls.append(url)
-        self.headers.append(headers or {})
-        if self.mode == "limit":
+        with self._lock:
+            self.urls.append(url)
+            self.headers.append(headers or {})
+            mode = self.mode
+        if mode == "limit":
             return _Response(200, {"status": "requests_limit_reached", "data": []})
-        if self.mode == "forbidden":
+        if mode == "forbidden":
             return _Response(
                 403,
                 "",
                 {"content-type": "text/html", "cf-mitigated": "challenge"},
             )
-        if self.mode == "empty":
+        if mode == "empty":
             return _Response(200, {"status": "ok", "data": []})
         commodity_id = int(parse_qs(urlparse(url).query)["id_commodity"][0])
         return _Response(
@@ -2344,25 +2347,27 @@ class ShortRoutePageTest(_SqliteCase):
                     self.plan = {key: list(counts) for key, counts in plan.items()}
                     self.urls: list[str] = []
                     self._next_id = next_id
+                    self._lock = threading.Lock()
 
                 def get(self, url, params=None, timeout=None, headers=None, stream=None):
-                    self.urls.append(url)
-                    commodity_id = int(parse_qs(urlparse(url).query)["id_commodity"][0])
-                    count = self.plan[commodity_id].pop(0)
-                    rows = []
-                    for _ in range(count):
-                        self._next_id += 1
-                        rows.append(
-                            {
-                                "id": self._next_id,
-                                "id_commodity": commodity_id,
-                                "price_origin": 3000,
-                                "price_destination": 3400,
-                                "scu_origin": 4,
-                                "scu_destination": 8,
-                                "commodity_name": "Commodity",
-                            }
-                        )
+                    with self._lock:
+                        self.urls.append(url)
+                        commodity_id = int(parse_qs(urlparse(url).query)["id_commodity"][0])
+                        count = self.plan[commodity_id].pop(0)
+                        rows = []
+                        for _ in range(count):
+                            self._next_id += 1
+                            rows.append(
+                                {
+                                    "id": self._next_id,
+                                    "id_commodity": commodity_id,
+                                    "price_origin": 3000,
+                                    "price_destination": 3400,
+                                    "scu_origin": 4,
+                                    "scu_destination": 8,
+                                    "commodity_name": "Commodity",
+                                }
+                            )
                     return _Response(200, {"status": "ok", "data": rows})
 
             session = _Pages()
@@ -2395,7 +2400,10 @@ class ShortRoutePageTest(_SqliteCase):
         try:
             imported, urls, warnings = run({45: [10], 46: [10], 44: [40, 40]}, 30000)
             self.assertEqual(imported, 120)
-            self.assertEqual(commodity_ids(urls), [45, 46, 44, 44])
+            self.assertEqual(
+                sorted(commodity_ids(urls)),
+                [44, 44, 45, 46],
+            )
             self.assertEqual(ids_for(44), list(range(1, 101)))
             fresh_45 = ids_for(45)
             fresh_46 = ids_for(46)
@@ -2418,7 +2426,10 @@ class ShortRoutePageTest(_SqliteCase):
             self._db.commit()
             imported, urls, warnings = run({45: [10], 46: [10], 44: [40, 40]}, 40000)
             self.assertEqual(imported, 60)
-            self.assertEqual(commodity_ids(urls), [45, 46, 44, 44])
+            self.assertEqual(
+                sorted(commodity_ids(urls)),
+                [44, 44, 45, 46],
+            )
             accepted_44 = ids_for(44)
             self.assertEqual(len(accepted_44), 40)
             self.assertTrue(all(route_id >= 40000 for route_id in accepted_44))
@@ -2433,6 +2444,547 @@ class ShortRoutePageTest(_SqliteCase):
         finally:
             tradable.tradable_commodity_ids = original_ids
             self._helper.timestamp = NOW
+
+
+class _OverlapClock:
+    """One timeline for overlapping sleeps.
+
+    ``now`` jumps to the soonest wake once every in-flight task is blocked
+    and every worker slot that still has queued work has checked in.
+    A worker that just finished stays runnable when another task is queued,
+    so the jump does not skip a rate-limit slot that worker is about to take.
+    """
+
+    def __init__(self):
+        self.now = 0.0
+        self._cond = threading.Condition()
+        self._active = 0
+        self._sleepers: dict[int, float] = {}
+        self._handoff: set[int] = set()
+        self._queue = None
+        self._target = 0
+        self.peak_active = 0
+        # Closed while the main thread is still submitting tasks. A sleep
+        # before that is a real wait, so one fast worker cannot drain the
+        # queue and advance fake time before the other workers exist.
+        self._gate = threading.Event()
+        self._gate.set()
+        self._expected = 0
+        self._submitted = 0
+
+    def expect(self, tasks: int) -> None:
+        with self._cond:
+            self._expected = tasks
+            self._submitted = 0
+            if tasks > 0:
+                self._gate.clear()
+            else:
+                self._gate.set()
+
+    def note_submit(self) -> None:
+        with self._cond:
+            self._submitted += 1
+            if self._expected and self._submitted >= self._expected:
+                self._gate.set()
+
+    def bind_queue(self, work_queue, workers: int) -> None:
+        with self._cond:
+            self._queue = work_queue
+            self._target = workers
+            self._cond.notify_all()
+
+    def enter(self) -> None:
+        with self._cond:
+            self._handoff.discard(threading.get_ident())
+            self._active += 1
+            if self._active > self.peak_active:
+                self.peak_active = self._active
+            self._cond.notify_all()
+
+    def leave(self) -> None:
+        with self._cond:
+            self._active -= 1
+            ident = threading.get_ident()
+            queued = self._queue is not None and self._queue.qsize() > 0
+            if queued:
+                self._handoff.add(ident)
+            else:
+                self._handoff.discard(ident)
+            self._advance()
+            self._cond.notify_all()
+
+    def monotonic(self) -> float:
+        with self._cond:
+            return self.now
+
+    def sleep(self, seconds: float) -> None:
+        if seconds <= 0:
+            return
+        if not self._gate.is_set():
+            self._gate.wait()
+        ident = threading.get_ident()
+        with self._cond:
+            wake = self.now + float(seconds)
+            self._sleepers[ident] = wake
+            while self.now + 1e-9 < wake:
+                self._advance()
+                if self.now + 1e-9 < wake:
+                    self._cond.wait()
+            self._sleepers.pop(ident, None)
+            self._advance()
+            self._cond.notify_all()
+
+    def _busy(self) -> int:
+        return (self._active - len(self._sleepers)) + len(self._handoff)
+
+    def _advance(self) -> None:
+        if self._busy() > 0 or not self._sleepers:
+            return
+        nxt = min(self._sleepers.values())
+        if nxt > self.now:
+            self.now = nxt
+            self._cond.notify_all()
+
+
+def _peak_starts_per_window(starts: list[float], window: float = 60.0) -> int:
+    times = sorted(starts)
+    peak = 0
+    left = 0
+    for right, moment in enumerate(times):
+        while times[left] <= moment - window:
+            left += 1
+        peak = max(peak, right - left + 1)
+    return peak
+
+
+class ParallelRouteFetchTest(_SqliteCase):
+    """Route pages share the list-fan-out pool. Ten tasks, one throttle."""
+
+    COLD_COMMODITIES = 78
+    COLD_CAPPED = (63, 67, 76)
+    COLD_PLANETS = 11
+    COLD_ORBITS = tuple(range(100, 112))
+    BODY_SECONDS = 1.0
+
+    def _seed_prices(self, commodity_ids: list[int]) -> None:
+        self._db.execute(
+            """
+            INSERT INTO imports (`table`, date_imported, dataset_count, time_taken, last_import_run_id)
+            VALUES
+                ('commodity', ?, 1, 0, 1),
+                ('commodity_price', ?, 1, 0, 1)
+            """,
+            (NOW, NOW),
+        )
+        rows = []
+        price_id = 1
+        for commodity_id in commodity_ids:
+            rows.append(f"({price_id}, {commodity_id}, NULL, 5, 0)")
+            price_id += 1
+            rows.append(f"({price_id}, {commodity_id}, NULL, 0, 9)")
+            price_id += 1
+        self._db.execute(
+            "INSERT INTO commodity_price (id, id_commodity, id_terminal, price_buy, price_sell) "
+            f"VALUES {','.join(rows)}"
+        )
+        self._db.commit()
+
+    def _run_routes(self, session, clock: _OverlapClock, workers: int | None = None, tasks: int | None = None):
+        from skills.uexcorp.uexcorp.api.uex import (
+            ROUTE_FETCH_WORKERS,
+            concurrent_futures_executor,
+        )
+        from skills.uexcorp.uexcorp.handler.import_handler import ImportHandler
+        import skills.uexcorp.uexcorp.api.uex as uex_module
+        import skills.uexcorp.uexcorp.log as log_module
+
+        handler = ImportHandler(self._helper)
+        self._helper.set_import_handler(handler)
+        api = Uex(
+            self._helper,
+            sleeper=clock.sleep,
+            monotonic=clock.monotonic,
+            rng=lambda: 0.0,
+        )
+        api.session = session
+        handler._ImportHandler__api = api
+        original_info = log_module.info
+        original_warn = log_module.warn
+        log_module.info = lambda message: None
+        log_module.warn = lambda message: None
+        original_workers = uex_module.ROUTE_FETCH_WORKERS
+        if workers is not None:
+            uex_module.ROUTE_FETCH_WORKERS = workers
+        if tasks is not None:
+            clock.expect(tasks)
+
+        real_executor = concurrent_futures_executor
+
+        def tracking_executor(max_workers=None):
+            pool = real_executor(max_workers)
+            clock.bind_queue(pool._work_queue, pool._max_workers)
+            submit = pool.submit
+
+            def wrapped(fn, *args, **kwargs):
+                clock.note_submit()
+
+                def run(*fn_args, **fn_kwargs):
+                    clock.enter()
+                    try:
+                        return fn(*fn_args, **fn_kwargs)
+                    finally:
+                        clock.leave()
+
+                return submit(run, *args, **kwargs)
+
+            pool.submit = wrapped
+            return pool
+
+        uex_module.concurrent_futures_executor = tracking_executor
+        try:
+            imported = handler._ImportHandler__import_data_commodity_route()
+        finally:
+            uex_module.concurrent_futures_executor = real_executor
+            uex_module.ROUTE_FETCH_WORKERS = original_workers
+            log_module.info = original_info
+            log_module.warn = original_warn
+        return imported, handler, ROUTE_FETCH_WORKERS
+
+    def _clear_routes(self) -> None:
+        self._db.execute("DELETE FROM commodity_route")
+        self._db.execute("DELETE FROM imports WHERE `table` = ?", ("commodity_route",))
+        self._db.commit()
+
+    def test_executor_default_stays_four_and_routes_ask_for_ten(self) -> None:
+        from skills.uexcorp.uexcorp.api.uex import (
+            MAX_WORKERS,
+            ROUTE_FETCH_WORKERS,
+            concurrent_futures_executor,
+        )
+
+        self.assertEqual(ROUTE_FETCH_WORKERS, 10)
+        default_pool = concurrent_futures_executor()
+        route_pool = concurrent_futures_executor(max_workers=ROUTE_FETCH_WORKERS)
+        try:
+            self.assertEqual(default_pool._max_workers, MAX_WORKERS)
+            self.assertEqual(route_pool._max_workers, 10)
+        finally:
+            default_pool.shutdown(wait=True)
+            route_pool.shutdown(wait=True)
+
+    def test_cold_route_import_overlaps_under_the_quota(self) -> None:
+        """Fake overlap clock. Each GET body is 1.0s. Spacing stays 60/90.
+
+        Before is one worker, the old sequential schedule. After is the
+        ten-worker import. The shape is the measured cold route fan-out:
+        78 tradable commodities, 3 of them capped, 11 planet pages and 12
+        uncovered off-planet orbits each (147 GETs).
+        """
+        from skills.uexcorp.uexcorp.api.route_pages import ROUTE_PAGE_CAP
+        from skills.uexcorp.uexcorp.api.uex import REQUESTS_PER_MINUTE
+
+        commodity_ids = list(range(1, self.COLD_COMMODITIES + 1))
+        self._seed_prices(commodity_ids)
+        planet_values = ",".join(
+            f"({planet_id}, 'Planet {planet_id}', 1)"
+            for planet_id in range(1, self.COLD_PLANETS + 1)
+        )
+        self._db.execute(f"INSERT INTO planet (id, name, is_available) VALUES {planet_values}")
+        orbit_values = ",".join(
+            f"({orbit_id}, 'Station {orbit_id}', 1)" for orbit_id in self.COLD_ORBITS
+        )
+        self._db.execute(f"INSERT INTO orbit (id, name, is_available) VALUES {orbit_values}")
+        terminal_values = ",".join(
+            f"({orbit_id}, 'Pad {orbit_id}', NULL, {orbit_id}, 'commodity', 1)"
+            for orbit_id in self.COLD_ORBITS
+        )
+        self._db.execute(
+            "INSERT INTO terminal (id, name, id_planet, id_orbit, type, is_available) "
+            f"VALUES {terminal_values}"
+        )
+        extra = []
+        price_id = 10000
+        for commodity_id in self.COLD_CAPPED:
+            for orbit_id in self.COLD_ORBITS:
+                extra.append(f"({price_id}, {commodity_id}, {orbit_id}, 5, 0)")
+                price_id += 1
+        self._db.execute(
+            "INSERT INTO commodity_price (id, id_commodity, id_terminal, price_buy, price_sell) "
+            f"VALUES {','.join(extra)}"
+        )
+        self._db.commit()
+
+        capped = set(self.COLD_CAPPED)
+        body = self.BODY_SECONDS
+
+        class _Catalog:
+            def __init__(self, clock: _OverlapClock):
+                self.clock = clock
+                self.urls: list[str] = []
+                self.starts: list[float] = []
+                self.statuses: list[int] = []
+                self.inflight = 0
+                self.peak_inflight = 0
+                self._next_id = 0
+                self._lock = threading.Lock()
+
+            def _row(self, commodity_id: int) -> dict:
+                with self._lock:
+                    self._next_id += 1
+                    route_id = self._next_id
+                return {
+                    "id": route_id,
+                    "id_commodity": commodity_id,
+                    "price_origin": 5,
+                    "price_destination": 9,
+                    "id_orbit_origin": 1,
+                }
+
+            def get(self, url, params=None, timeout=None, headers=None, stream=None):
+                started = self.clock.monotonic()
+                with self._lock:
+                    self.urls.append(url)
+                    self.starts.append(started)
+                    self.statuses.append(200)
+                    self.inflight += 1
+                    if self.inflight > self.peak_inflight:
+                        self.peak_inflight = self.inflight
+                try:
+                    self.clock.sleep(body)
+                    query = parse_qs(urlparse(url).query)
+                    commodity_id = int(query["id_commodity"][0])
+                    if "id_planet_origin" in query or "id_orbit_origin" in query:
+                        rows = [self._row(commodity_id)]
+                    elif commodity_id in capped:
+                        rows = [self._row(commodity_id) for _ in range(ROUTE_PAGE_CAP)]
+                    else:
+                        rows = [self._row(commodity_id)]
+                    return _Response(200, {"status": "ok", "data": rows})
+                finally:
+                    with self._lock:
+                        self.inflight -= 1
+
+        def measure(workers: int):
+            clock = _OverlapClock()
+            session = _Catalog(clock)
+            imported, handler, _workers = self._run_routes(
+                session, clock, workers, tasks=self.COLD_COMMODITIES
+            )
+            self.assertNotEqual(imported, handler.IMPORT_FAILED)
+            self.assertEqual(len(session.urls), 147)
+            self.assertEqual(session.statuses.count(429), 0)
+            return (
+                clock.now,
+                session.peak_inflight,
+                clock.peak_active,
+                _peak_starts_per_window(session.starts),
+                session.starts,
+            )
+
+        before_s, before_inflight, before_active, before_peak, before_starts = measure(1)
+        self._clear_routes()
+        after_s, after_inflight, after_active, after_peak, after_starts = measure(10)
+
+        interval = 60.0 / REQUESTS_PER_MINUTE
+        before_gaps = [b - a for a, b in zip(before_starts, before_starts[1:])]
+        after_gaps = [b - a for a, b in zip(after_starts, after_starts[1:])]
+        # Fake overlap clock, 1.0s body, production spacing of 60/90.
+        # One worker: 147.0s. Ten workers: 102.666...s. The throttle-only
+        # schedule would be 98.333s; the extra time is the last capped
+        # commodity finishing on its own. Peak starts in any 60s are 60
+        # then 91, both under the documented 120.
+        self.assertAlmostEqual(before_s, 147.0, places=6)
+        self.assertAlmostEqual(after_s, 102.66666666666674, places=4)
+        self.assertEqual(before_peak, 60)
+        self.assertEqual(after_peak, 91)
+        self.assertLess(after_s, before_s)
+        self.assertEqual(before_inflight, 1)
+        self.assertEqual(before_active, 1)
+        self.assertGreater(after_inflight, 1)
+        self.assertLessEqual(after_inflight, 10)
+        self.assertEqual(after_active, 10)
+        self.assertGreaterEqual(min(before_gaps), interval - 1e-9)
+        self.assertGreaterEqual(min(after_gaps), interval - 1e-9)
+        self.assertLess(before_peak, 120)
+        self.assertLess(after_peak, 120)
+
+    def test_short_page_under_parallel_load_keeps_only_that_commodity(self) -> None:
+        commodity_ids = list(range(1, 13))
+        self._seed_prices(commodity_ids)
+        short_id = 12
+        for commodity_id in commodity_ids:
+            count = 40 if commodity_id == short_id else 2
+            start = commodity_id * 1000
+            values = ",".join(
+                f"({start + offset}, {commodity_id}, 5, 9, 'Old', 1)"
+                for offset in range(count)
+            )
+            self._db.execute(
+                "INSERT INTO commodity_route ("
+                "id, id_commodity, price_origin, price_destination, commodity_name, last_import_run_id"
+                f") VALUES {values}"
+            )
+        self._db.commit()
+        old_short = [
+            row["id"]
+            for row in self._db.execute_fetchall(
+                "SELECT id FROM commodity_route WHERE id_commodity = ? ORDER BY id",
+                (short_id,),
+            )
+        ]
+
+        class _Pages:
+            def __init__(self, clock: _OverlapClock):
+                self.clock = clock
+                self.urls: list[str] = []
+                self.plan = {commodity_id: [2] for commodity_id in commodity_ids}
+                self.plan[short_id] = [10, 10]
+                self.inflight = 0
+                self.peak_inflight = 0
+                self._next_id = 50000
+                self._lock = threading.Lock()
+
+            def get(self, url, params=None, timeout=None, headers=None, stream=None):
+                with self._lock:
+                    self.urls.append(url)
+                    self.inflight += 1
+                    if self.inflight > self.peak_inflight:
+                        self.peak_inflight = self.inflight
+                    commodity_id = int(parse_qs(urlparse(url).query)["id_commodity"][0])
+                    count = self.plan[commodity_id].pop(0)
+                    rows = []
+                    for _ in range(count):
+                        self._next_id += 1
+                        rows.append(
+                            {
+                                "id": self._next_id,
+                                "id_commodity": commodity_id,
+                                "price_origin": 5,
+                                "price_destination": 9,
+                                "commodity_name": "Fresh",
+                            }
+                        )
+                try:
+                    self.clock.sleep(1.0)
+                finally:
+                    with self._lock:
+                        self.inflight -= 1
+                return _Response(200, {"status": "ok", "data": rows})
+
+        clock = _OverlapClock()
+        session = _Pages(clock)
+        imported, handler, workers = self._run_routes(session, clock, tasks=len(commodity_ids))
+        self.assertEqual(workers, 10)
+        self.assertNotEqual(imported, handler.IMPORT_FAILED)
+        self.assertGreater(session.peak_inflight, 1)
+        self.assertLessEqual(session.peak_inflight, 10)
+        self.assertEqual(clock.peak_active, 10)
+        kept = [
+            row["id"]
+            for row in self._db.execute_fetchall(
+                "SELECT id FROM commodity_route WHERE id_commodity = ? ORDER BY id",
+                (short_id,),
+            )
+        ]
+        self.assertEqual(kept, old_short)
+        for commodity_id in commodity_ids:
+            if commodity_id == short_id:
+                continue
+            fresh = self._db.execute_fetchall(
+                "SELECT id FROM commodity_route WHERE id_commodity = ?",
+                (commodity_id,),
+            )
+            self.assertEqual(len(fresh), 2)
+            self.assertTrue(all(row["id"] >= 50000 for row in fresh))
+        self.assertEqual(imported, 40 + 11 * 2)
+        stamp = self._route_stamp()
+        self.assertEqual(len(stamp), 1)
+        self.assertEqual(stamp[0]["dataset_count"], 62)
+        self.assertEqual(stamp[0]["date_imported"], NOW)
+        self.assertEqual(self._short_streak(), '{"12": 1}')
+        short_urls = [
+            url for url in session.urls if f"id_commodity={short_id}" in url
+        ]
+        self.assertEqual(len(short_urls), 2)
+
+    def _short_streak(self):
+        rows = self._db.execute_fetchall(
+            "SELECT short_streak FROM imports WHERE `table` = ?",
+            ("commodity_route",),
+        )
+        if not rows:
+            return None
+        return rows[0]["short_streak"]
+
+    def test_one_worker_failure_drops_other_results_and_does_not_stamp(self) -> None:
+        commodity_ids = list(range(1, 9))
+        self._seed_prices(commodity_ids)
+        failed_id = 8
+        values = ",".join(
+            f"({commodity_id}, {commodity_id}, 5, 9, 'Old', 1)"
+            for commodity_id in commodity_ids
+        )
+        self._db.execute(
+            "INSERT INTO commodity_route ("
+            "id, id_commodity, price_origin, price_destination, commodity_name, last_import_run_id"
+            f") VALUES {values}"
+        )
+        self._db.execute(
+            """
+            INSERT INTO imports (
+                `table`, date_imported, dataset_count, time_taken, last_import_run_id, short_streak
+            ) VALUES ('commodity_route', 50, 8, 0, 1, ?)
+            """,
+            ('{"1": 1}',),
+        )
+        self._db.commit()
+
+        class _Pages:
+            def __init__(self):
+                self.urls: list[str] = []
+                self._lock = threading.Lock()
+                self._next_id = 80000
+
+            def get(self, url, params=None, timeout=None, headers=None, stream=None):
+                with self._lock:
+                    self.urls.append(url)
+                    commodity_id = int(parse_qs(urlparse(url).query)["id_commodity"][0])
+                    self._next_id += 1
+                    route_id = self._next_id
+                if commodity_id == failed_id:
+                    return _Response(200, {"status": "error", "data": []})
+                return _Response(
+                    200,
+                    {
+                        "status": "ok",
+                        "data": [
+                            {
+                                "id": route_id,
+                                "id_commodity": commodity_id,
+                                "price_origin": 5,
+                                "price_destination": 9,
+                                "commodity_name": "Fresh",
+                            }
+                        ],
+                    },
+                )
+
+        session = _Pages()
+        clock = _OverlapClock()
+        imported, handler, _workers = self._run_routes(session, clock, tasks=len(commodity_ids))
+        self.assertIs(imported, handler.IMPORT_FAILED)
+        self.assertEqual(self._route_ids(), commodity_ids)
+        stamp = self._route_stamp()
+        self.assertEqual(len(stamp), 1)
+        self.assertEqual(stamp[0]["date_imported"], 50)
+        self.assertEqual(stamp[0]["dataset_count"], 8)
+        self.assertEqual(self._short_streak(), '{"1": 1}')
+        fetched = {
+            int(parse_qs(urlparse(url).query)["id_commodity"][0]) for url in session.urls
+        }
+        self.assertIn(failed_id, fetched)
+        self.assertGreaterEqual(len(fetched - {failed_id}), 1)
+        self.assertTrue(all(route_id < 80000 for route_id in self._route_ids()))
 
 
 class OffPlanetOrbitQueryTest(_SqliteCase):

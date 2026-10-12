@@ -16,6 +16,10 @@ if TYPE_CHECKING:
 # Documented quota is 120 requests/minute. Stay under that with a margin.
 REQUESTS_PER_MINUTE = 90
 MAX_WORKERS = 4
+# Commodity-route import submits one task per commodity. List fan-out keeps
+# MAX_WORKERS. Both go through concurrent_futures_executor, and every GET
+# still takes the shared rate lock.
+ROUTE_FETCH_WORKERS = 10
 MAX_ATTEMPTS = 4
 MAX_BACKOFF_SECONDS = 60.0
 # A limit response has to wait out the per-minute window, not a few seconds.
@@ -687,9 +691,11 @@ class Uex:
         return min(MAX_BACKOFF_SECONDS, delay * factor)
 
 
-def concurrent_futures_executor():
+def concurrent_futures_executor(max_workers: int | None = None):
     import concurrent.futures
-    return concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS)
+
+    workers = MAX_WORKERS if max_workers is None else max_workers
+    return concurrent.futures.ThreadPoolExecutor(max_workers=workers)
 
 
 def _parse_retry_after(header: str | None) -> float | None:

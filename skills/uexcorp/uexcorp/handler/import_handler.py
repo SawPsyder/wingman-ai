@@ -582,45 +582,96 @@ class ImportHandler:
         def _fetch_route_page(query: dict):
             return self.__api.fetch(self.__api.COMMODITIES_ROUTES, query)
 
-        def _load_commodity_routes(commodity_id: int):
-            # Off-planet stations that trade this commodity, not every orbit.
-            page = collect_commodity_routes(
-                _fetch_route_page,
-                commodity_id,
-                planet_ids,
-                off_planet_trade_orbit_ids(self.__helper.get_database(), commodity_id),
-                warn=warn,
+        # Station orbits are a main-thread read. Workers only fetch.
+        orbit_ids_by_commodity = {
+            commodity_id: off_planet_trade_orbit_ids(
+                self.__helper.get_database(), commodity_id
             )
-            if page.ok:
-                info(
-                    f"UEX route fetch commodity {commodity_id}: {len(page.data)} rows"
+            for commodity_id in commodity_ids
+        }
+
+        def _fetch_commodity_routes(commodity_id: int):
+            # One task per commodity: the 500-cap split and the one short-page
+            # retry stay in order. Row-count lines are replayed on this thread.
+            stored = int(stored_counts.get(commodity_id) or 0)
+            orbit_ids = orbit_ids_by_commodity[commodity_id]
+            events: list[tuple[str, int | str]] = []
+
+            def load():
+                def capture(message: str) -> None:
+                    events.append(("warn", message))
+
+                page = collect_commodity_routes(
+                    _fetch_route_page,
+                    commodity_id,
+                    planet_ids,
+                    orbit_ids,
+                    warn=capture,
                 )
-            return page
+                if page.ok:
+                    events.append(("info", len(page.data)))
+                return page
+
+            page = load()
+            if page.ok and _route_page_is_short(len(page.data), stored):
+                page = load()
+            return commodity_id, page, events
 
         def _keep_previous(message: str):
             self.__helper.end_timer("import")
             self.__helper.get_handler_debug().write(message, True)
             return self.IMPORT_FAILED
 
+        # Same pool as list fan-out. Writes, the streak, and the stamp stay here.
+        import concurrent.futures
+
+        from skills.uexcorp.uexcorp.api.uex import (
+            ROUTE_FETCH_WORKERS,
+            concurrent_futures_executor,
+        )
+
+        pages: dict[int, tuple] = {}
+        if commodity_ids:
+            with concurrent_futures_executor(max_workers=ROUTE_FETCH_WORKERS) as executor:
+                futures = [
+                    executor.submit(_fetch_commodity_routes, commodity_id)
+                    for commodity_id in commodity_ids
+                ]
+                try:
+                    for future in concurrent.futures.as_completed(futures):
+                        commodity_id, page, events = future.result()
+                        if not page.ok:
+                            for pending in futures:
+                                pending.cancel()
+                            return _keep_previous(
+                                "Commodity route import failed "
+                                f"({page.error or 'unknown'}). "
+                                "Previous routes kept and will be retried."
+                            )
+                        pages[commodity_id] = (page, events)
+                except Exception as exc:
+                    for pending in futures:
+                        pending.cancel()
+                    return _keep_previous(
+                        "Commodity route import failed "
+                        f"({exc}). Previous routes kept and will be retried."
+                    )
+
         streaks = _load_short_streaks(self.__helper.get_database())
         commodity_route_data = []
         seen_route_ids = set()
         kept_commodity_ids: list[int] = []
         for commodity_id in commodity_ids:
-            page = _load_commodity_routes(commodity_id)
-            if not page.ok:
-                return _keep_previous(
-                    f"Commodity route import failed ({page.error or 'unknown'}). Previous routes kept and will be retried."
-                )
+            page, events = pages[commodity_id]
+            for kind, payload in events:
+                if kind == "warn":
+                    warn(str(payload))
+                else:
+                    info(
+                        f"UEX route fetch commodity {commodity_id}: {payload} rows"
+                    )
             stored = int(stored_counts.get(commodity_id) or 0)
             short = _route_page_is_short(len(page.data), stored)
-            if short:
-                page = _load_commodity_routes(commodity_id)
-                if not page.ok:
-                    return _keep_previous(
-                        f"Commodity route import failed ({page.error or 'unknown'}). Previous routes kept and will be retried."
-                    )
-                short = _route_page_is_short(len(page.data), stored)
             if short:
                 fetched = len(page.data)
                 if streaks.get(commodity_id, 0) >= 1:
