@@ -188,7 +188,9 @@ async def rank(
         return best
 
     rows = list(records) if records is not None else _rows_from_options(options)
-    decided = _decide_exact(rows, search, descriptions, match_code=match_code)
+    from skills.uexcorp.uexcorp.naming.index import NameIndex
+
+    decided = _decide_exact(NameIndex.from_records(rows), search, descriptions, match_code=match_code)
     if decided is not None:
         return decided
 

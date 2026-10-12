@@ -600,19 +600,20 @@ def _decide_exact(records: list[dict], search: str | None, descriptions: dict | 
 
     Two scoped rows that share one spelling are left to place scoring so
     orbit collapse can drop the orbit before the candidate list is built.
+    The rows come from the id index, in the order they were added.
     """
+    from skills.uexcorp.uexcorp.naming.index import NameIndex
+
     text = (search or "").strip()
     if not text or text == "None" or not records:
         return None
+    index = NameIndex.from_records(records)
+    rows = index.ordered
 
     typed_names = []
     typed_rows = []
-    for row in records:
+    for row in index.rows_named(text):
         name = str(row.get("name") or "")
-        key = str(row.get("key") or "")
-        typed = name == text or (not row.get("scope") and key == text and key != name)
-        if not typed:
-            continue
         typed_rows.append(row)
         if name not in typed_names:
             typed_names.append(name)
@@ -627,10 +628,8 @@ def _decide_exact(records: list[dict], search: str | None, descriptions: dict | 
     spellings = []
     spelling_rows = []
     folded = text.casefold()
-    for row in records:
+    for row in index.rows_casefold(folded):
         name = str(row.get("name") or "")
-        if name.casefold() != folded:
-            continue
         spelling_rows.append(row)
         if name not in spellings:
             spellings.append(name)
@@ -642,18 +641,8 @@ def _decide_exact(records: list[dict], search: str | None, descriptions: dict | 
             return _exact_result(chosen[0], descriptions, "exact")
         return None
 
-    code_hits = []
-    alias_hits = []
-    for row in records:
-        for code in row.get("codes") or []:
-            if str(code).casefold() == folded:
-                code_hits.append(row)
-                break
-    for row in records:
-        for alias in row.get("aliases") or []:
-            if str(alias).casefold() == folded:
-                alias_hits.append(row)
-                break
+    code_hits = index.rows_code(folded)
+    alias_hits = index.rows_alias(folded)
     if code_hits:
         chosen = _prefer_refined(code_hits)
         unique = len(_unique_row_names(chosen)) == 1
@@ -663,8 +652,8 @@ def _decide_exact(records: list[dict], search: str | None, descriptions: dict | 
         if unique and (match_code or not _stoplist_blocks_pick(text)):
             return _exact_result(chosen[0], descriptions, "alias")
         return _unpicked_result(chosen, descriptions)
-    alias_hits = _collapse_terminal_alias_hits(alias_hits, records, text)
-    if alias_hits and not _terminal_alias_deferred(alias_hits, records, text):
+    alias_hits = _collapse_terminal_alias_hits(alias_hits, rows, text)
+    if alias_hits and not _terminal_alias_deferred(alias_hits, rows, text):
         if len(_unique_row_names(alias_hits)) == 1:
             return _exact_result(alias_hits[0], descriptions, "alias")
         return _unpicked_result(alias_hits, descriptions)

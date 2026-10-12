@@ -78,3 +78,15 @@ def test_index_is_keyed_by_id():
     assert index.get("station:52")["name"] == "Port Olisar"
     tradable = index.pool(lambda row: row.get("name") == "Iron")
     assert [row["id"] for row in tradable] == [44]
+
+
+def test_index_keeps_places_that_share_a_numeric_id():
+    index = NameIndex.from_records([
+        {"scope": "city", "id": 4, "key": "city:4", "name": "New Babbage", "aliases": ["babbage"]},
+        {"scope": "planet", "id": 4, "key": "planet:4", "name": "ArcCorp", "codes": ["ARC"]},
+    ])
+    assert index.get("city:4")["name"] == "New Babbage"
+    assert index.get("planet:4")["name"] == "ArcCorp"
+    assert [row["name"] for row in index.rows_named("ArcCorp")] == ["ArcCorp"]
+    assert [row["name"] for row in index.rows_alias("babbage")] == ["New Babbage"]
+    assert [row["name"] for row in index.rows_code("arc")] == ["ArcCorp"]
