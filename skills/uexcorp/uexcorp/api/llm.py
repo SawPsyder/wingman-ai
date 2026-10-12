@@ -663,6 +663,9 @@ def _decide_exact(records: list[dict], search: str | None, descriptions: dict | 
     normalized_hits = [row for row in index.rows_normalized(text) if id(row) not in declined]
     if len(normalized_hits) == 1:
         return _exact_result(normalized_hits[0], descriptions, "normalized")
+    voice_hits = [row for row in index.rows_voice(text) if id(row) not in declined]
+    if len(_unique_row_names(voice_hits)) > 1:
+        return _unpicked_result(voice_hits, descriptions)
     return None
 
 

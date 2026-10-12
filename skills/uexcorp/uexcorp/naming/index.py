@@ -20,6 +20,7 @@ class NameIndex:
         self._alias: dict[str, list[int]] = {}
         self._normalized: dict[str, list[int]] = {}
         self._compact: dict[str, list[int]] = {}
+        self._voice: dict[str, list[int]] = {}
 
     def add(self, row: dict) -> None:
         public = row.get("id", row.get("key"))
@@ -48,8 +49,17 @@ class NameIndex:
             if token:
                 self._append(self._alias, token, seq)
         from skills.uexcorp.uexcorp.naming.normalize import compact, normalize
+        from skills.uexcorp.uexcorp.naming.voice import voice_forms
 
+        spoken = []
         for form in [name, *[str(alias) for alias in (row.get("aliases") or [])]]:
+            for extra in voice_forms(form, scope=row.get("scope")):
+                token = extra.casefold()
+                if token in {item.casefold() for item in spoken}:
+                    continue
+                spoken.append(extra)
+                self._append(self._voice, token, seq)
+        for form in [name, *[str(alias) for alias in (row.get("aliases") or [])], *spoken]:
             folded = normalize(form)
             if folded:
                 self._append(self._normalized, folded, seq)
@@ -75,6 +85,10 @@ class NameIndex:
 
     def rows_alias(self, folded: str) -> list[dict]:
         return self._take(self._alias.get(folded, ()))
+
+    def rows_voice(self, text: str) -> list[dict]:
+        """Rows with a spoken form of this spelling. The stored name is not here."""
+        return self._take(self._voice.get(str(text or "").casefold(), ()))
 
     def rows_normalized(self, text: str) -> list[dict]:
         """Rows whose name or alias folds or compacts to ``text``.
