@@ -1,4 +1,3 @@
-import difflib
 import inspect
 from skills.uexcorp.uexcorp.data_access.star_system_data_access import StarSystemDataAccess
 from skills.uexcorp.uexcorp.data_access.vehicle_data_access import VehicleDataAccess
@@ -156,14 +155,9 @@ def _code_holder_names(catalog, query: str) -> list[str]:
 
 def _closer_untradable(query: str, catalog_name: str, tradable_name: str | None) -> bool:
     """A typo of a sell-only commodity beats a weaker tradable lookalike."""
-    left = (query or "").casefold().strip()
-    catalog_ratio = difflib.SequenceMatcher(None, left, catalog_name.casefold()).ratio()
-    if catalog_ratio < 0.8:
-        return False
-    if not tradable_name:
-        return True
-    tradable_ratio = difflib.SequenceMatcher(None, left, tradable_name.casefold()).ratio()
-    return catalog_ratio >= tradable_ratio
+    from skills.uexcorp.uexcorp.naming.ratios import closer_untradable
+
+    return closer_untradable(query, catalog_name, tradable_name)
 
 
 def _closest_catalog_name(query: str, catalog) -> str | None:
@@ -173,20 +167,9 @@ def _closest_catalog_name(query: str, catalog) -> str | None:
     System One and does not add a ``Use X instead`` note. A second matcher
     was asking System One again and could note the raw twin.
     """
-    left = (query or "").casefold().strip()
-    if not left:
-        return None
-    best = None
-    best_ratio = 0.0
-    for item in catalog:
-        label = str(item)
-        ratio = difflib.SequenceMatcher(None, left, label.casefold()).ratio()
-        if ratio > best_ratio:
-            best_ratio = ratio
-            best = label
-    if best is not None and best_ratio >= 0.8:
-        return best
-    return None
+    from skills.uexcorp.uexcorp.naming.ratios import closest_catalog_name
+
+    return closest_catalog_name(query, catalog)
 
 
 def _untradable_sentence(name: str, buy: bool, sell: bool) -> str:

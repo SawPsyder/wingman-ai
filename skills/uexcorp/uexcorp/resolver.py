@@ -7,7 +7,6 @@ key match back into a place.
 
 from __future__ import annotations
 
-import difflib
 import re
 
 from skills.uexcorp.uexcorp.api.llm import (
@@ -305,13 +304,9 @@ def _shop_brand(name: str) -> str:
 
 def _brand_query_ok(query: str, brand: str) -> bool:
     """The typed words are that shop, a whole-word prefix, or a close typo."""
-    left = (query or "").casefold().strip()
-    right = (brand or "").casefold().strip()
-    if not left or not right:
-        return False
-    if left == right or _whole_word_name(query, brand):
-        return True
-    return difflib.SequenceMatcher(None, left, right).ratio() >= 0.84
+    from skills.uexcorp.uexcorp.naming.ratios import brand_query_ok
+
+    return brand_query_ok(query, brand)
 
 
 def _chain_parents(rows: list[dict]) -> list[str]:
