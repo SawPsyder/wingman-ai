@@ -120,6 +120,9 @@ class Helper:
             warn(f"UEX blacklist file was not rewritten ({e}). The previous file was kept.")
         self.__version_uex = self.get_handler_import().get_version_uex()
         self.set_ready(True)
+        from skills.uexcorp.uexcorp.naming.cache import on_import_done
+
+        on_import_done()
         if self.__data_pool_recreated:
             self.__data_pool_recreated = False
             self.__handler_debug.write(

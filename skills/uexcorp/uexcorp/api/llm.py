@@ -68,6 +68,7 @@ class Llm:
         helper: "Helper",
     ):
         self.__helper = helper
+        # Retired. Model picks live in naming.cache, keyed with pool_version.
         self.__cache_search = {}
 
     async def call(self, message_history: MessageHistory, expect_json: bool = False) -> str | dict[str, any] | list | None:

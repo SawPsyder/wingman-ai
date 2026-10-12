@@ -685,6 +685,9 @@ class LocationBlocklist:
             except OSError:
                 pass
             return False
+        from skills.uexcorp.uexcorp.naming.cache import bump_pool_version
+
+        bump_pool_version()
         try:
             self.helper._uex_block_snapshot = None
         except Exception:

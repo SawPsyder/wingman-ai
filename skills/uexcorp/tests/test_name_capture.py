@@ -23,10 +23,17 @@ def test_name_capture_matches_the_freeze_and_opens_no_sockets():
 
     socket.socket.connect = _blocked
     try:
-        got = build_capture()
+        from skills.uexcorp.uexcorp.naming.cache import bump_pool_version
+
+        cold = build_capture()
+        warm = build_capture()
+        bump_pool_version()
+        again = build_capture()
     finally:
         socket.socket.connect = original
     assert connects["n"] == 0
     frozen = json.loads(_CAPTURE_PATH.read_text(encoding="utf-8"))
-    assert got["queries"] == frozen["queries"]
-    assert got == frozen
+    assert cold["queries"] == frozen["queries"]
+    assert cold == frozen
+    assert warm == frozen
+    assert again == frozen
