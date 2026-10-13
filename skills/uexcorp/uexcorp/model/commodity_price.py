@@ -61,6 +61,8 @@ class CommodityPrice(DataModel):
             terminal_name: str | None = None, # string(255)
             terminal_code: str | None = None, # string(255)
             terminal_slug: str | None = None, # string(255)
+            container_sizes: str | None = None,
+            quality: str | None = None,
             load: bool = False,
     ):
         super().__init__("commodity_price")
@@ -88,6 +90,8 @@ class CommodityPrice(DataModel):
             "terminal_name": terminal_name,
             "terminal_code": terminal_code,
             "terminal_slug": terminal_slug,
+            "container_sizes": container_sizes,
+            "quality": quality,
             "last_import_run_id": None,
         }
         if load:
@@ -225,6 +229,12 @@ class CommodityPrice(DataModel):
 
     def get_terminal_slug(self) -> str | None:
         return self.data["terminal_slug"]
+
+    def get_container_sizes(self) -> str | None:
+        return self.data.get("container_sizes")
+
+    def get_quality(self) -> str | None:
+        return self.data.get("quality")
 
     def get_ai_string(self, show_commodity: bool = True) -> str:
         # show_commodity=False when embedded under the commodity itself, so the

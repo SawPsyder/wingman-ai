@@ -335,6 +335,15 @@ class CommodityRouteAutoLoadFilterTest(unittest.TestCase):
         )
 
 
+class LocalCommodityRouteAutoLoadFilterTest(CommodityRouteAutoLoadFilterTest):
+    """Same auto-load filters served from the local table."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self._helper.mirror_routes_to_local = True
+        self._helper.get_handler_config().route_source = "local"
+
+
 def main() -> None:
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(CommodityRouteAutoLoadFilterTest)
     result = unittest.TextTestRunner(verbosity=2).run(suite)

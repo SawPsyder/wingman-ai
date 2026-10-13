@@ -202,10 +202,12 @@ class ImportHandler:
         self.__imported_percent = 0
         self.__import_started = True
         self.import_failed = False
+        self._step_outcomes = {}
         try:
-            for importer in self.__importers.values():
+            for name, importer in self.__importers.items():
                 if self.active:
                     outcome = importer()
+                    self._step_outcomes[name] = outcome
                     if outcome is self.IMPORT_FAILED:
                         self.import_failed = True
                         self.__helper.get_handler_debug().write(
@@ -538,6 +540,70 @@ class ImportHandler:
         return status_count
 
     def __import_data_commodity_route(self) -> bool | int:
+        from skills.uexcorp.uexcorp.local_routes import SOURCE_LOCAL, SOURCE_SHADOW, route_source
+
+        source = route_source(self.__helper)
+        if source == SOURCE_LOCAL:
+            return self.__import_local_commodity_routes()
+        outcome = self.__import_uex_commodity_routes()
+        if source == SOURCE_SHADOW:
+            self.__shadow_build_local_routes()
+        return outcome
+
+    def __import_local_commodity_routes(self) -> bool | int:
+        """Build the local table. The UEX route stamp and short_streak stay put."""
+        from skills.uexcorp.uexcorp.local_routes import build_local_route_table, inputs_ready
+
+        if not inputs_ready(self.__helper, getattr(self, "_step_outcomes", {}) or {}, self.IMPORT_FAILED):
+            self.__helper.get_handler_debug().write(
+                "Local route build skipped. Prices, terminals, and orbit distances "
+                "must all succeed in this run, and the price import must not be IMPORT_FAILED.",
+                True,
+            )
+            return False
+        try:
+            count = build_local_route_table(
+                self.__helper,
+                before_swap=getattr(self, "_before_local_swap", None),
+            )
+        except Exception as exc:
+            self.__helper.get_handler_debug().write(
+                f"Local route build failed. Previous local routes kept. {exc}",
+                True,
+            )
+            return False
+        self.__helper.get_handler_debug().write(
+            f"Local commodity routes built: {count} record(s)."
+        )
+        return count
+
+    def __shadow_build_local_routes(self) -> None:
+        """After the UEX import. A failure here does not touch the UEX stamp."""
+        from skills.uexcorp.uexcorp.local_routes import build_local_route_table, inputs_ready
+
+        try:
+            if not inputs_ready(self.__helper, getattr(self, "_step_outcomes", {}) or {}, self.IMPORT_FAILED):
+                self.__helper.get_handler_debug().write(
+                    "Shadow local build skipped. Prices, terminals, and orbit distances "
+                    "did not all succeed in this run.",
+                    True,
+                )
+                return
+            count = build_local_route_table(self.__helper)
+            self.__helper.get_handler_debug().write(
+                f"Shadow local routes built: {count} record(s). UEX routes unchanged."
+            )
+        except Exception as exc:
+            self.__helper.get_handler_debug().write(
+                f"Shadow local build failed. UEX routes and stamp unchanged. {exc}",
+                True,
+            )
+
+    def import_uex_routes_for_fallback(self) -> bool | int:
+        """Opt-in UEX route import. Same guards as the default importer."""
+        return self.__import_uex_commodity_routes()
+
+    def __import_uex_commodity_routes(self) -> bool | int:
         from skills.uexcorp.uexcorp.model.import_data import ImportData
         from skills.uexcorp.uexcorp.model.commodity_route import CommodityRoute
 

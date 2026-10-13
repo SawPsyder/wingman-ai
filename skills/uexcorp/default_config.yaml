@@ -150,6 +150,46 @@ custom_properties:
     value: false
     required: true
     property_type: boolean
+
+  - id: behavior_commodity_route_source
+    name: Trade route source
+    hint: uex is the UEX route table (default). shadow builds a local table but still answers from UEX. local answers from prices. The default is never changed by an upgrade.
+    property_type: single_select
+    value: uex
+    required: true
+    options:
+      - label: UEX route table
+        value: uex
+      - label: Shadow (serve UEX, compare locally)
+        value: shadow
+      - label: Local prices
+        value: local
+
+  - id: local_fallback
+    name: Local route fallback
+    hint: When local prices are too old. none says routes are unavailable. uex runs the full UEX route import and says so.
+    property_type: single_select
+    value: none
+    required: true
+    options:
+      - label: Routes unavailable
+        value: none
+      - label: UEX route table
+        value: uex
+
+  - id: commodity_route_stale_hours
+    name: Price age flag (hours, report only)
+    hint: Ages above this are counted in the shadow report. Routes are not dropped, and the answer shows the age rather than a stale warning unless the flag below is on.
+    value: 168
+    required: true
+    property_type: number
+
+  - id: commodity_route_show_stale_flag
+    name: Show stale price flag
+    hint: Off by default. The age is always shown. Turn this on only after the shadow report has a useful threshold.
+    value: false
+    required: true
+    property_type: boolean
   ### Route Information End ###
 
   ### Profit Calculation Start ###

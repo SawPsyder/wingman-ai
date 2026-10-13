@@ -5,9 +5,15 @@ from skills.uexcorp.uexcorp.model.commodity_route import CommodityRoute
 class CommodityRouteDataAccess(DataAccess):
     def __init__(
             self,
+            table: str | None = None,
     ):
+        if table is None:
+            from skills.uexcorp.uexcorp.helper import Helper
+            from skills.uexcorp.uexcorp.local_routes import route_table_name
+
+            table = route_table_name(Helper.get_instance())
         super().__init__(
-            table="commodity_route",
+            table=table,
             model=CommodityRoute
         )
         self.fields = [
@@ -87,7 +93,15 @@ class CommodityRouteDataAccess(DataAccess):
         ]
 
     def load(self, **params) -> list[CommodityRoute]:
-        return super().load(**params)
+        from skills.uexcorp.uexcorp.local_routes import LOCAL_TABLE, mirror_commodity_routes
+
+        if self.table == LOCAL_TABLE and getattr(self.helper, "mirror_routes_to_local", False):
+            mirror_commodity_routes(self.database)
+        routes = super().load(**params)
+        if self.table == LOCAL_TABLE:
+            for route in routes:
+                route.served_from_local = True
+        return routes
 
     def load_by_property(self, property: str, value: any) -> CommodityRoute:
         return super().load_by_property(property, value)

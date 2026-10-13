@@ -163,11 +163,41 @@ class CommodityRoute(DataModel):
             if not self.data["id"]:
                 raise Exception("ID is required to load data")
             self.load_by_value("id", self.data["id"])
+        # Local-only fields stay off self.data so a UEX persist does not write
+        # columns the UEX table does not have.
+        self.price_age_hours = None
+        self.price_stale = None
+        self.demand_unknown = None
+        self.jump_required = None
+        self.usable_container_sizes = None
+        self.price_roi = None
+        self.scu_reachable = None
+
+    def set_data(self, data: dict):
+        super().set_data(data)
+        self.price_age_hours = data.get("price_age_hours")
+        self.price_stale = data.get("price_stale")
+        self.demand_unknown = data.get("demand_unknown")
+        self.jump_required = data.get("jump_required")
+        self.usable_container_sizes = data.get("usable_container_sizes")
+        self.price_roi = data.get("price_roi")
+        self.scu_reachable = data.get("scu_reachable")
 
     def get_data_for_ai(self) -> dict:
         from skills.uexcorp.uexcorp.helper import Helper
 
         helper = Helper.get_instance()
+        from skills.uexcorp.uexcorp.local_routes import show_stale_flag
+
+        # UEX rows never carry these columns. A fallback that serves the UEX
+        # table while the config is local must still look like a UEX answer.
+        # Rows read from commodity_route_local are local even when a test
+        # mirror left the extra columns NULL.
+        local = bool(getattr(self, "served_from_local", False)) or (
+            self.demand_unknown is not None
+            or self.price_age_hours is not None
+            or self.jump_required is not None
+        )
 
         data = {
             "commodity": self.get_commodity_name(),
@@ -183,20 +213,32 @@ class CommodityRoute(DataModel):
             "destination_planet_name": self.get_destination_planet_name(),
         }
 
+        if local:
+            if self.demand_unknown:
+                data["demand_unknown"] = True
+            if self.jump_required:
+                data["jump_required"] = True
+            if self.price_age_hours is not None:
+                data["price_age_hours"] = round(float(self.price_age_hours), 1)
+            if show_stale_flag(helper) and self.price_stale:
+                data["price_stale"] = True
+
         if helper.get_handler_config().get_behavior_commodity_route_advanced_info():
-            data.update({
+            advanced = {
                 "distance_in_giga_meters": self.get_distance(),
                 "profit_margin": self.get_price_margin(),
                 "origin_orbit_name": self.get_origin_orbit_name(),
                 "origin_faction_name": self.get_origin_faction_name(),
                 "destination_orbit_name": self.get_destination_orbit_name(),
                 "destination_faction_name": self.get_destination_faction_name(),
-                "uex_score": self.get_score(),
                 "has_refuel_origin": self.get_has_refuel_origin(),
                 "has_refuel_destination": self.get_has_refuel_destination(),
                 "is_monitored_origin": self.get_is_monitored_origin(),
                 "is_monitored_destination": self.get_is_monitored_destination(),
-            })
+            }
+            if not local:
+                advanced["uex_score"] = self.get_score()
+            data.update(advanced)
 
         return data
 

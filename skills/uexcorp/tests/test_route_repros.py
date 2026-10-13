@@ -1344,3 +1344,12 @@ class RouteReproTest(_SqliteCase):
             )
             self.assertIn(sentence, text, query)
             self.assertNotIn("Area18 TDD", text, query)
+
+
+class LocalRouteReproTest(RouteReproTest):
+    """Same route repros served from the local table."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self._helper.mirror_routes_to_local = True
+        self._helper.get_handler_config().route_source = "local"

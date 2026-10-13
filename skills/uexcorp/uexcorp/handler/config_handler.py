@@ -142,6 +142,8 @@ class ConfigHandler:
         self.__behavior_commodity_route_default_count: int = 1
         self.__behavior_commodity_route_use_estimated_availability: bool = True
         self.__behavior_commodity_route_advanced_info: bool = False
+        # Read just-in-time. Defaults keep today's UEX routes when an older
+        # config has no property yet.
 
     async def validate(self, errors: list[WingmanInitializationError], retrieve_custom_property_value: callable) -> list[WingmanInitializationError]:
         self.__property_retriever = retrieve_custom_property_value
@@ -418,6 +420,41 @@ class ConfigHandler:
 
     def set_cache_lifetime_long(self, cache_timeout_commodities: int):
         self.__cache_lifetime_long = cache_timeout_commodities
+
+    def _fresh_property(self, key: str):
+        if not self.__property_retriever:
+            return None
+        local_errors = []
+        value = self.__property_retriever(key, local_errors)
+        if local_errors:
+            return None
+        return value
+
+    def get_behavior_commodity_route_source(self) -> str:
+        value = self._fresh_property("behavior_commodity_route_source")
+        if value in ("uex", "shadow", "local"):
+            return value
+        return "uex"
+
+    def get_local_fallback(self) -> str:
+        value = self._fresh_property("local_fallback")
+        if value == "uex":
+            return "uex"
+        return "none"
+
+    def get_commodity_route_stale_hours(self) -> int:
+        value = self._fresh_property("commodity_route_stale_hours")
+        try:
+            if value is not None:
+                return int(value)
+        except (TypeError, ValueError):
+            pass
+        return 168
+
+    def get_commodity_route_show_stale_flag(self) -> bool:
+        # Report-only until a shadow histogram picks a threshold (R5).
+        value = self._fresh_property("commodity_route_show_stale_flag")
+        return bool(value) if value is not None else False
 
     def get_behavior_commodity_route_default_count(self) -> int:
         errors = []

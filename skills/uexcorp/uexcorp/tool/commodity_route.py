@@ -3,8 +3,17 @@ from skills.uexcorp.uexcorp.tool.tool import Tool
 from skills.uexcorp.uexcorp.tool.validator import Validator
 
 
-def _no_routes(helper, note: str):
+def _annotate_route_source(helper, routes=None, served: str | None = None) -> None:
+    from skills.uexcorp.uexcorp.local_routes import source_note
+
+    helper.get_handler_tool().add_note(
+        source_note(helper, routes, served=served or getattr(helper, "_route_answer_source", None))
+    )
+
+
+def _no_routes(helper, note: str, served: str | None = None):
     helper.get_handler_tool().add_note(note)
+    _annotate_route_source(helper, served=served)
     return compression.dumps([]), ""
 
 
@@ -226,8 +235,31 @@ class CommodityRoute(Tool):
         from skills.uexcorp.uexcorp.helper import Helper
 
         helper = Helper.get_instance()
+        from skills.uexcorp.uexcorp.local_routes import (
+            SOURCE_LOCAL,
+            UEX_TABLE,
+            local_fallback,
+            local_table_is_fresh,
+            route_source,
+            unavailable_message,
+        )
 
-        commodity_route_data_access = CommodityRouteDataAccess()
+        served = route_source(helper)
+        mirroring = bool(getattr(helper, "mirror_routes_to_local", False))
+        if served == SOURCE_LOCAL and not mirroring and not local_table_is_fresh(helper):
+            if local_fallback(helper) == "uex":
+                importer = helper.get_handler_import() if hasattr(helper, "get_handler_import") else None
+                if importer is not None and hasattr(importer, "import_uex_routes_for_fallback"):
+                    importer.import_uex_routes_for_fallback()
+                served = "uex"
+            else:
+                helper.get_handler_tool().add_note(unavailable_message(helper))
+                return compression.dumps([]), ""
+        helper._route_answer_source = served
+
+        commodity_route_data_access = CommodityRouteDataAccess(
+            table=UEX_TABLE if served != SOURCE_LOCAL else None
+        )
         commodity_route_data_access.add_filter_by_positive_prices()
         start_terminal_ids = []
         end_terminals_ids = []
@@ -353,6 +385,7 @@ class CommodityRoute(Tool):
                 if blocked_ids:
                     note += " Blocked locations were removed from the auto-load list."
                 helper.get_handler_tool().add_note(note)
+                _annotate_route_source(helper, served=served)
                 return compression.dumps([]), ""
 
             commodity_route_data_access.add_filter_by_id_terminal_origin(auto_load_terminal_ids)
@@ -374,21 +407,30 @@ class CommodityRoute(Tool):
         if max_scu is None and available_money is None:
             max_scu = 1 # search for an example with 1 scu
             example_route = True
-            helper.get_handler_tool().add_note("Example route for 1 SCU with best uex score. User should refine search with ship or/and budget information for better results.")
+            if served == SOURCE_LOCAL:
+                helper.get_handler_tool().add_note(
+                    "Example route for 1 SCU ranked by profit per SCU. "
+                    "User should refine search with ship or/and budget information for better results."
+                )
+            else:
+                helper.get_handler_tool().add_note("Example route for 1 SCU with best uex score. User should refine search with ship or/and budget information for better results.")
 
         max_scu = f"{max_scu}, " if max_scu is not None else ""
         available_money = f"CAST(({int(available_money)} / price_origin) AS INTEGER), " if available_money else ""
         commodity_route_data_access.add_col(f"MIN({available_money}{max_scu}scu_origin, scu_destination) as 'scu_origin'")
         commodity_route_data_access.add_col(f"(MIN({available_money}{max_scu}scu_origin, scu_destination) * (price_destination - price_origin)) as 'profit'")
 
-        if example_route:
+        if example_route and served != SOURCE_LOCAL:
             commodity_route_data_access.order_by("score", "DESC")
         else:
+            # Local example mode ranks by profit per SCU. With the 1 SCU cap the
+            # profit column is that figure. Non-example mode keeps profit DESC.
             commodity_route_data_access.order_by("profit", "DESC")
 
         commodity_route_data_access.order_by("id_star_system_origin = id_star_system_destination", "DESC")
         commodity_route_data_access.order_by("distance", "ASC")
         routes = commodity_route_data_access.load(debug=True) # TODO remove debug=True
+        _annotate_route_source(helper, routes, served=served)
 
         routes = [route.get_data_for_ai() for route in routes]
         # The volume alias can still quote 0 when a listed stock is 0.

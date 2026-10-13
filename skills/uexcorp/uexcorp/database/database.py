@@ -72,6 +72,13 @@ class Database:
             )
             self.recreate_database()
 
+        self._ensure_trade_schema()
+
+    def _ensure_trade_schema(self) -> None:
+        from skills.uexcorp.uexcorp.local_routes import ensure_trade_route_schema
+
+        ensure_trade_route_schema(self)
+
     def __init_connection(self) -> None:
         complete_path = os.path.join(self.db_path, self.db_name_complete)
         self.connection = sqlite3.connect(complete_path, check_same_thread=False)
@@ -160,6 +167,31 @@ class Database:
         with self._lock:
             if self.connection:
                 self.connection.commit()
+
+    def run_transaction(self, work):
+        """Run ``work(cursor)`` inside one immediate transaction.
+
+        The temp-table swap for local routes uses this so a failed build
+        leaves the previous table in place.
+        """
+        with self._lock:
+            if not self.connection or not self.cursor:
+                raise RuntimeError("No active database connection.")
+            try:
+                self.connection.rollback()
+            except Exception:
+                pass
+            self.cursor.execute("BEGIN IMMEDIATE")
+            try:
+                result = work(self.cursor)
+                self.connection.commit()
+                return result
+            except Exception:
+                try:
+                    self.connection.rollback()
+                except Exception:
+                    pass
+                raise
 
     def execute_fetchall(
         self, sql: str, parameters: tuple | dict | list = ()

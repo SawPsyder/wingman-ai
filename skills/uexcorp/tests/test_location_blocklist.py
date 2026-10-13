@@ -1965,5 +1965,14 @@ class LocationBlocklistTest(_SqliteCase):
         self.assertEqual(system_one.noul_calls, 1)
 
 
+class LocalLocationBlocklistTest(LocationBlocklistTest):
+    """Same blocklist cases against commodity_route_local."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self._helper.mirror_routes_to_local = True
+        self._helper.get_handler_config().route_source = "local"
+
+
 if __name__ == "__main__":
     unittest.main()
