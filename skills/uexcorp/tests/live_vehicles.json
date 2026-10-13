@@ -1,0 +1,1976 @@
+[
+  {
+    "id": 1,
+    "name": "100i",
+    "name_full": "Origin 100i",
+    "slug": "orig-100i",
+    "company_name": "Origin Jumpworks"
+  },
+  {
+    "id": 2,
+    "name": "125a",
+    "name_full": "Origin 125a",
+    "slug": "orig-125a",
+    "company_name": "Origin Jumpworks"
+  },
+  {
+    "id": 3,
+    "name": "135c",
+    "name_full": "Origin 135c",
+    "slug": "orig-135c",
+    "company_name": "Origin Jumpworks"
+  },
+  {
+    "id": 4,
+    "name": "300i",
+    "name_full": "Origin 300i",
+    "slug": "orig-300i",
+    "company_name": "Origin Jumpworks"
+  },
+  {
+    "id": 5,
+    "name": "315p",
+    "name_full": "Origin 315p",
+    "slug": "orig-315p",
+    "company_name": "Origin Jumpworks"
+  },
+  {
+    "id": 6,
+    "name": "325a",
+    "name_full": "Origin 325a",
+    "slug": "orig-325a",
+    "company_name": "Origin Jumpworks"
+  },
+  {
+    "id": 7,
+    "name": "350r",
+    "name_full": "Origin 350r",
+    "slug": "orig-350r",
+    "company_name": "Origin Jumpworks"
+  },
+  {
+    "id": 8,
+    "name": "400i",
+    "name_full": "Origin 400i",
+    "slug": "400i",
+    "company_name": "Origin Jumpworks"
+  },
+  {
+    "id": 9,
+    "name": "600i Executive Edition",
+    "name_full": "Origin 600i Executive Edition",
+    "slug": "600i-executive-edition",
+    "company_name": "Origin Jumpworks"
+  },
+  {
+    "id": 10,
+    "name": "600i Explorer",
+    "name_full": "Origin 600i Explorer",
+    "slug": "orig-600i-explorer",
+    "company_name": "Origin Jumpworks"
+  },
+  {
+    "id": 11,
+    "name": "600i Touring",
+    "name_full": "Origin 600i Touring",
+    "slug": "orig-600i-touring",
+    "company_name": "Origin Jumpworks"
+  },
+  {
+    "id": 12,
+    "name": "85X",
+    "name_full": "Origin 85X",
+    "slug": "orig-85x",
+    "company_name": "Origin Jumpworks"
+  },
+  {
+    "id": 13,
+    "name": "890 Jump",
+    "name_full": "Origin 890 Jump",
+    "slug": "890-jump",
+    "company_name": "Origin Jumpworks"
+  },
+  {
+    "id": 14,
+    "name": "A2 Hercules Starlifter",
+    "name_full": "Crusader A2 Hercules Starlifter",
+    "slug": "a2-hercules-starlifter",
+    "company_name": "Crusader Industries"
+  },
+  {
+    "id": 15,
+    "name": "Apollo Medivac",
+    "name_full": "RSI Apollo Medivac",
+    "slug": "apollo-medivac",
+    "company_name": "Roberts Space Industries"
+  },
+  {
+    "id": 16,
+    "name": "Apollo Triage",
+    "name_full": "RSI Apollo Triage",
+    "slug": "apollo-triage",
+    "company_name": "Roberts Space Industries"
+  },
+  {
+    "id": 17,
+    "name": "Ares Inferno Starfighter",
+    "name_full": "Crusader Ares Inferno Starfighter",
+    "slug": "ares-inferno-starfighter",
+    "company_name": "Crusader Industries"
+  },
+  {
+    "id": 18,
+    "name": "Ares Ion Starfighter",
+    "name_full": "Crusader Ares Ion Starfighter",
+    "slug": "ares-ion-starfighter",
+    "company_name": "Crusader Industries"
+  },
+  {
+    "id": 19,
+    "name": "Arrastra",
+    "name_full": "RSI Arrastra",
+    "slug": "arrastra",
+    "company_name": "Roberts Space Industries"
+  },
+  {
+    "id": 20,
+    "name": "Arrow",
+    "name_full": "Anvil Arrow",
+    "slug": "arrow",
+    "company_name": "Anvil Aerospace"
+  },
+  {
+    "id": 21,
+    "name": "Aurora Mk I CL",
+    "name_full": "RSI Aurora Mk I CL",
+    "slug": "aurora-mk-i-cl",
+    "company_name": "Roberts Space Industries"
+  },
+  {
+    "id": 22,
+    "name": "Aurora Mk I ES",
+    "name_full": "RSI Aurora Mk I ES",
+    "slug": "aurora-mk-i-es",
+    "company_name": "Roberts Space Industries"
+  },
+  {
+    "id": 23,
+    "name": "Aurora Mk I LN",
+    "name_full": "RSI Aurora Mk I LN",
+    "slug": "aurora-mk-i-ln",
+    "company_name": "Roberts Space Industries"
+  },
+  {
+    "id": 24,
+    "name": "Aurora Mk I LX",
+    "name_full": "RSI Aurora Mk I LX",
+    "slug": "aurora-mk-i-lx",
+    "company_name": "Roberts Space Industries"
+  },
+  {
+    "id": 25,
+    "name": "Aurora Mk I MR",
+    "name_full": "RSI Aurora Mk I MR",
+    "slug": "aurora-mk-i-mr",
+    "company_name": "Roberts Space Industries"
+  },
+  {
+    "id": 26,
+    "name": "Avenger Stalker",
+    "name_full": "Aegis Avenger Stalker",
+    "slug": "aegs-avenger-stalker",
+    "company_name": "Aegis Dynamics"
+  },
+  {
+    "id": 27,
+    "name": "Avenger Titan",
+    "name_full": "Aegis Avenger Titan",
+    "slug": "aegs-avenger-titan",
+    "company_name": "Aegis Dynamics"
+  },
+  {
+    "id": 28,
+    "name": "Avenger Titan Renegade",
+    "name_full": "Aegis Avenger Titan Renegade",
+    "slug": "aegs-avenger-titan-renegade",
+    "company_name": "Aegis Dynamics"
+  },
+  {
+    "id": 29,
+    "name": "Avenger Warlock",
+    "name_full": "Aegis Avenger Warlock",
+    "slug": "aegs-avenger-warlock",
+    "company_name": "Aegis Dynamics"
+  },
+  {
+    "id": 30,
+    "name": "Ballista",
+    "name_full": "Anvil Ballista",
+    "slug": "anvl-ballista",
+    "company_name": "Anvil Aerospace"
+  },
+  {
+    "id": 31,
+    "name": "Ballista Dunestalker",
+    "name_full": "Anvil Ballista Dunestalker",
+    "slug": "ballista-dunestalker",
+    "company_name": "Anvil Aerospace"
+  },
+  {
+    "id": 32,
+    "name": "Ballista Snowblind",
+    "name_full": "Anvil Ballista Snowblind",
+    "slug": "ballista-snowblind",
+    "company_name": "Anvil Aerospace"
+  },
+  {
+    "id": 33,
+    "name": "Blade",
+    "name_full": "Esperia Blade",
+    "slug": "vncl-blade",
+    "company_name": "Esperia Incorporation"
+  },
+  {
+    "id": 34,
+    "name": "Buccaneer",
+    "name_full": "Drake Buccaneer",
+    "slug": "drak-buccaneer",
+    "company_name": "Drake Interplanetary"
+  },
+  {
+    "id": 35,
+    "name": "C2 Hercules Starlifter",
+    "name_full": "Crusader C2 Hercules Starlifter",
+    "slug": "c2-hercules-starlifter",
+    "company_name": "Crusader Industries"
+  },
+  {
+    "id": 36,
+    "name": "C8 Pisces",
+    "name_full": "Anvil C8 Pisces",
+    "slug": "anvl-c8-pisces",
+    "company_name": "Anvil Aerospace"
+  },
+  {
+    "id": 37,
+    "name": "C8R Pisces Rescue",
+    "name_full": "Anvil C8R Pisces Rescue",
+    "slug": "c8r-pisces-rescue",
+    "company_name": "Anvil Aerospace"
+  },
+  {
+    "id": 38,
+    "name": "C8X Pisces Expedition",
+    "name_full": "Anvil C8X Pisces Expedition",
+    "slug": "anvl-c8x-pisces-expedition",
+    "company_name": "Anvil Aerospace"
+  },
+  {
+    "id": 39,
+    "name": "Carrack",
+    "name_full": "Anvil Carrack",
+    "slug": "anvl-carrack",
+    "company_name": "Anvil Aerospace"
+  },
+  {
+    "id": 40,
+    "name": "Carrack Expedition",
+    "name_full": "Anvil Carrack Expedition",
+    "slug": "anvl-carrack-expedition",
+    "company_name": "Anvil Aerospace"
+  },
+  {
+    "id": 41,
+    "name": "Caterpillar",
+    "name_full": "Drake Caterpillar",
+    "slug": "caterpillar",
+    "company_name": "Drake Interplanetary"
+  },
+  {
+    "id": 42,
+    "name": "Caterpillar Best In Show Edition",
+    "name_full": "Drake Caterpillar Best In Show Edition",
+    "slug": "caterpillar-best-in-show-edition",
+    "company_name": "Drake Interplanetary"
+  },
+  {
+    "id": 43,
+    "name": "Caterpillar Pirate Edition",
+    "name_full": "Drake Caterpillar Pirate Edition",
+    "slug": "caterpillar-pirate-edition",
+    "company_name": "Drake Interplanetary"
+  },
+  {
+    "id": 44,
+    "name": "Centurion",
+    "name_full": "Anvil Centurion",
+    "slug": "anvl-centurion",
+    "company_name": "Anvil Aerospace"
+  },
+  {
+    "id": 45,
+    "name": "Constellation Andromeda",
+    "name_full": "RSI Constellation Andromeda",
+    "slug": "constellation-andromeda",
+    "company_name": "Roberts Space Industries"
+  },
+  {
+    "id": 46,
+    "name": "Constellation Aquila",
+    "name_full": "RSI Constellation Aquila",
+    "slug": "rsi-constellation-aquila",
+    "company_name": "Roberts Space Industries"
+  },
+  {
+    "id": 47,
+    "name": "Constellation Phoenix",
+    "name_full": "RSI Constellation Phoenix",
+    "slug": "rsi-constellation-phoenix",
+    "company_name": "Roberts Space Industries"
+  },
+  {
+    "id": 48,
+    "name": "Constellation Phoenix Emerald",
+    "name_full": "RSI Constellation Phoenix Emerald",
+    "slug": "rsi-constellation-phoenix-emerald",
+    "company_name": "Roberts Space Industries"
+  },
+  {
+    "id": 49,
+    "name": "Constellation Taurus",
+    "name_full": "RSI Constellation Taurus",
+    "slug": "rsi-constellation-taurus",
+    "company_name": "Roberts Space Industries"
+  },
+  {
+    "id": 50,
+    "name": "Corsair",
+    "name_full": "Drake Corsair",
+    "slug": "drak-corsair",
+    "company_name": "Drake Interplanetary"
+  },
+  {
+    "id": 51,
+    "name": "Crucible",
+    "name_full": "Anvil Crucible",
+    "slug": "crucible",
+    "company_name": "Anvil Aerospace"
+  },
+  {
+    "id": 52,
+    "name": "Cutlass Black",
+    "name_full": "Drake Cutlass Black",
+    "slug": "drak-cutlass-black",
+    "company_name": "Drake Interplanetary"
+  },
+  {
+    "id": 53,
+    "name": "Cutlass Black Best In Show Edition",
+    "name_full": "Drake Cutlass Black Best In Show Edition",
+    "slug": "cutlass-black-best-in-show-edition",
+    "company_name": "Drake Interplanetary"
+  },
+  {
+    "id": 54,
+    "name": "Cutlass Blue",
+    "name_full": "Drake Cutlass Blue",
+    "slug": "drak-cutlass-blue",
+    "company_name": "Drake Interplanetary"
+  },
+  {
+    "id": 55,
+    "name": "Cutlass Red",
+    "name_full": "Drake Cutlass Red",
+    "slug": "drak-cutlass-red",
+    "company_name": "Drake Interplanetary"
+  },
+  {
+    "id": 56,
+    "name": "Cutlass Steel",
+    "name_full": "Drake Cutlass Steel",
+    "slug": "drak-cutlass-steel",
+    "company_name": "Drake Interplanetary"
+  },
+  {
+    "id": 57,
+    "name": "Cutter",
+    "name_full": "Drake Cutter",
+    "slug": "drak-cutter",
+    "company_name": "Drake Interplanetary"
+  },
+  {
+    "id": 58,
+    "name": "Cutter Scout",
+    "name_full": "Drake Cutter Scout",
+    "slug": "drak-cutter-scout",
+    "company_name": "Drake Interplanetary"
+  },
+  {
+    "id": 59,
+    "name": "Cutter Rambler",
+    "name_full": "Drake Cutter Rambler",
+    "slug": "drak-cutter-rambler",
+    "company_name": "Drake Interplanetary"
+  },
+  {
+    "id": 60,
+    "name": "Cyclone",
+    "name_full": "Tumbril Cyclone",
+    "slug": "tmbl-cyclone",
+    "company_name": "Tumbril Land Systems"
+  },
+  {
+    "id": 61,
+    "name": "Cyclone AA",
+    "name_full": "Tumbril Cyclone AA",
+    "slug": "tmbl-cyclone-aa",
+    "company_name": "Tumbril Land Systems"
+  },
+  {
+    "id": 62,
+    "name": "Cyclone MT",
+    "name_full": "Tumbril Cyclone MT",
+    "slug": "tmbl-cyclone-mt",
+    "company_name": "Tumbril Land Systems"
+  },
+  {
+    "id": 63,
+    "name": "Cyclone RC",
+    "name_full": "Tumbril Cyclone RC",
+    "slug": "tmbl-cyclone-rc",
+    "company_name": "Tumbril Land Systems"
+  },
+  {
+    "id": 64,
+    "name": "Cyclone RN",
+    "name_full": "Tumbril Cyclone RN",
+    "slug": "tmbl-cyclone-rn",
+    "company_name": "Tumbril Land Systems"
+  },
+  {
+    "id": 65,
+    "name": "Cyclone TR",
+    "name_full": "Tumbril Cyclone TR",
+    "slug": "tmbl-cyclone-tr",
+    "company_name": "Tumbril Land Systems"
+  },
+  {
+    "id": 66,
+    "name": "Defender",
+    "name_full": "Banu Defender",
+    "slug": "banu-defender",
+    "company_name": "Banu Souli"
+  },
+  {
+    "id": 67,
+    "name": "Dragonfly Black",
+    "name_full": "Drake Dragonfly Black",
+    "slug": "dragonfly-black",
+    "company_name": "Drake Interplanetary"
+  },
+  {
+    "id": 68,
+    "name": "Dragonfly Yellowjacket",
+    "name_full": "Drake Dragonfly Yellowjacket",
+    "slug": "drak-dragonfly-yellow",
+    "company_name": "Drake Interplanetary"
+  },
+  {
+    "id": 69,
+    "name": "Eclipse",
+    "name_full": "Aegis Eclipse",
+    "slug": "aegs-eclipse",
+    "company_name": "Aegis Dynamics"
+  },
+  {
+    "id": 70,
+    "name": "Endeavor",
+    "name_full": "MISC Endeavor",
+    "slug": "endeavor",
+    "company_name": "Musashi Industrial and Starflight Concern"
+  },
+  {
+    "id": 71,
+    "name": "Expanse",
+    "name_full": "MISC Expanse",
+    "slug": "expanse",
+    "company_name": "Musashi Industrial and Starflight Concern"
+  },
+  {
+    "id": 72,
+    "name": "F7A Hornet Mk I",
+    "name_full": "Anvil F7A Hornet Mk I",
+    "slug": "f7a-hornet-mk-i",
+    "company_name": "Anvil Aerospace"
+  },
+  {
+    "id": 73,
+    "name": "F7C Hornet Mk II",
+    "name_full": "Anvil F7C Hornet Mk II",
+    "slug": "anvl-hornet-f7c-mk2",
+    "company_name": "Anvil Aerospace"
+  },
+  {
+    "id": 74,
+    "name": "F7C Hornet Wildfire Mk I",
+    "name_full": "Anvil F7C Hornet Wildfire Mk I",
+    "slug": "anvl-hornet-f7c-wildfire",
+    "company_name": "Anvil Aerospace"
+  },
+  {
+    "id": 75,
+    "name": "F7C-M Super Hornet Mk I",
+    "name_full": "Anvil F7C-M Super Hornet Mk I",
+    "slug": "anvl-hornet-f7cm",
+    "company_name": "Anvil Aerospace"
+  },
+  {
+    "id": 76,
+    "name": "F7C-M Super Hornet Heartseeker Mk I",
+    "name_full": "Anvil F7C-M Super Hornet Heartseeker Mk I",
+    "slug": "f7c-m-super-hornet-heartseeker-mk-i",
+    "company_name": "Anvil Aerospace"
+  },
+  {
+    "id": 77,
+    "name": "F7C-R Hornet Tracker Mk I",
+    "name_full": "Anvil F7C-R Hornet Tracker Mk I",
+    "slug": "anvl-hornet-f7cr",
+    "company_name": "Anvil Aerospace"
+  },
+  {
+    "id": 78,
+    "name": "F7C-S Hornet Ghost Mk I",
+    "name_full": "Anvil F7C-S Hornet Ghost Mk I",
+    "slug": "anvl-hornet-f7cs",
+    "company_name": "Anvil Aerospace"
+  },
+  {
+    "id": 79,
+    "name": "F8C Lightning",
+    "name_full": "Anvil F8C Lightning",
+    "slug": "anvl-lightning-f8c",
+    "company_name": "Anvil Aerospace"
+  },
+  {
+    "id": 80,
+    "name": "Freelancer",
+    "name_full": "MISC Freelancer",
+    "slug": "misc-freelancer",
+    "company_name": "Musashi Industrial and Starflight Concern"
+  },
+  {
+    "id": 81,
+    "name": "Freelancer DUR",
+    "name_full": "MISC Freelancer DUR",
+    "slug": "misc-freelancer-dur",
+    "company_name": "Musashi Industrial and Starflight Concern"
+  },
+  {
+    "id": 82,
+    "name": "Freelancer MAX",
+    "name_full": "MISC Freelancer MAX",
+    "slug": "misc-freelancer-max",
+    "company_name": "Musashi Industrial and Starflight Concern"
+  },
+  {
+    "id": 83,
+    "name": "Freelancer MIS",
+    "name_full": "MISC Freelancer MIS",
+    "slug": "misc-freelancer-mis",
+    "company_name": "Musashi Industrial and Starflight Concern"
+  },
+  {
+    "id": 84,
+    "name": "Fury",
+    "name_full": "Mirai Fury",
+    "slug": "fury",
+    "company_name": "Mirai"
+  },
+  {
+    "id": 85,
+    "name": "Fury LX",
+    "name_full": "Mirai Fury LX",
+    "slug": "misc-fury-lx",
+    "company_name": "Mirai"
+  },
+  {
+    "id": 86,
+    "name": "Fury MX",
+    "name_full": "Mirai Fury MX",
+    "slug": "fury-mx",
+    "company_name": "Mirai"
+  },
+  {
+    "id": 87,
+    "name": "G12",
+    "name_full": "Origin G12",
+    "slug": "g12",
+    "company_name": "Origin Jumpworks"
+  },
+  {
+    "id": 88,
+    "name": "G12-A",
+    "name_full": "Origin G12-A",
+    "slug": "g12-a",
+    "company_name": "Origin Jumpworks"
+  },
+  {
+    "id": 89,
+    "name": "G12-R",
+    "name_full": "Origin G12-R",
+    "slug": "g12-r",
+    "company_name": "Origin Jumpworks"
+  },
+  {
+    "id": 90,
+    "name": "Galaxy",
+    "name_full": "RSI Galaxy",
+    "slug": "galaxy",
+    "company_name": "Roberts Space Industries"
+  },
+  {
+    "id": 91,
+    "name": "Genesis Starliner",
+    "name_full": "Crusader Genesis Starliner",
+    "slug": "genesis-starliner",
+    "company_name": "Crusader Industries"
+  },
+  {
+    "id": 92,
+    "name": "Gladiator",
+    "name_full": "Anvil Gladiator",
+    "slug": "anvl-gladiator",
+    "company_name": "Anvil Aerospace"
+  },
+  {
+    "id": 93,
+    "name": "Gladius",
+    "name_full": "Aegis Gladius",
+    "slug": "aegs-gladius",
+    "company_name": "Aegis Dynamics"
+  },
+  {
+    "id": 94,
+    "name": "Gladius Pirate",
+    "name_full": "Aegis Gladius Pirate",
+    "slug": "gladius-pirate",
+    "company_name": "Aegis Dynamics"
+  },
+  {
+    "id": 95,
+    "name": "Gladius Valiant",
+    "name_full": "Aegis Gladius Valiant",
+    "slug": "aegs-gladius-valiant",
+    "company_name": "Aegis Dynamics"
+  },
+  {
+    "id": 96,
+    "name": "Glaive",
+    "name_full": "Esperia Glaive",
+    "slug": "vncl-glaive",
+    "company_name": "Esperia Incorporation"
+  },
+  {
+    "id": 97,
+    "name": "Hammerhead",
+    "name_full": "Aegis Hammerhead",
+    "slug": "aegs-hammerhead",
+    "company_name": "Aegis Dynamics"
+  },
+  {
+    "id": 98,
+    "name": "Hammerhead Best In Show Edition",
+    "name_full": "Aegis Hammerhead Best In Show Edition",
+    "slug": "hammerhead-best-in-show-edition",
+    "company_name": "Aegis Dynamics"
+  },
+  {
+    "id": 99,
+    "name": "Hawk",
+    "name_full": "Anvil Hawk",
+    "slug": "anvl-hawk",
+    "company_name": "Anvil Aerospace"
+  },
+  {
+    "id": 100,
+    "name": "Herald",
+    "name_full": "Drake Herald",
+    "slug": "drak-herald",
+    "company_name": "Drake Interplanetary"
+  },
+  {
+    "id": 101,
+    "name": "HoverQuad",
+    "name_full": "C.O. HoverQuad",
+    "slug": "cnou-hoverquad",
+    "company_name": "Consolidated Outland"
+  },
+  {
+    "id": 102,
+    "name": "Hull A",
+    "name_full": "MISC Hull A",
+    "slug": "misc-hull-a",
+    "company_name": "Musashi Industrial and Starflight Concern"
+  },
+  {
+    "id": 103,
+    "name": "Hull B",
+    "name_full": "MISC Hull B",
+    "slug": "hull-b",
+    "company_name": "Musashi Industrial and Starflight Concern"
+  },
+  {
+    "id": 104,
+    "name": "Hull C",
+    "name_full": "MISC Hull C",
+    "slug": "hull-c",
+    "company_name": "Musashi Industrial and Starflight Concern"
+  },
+  {
+    "id": 105,
+    "name": "Hull D",
+    "name_full": "MISC Hull D",
+    "slug": "hull-d",
+    "company_name": "Musashi Industrial and Starflight Concern"
+  },
+  {
+    "id": 106,
+    "name": "Hull E",
+    "name_full": "MISC Hull E",
+    "slug": "hull-e",
+    "company_name": "Musashi Industrial and Starflight Concern"
+  },
+  {
+    "id": 107,
+    "name": "Hurricane",
+    "name_full": "Anvil Hurricane",
+    "slug": "anvl-hurricane",
+    "company_name": "Anvil Aerospace"
+  },
+  {
+    "id": 108,
+    "name": "Idris-M",
+    "name_full": "Aegis Idris-M",
+    "slug": "idris-m",
+    "company_name": "Aegis Dynamics"
+  },
+  {
+    "id": 109,
+    "name": "Idris-P",
+    "name_full": "Aegis Idris-P",
+    "slug": "idris-p",
+    "company_name": "Aegis Dynamics"
+  },
+  {
+    "id": 110,
+    "name": "Javelin",
+    "name_full": "Aegis Javelin",
+    "slug": "aegs-javelin",
+    "company_name": "Aegis Dynamics"
+  },
+  {
+    "id": 111,
+    "name": "Khartu-al",
+    "name_full": "Aopoa Khartu-al",
+    "slug": "khartu-al",
+    "company_name": "Aopoa"
+  },
+  {
+    "id": 112,
+    "name": "Kraken",
+    "name_full": "Drake Kraken",
+    "slug": "kraken",
+    "company_name": "Drake Interplanetary"
+  },
+  {
+    "id": 113,
+    "name": "Kraken Privateer",
+    "name_full": "Drake Kraken Privateer",
+    "slug": "kraken-privateer",
+    "company_name": "Drake Interplanetary"
+  },
+  {
+    "id": 114,
+    "name": "Legionnaire",
+    "name_full": "Anvil Legionnaire",
+    "slug": "legionnaire",
+    "company_name": "Anvil Aerospace"
+  },
+  {
+    "id": 115,
+    "name": "Liberator",
+    "name_full": "Anvil Liberator",
+    "slug": "liberator",
+    "company_name": "Anvil Aerospace"
+  },
+  {
+    "id": 116,
+    "name": "Lynx",
+    "name_full": "RSI Lynx",
+    "slug": "rsi-lynx",
+    "company_name": "Roberts Space Industries"
+  },
+  {
+    "id": 117,
+    "name": "M2 Hercules Starlifter",
+    "name_full": "Crusader M2 Hercules Starlifter",
+    "slug": "m2-hercules-starlifter",
+    "company_name": "Crusader Industries"
+  },
+  {
+    "id": 118,
+    "name": "M50",
+    "name_full": "Origin M50",
+    "slug": "m50",
+    "company_name": "Origin Jumpworks"
+  },
+  {
+    "id": 119,
+    "name": "Mantis",
+    "name_full": "RSI Mantis",
+    "slug": "rsi-mantis",
+    "company_name": "Roberts Space Industries"
+  },
+  {
+    "id": 120,
+    "name": "Merchantman",
+    "name_full": "Banu Merchantman",
+    "slug": "merchantman",
+    "company_name": "Banu Souli"
+  },
+  {
+    "id": 121,
+    "name": "Mercury Star Runner",
+    "name_full": "Crusader Mercury Star Runner",
+    "slug": "mercury-star-runner",
+    "company_name": "Crusader Industries"
+  },
+  {
+    "id": 122,
+    "name": "MOLE",
+    "name_full": "Argo MOLE",
+    "slug": "argo-mole",
+    "company_name": "Argo Astronautics"
+  },
+  {
+    "id": 123,
+    "name": "MOLE Carbon Edition",
+    "name_full": "Argo MOLE Carbon Edition",
+    "slug": "mole-carbon-edition",
+    "company_name": "Argo Astronautics"
+  },
+  {
+    "id": 124,
+    "name": "MOLE Talus Edition",
+    "name_full": "Argo MOLE Talus Edition",
+    "slug": "mole-talus-edition",
+    "company_name": "Argo Astronautics"
+  },
+  {
+    "id": 125,
+    "name": "MPUV Cargo",
+    "name_full": "Argo MPUV Cargo",
+    "slug": "mpuv-cargo",
+    "company_name": "Argo Astronautics"
+  },
+  {
+    "id": 126,
+    "name": "MPUV Personnel",
+    "name_full": "Argo MPUV Personnel",
+    "slug": "mpuv-personnel",
+    "company_name": "Argo Astronautics"
+  },
+  {
+    "id": 127,
+    "name": "MULE",
+    "name_full": "Drake MULE",
+    "slug": "mule",
+    "company_name": "Drake Interplanetary"
+  },
+  {
+    "id": 128,
+    "name": "Mustang Alpha",
+    "name_full": "C.O. Mustang Alpha",
+    "slug": "cnou-mustang-alpha",
+    "company_name": "Consolidated Outland"
+  },
+  {
+    "id": 129,
+    "name": "Mustang Alpha Vindicator",
+    "name_full": "C.O. Mustang Alpha Vindicator",
+    "slug": "mustang-alpha-vindicator",
+    "company_name": "Consolidated Outland"
+  },
+  {
+    "id": 130,
+    "name": "Mustang Beta",
+    "name_full": "C.O. Mustang Beta",
+    "slug": "cnou-mustang-beta",
+    "company_name": "Consolidated Outland"
+  },
+  {
+    "id": 131,
+    "name": "Mustang Delta",
+    "name_full": "C.O. Mustang Delta",
+    "slug": "cnou-mustang-delta",
+    "company_name": "Consolidated Outland"
+  },
+  {
+    "id": 132,
+    "name": "Mustang Gamma",
+    "name_full": "C.O. Mustang Gamma",
+    "slug": "cnou-mustang-gamma",
+    "company_name": "Consolidated Outland"
+  },
+  {
+    "id": 133,
+    "name": "Mustang Omega",
+    "name_full": "C.O. Mustang Omega",
+    "slug": "cnou-mustang-omega",
+    "company_name": "Consolidated Outland"
+  },
+  {
+    "id": 134,
+    "name": "Nautilus",
+    "name_full": "Aegis Nautilus",
+    "slug": "nautilus",
+    "company_name": "Aegis Dynamics"
+  },
+  {
+    "id": 135,
+    "name": "Nautilus Solstice Edition",
+    "name_full": "Aegis Nautilus Solstice Edition",
+    "slug": "nautilus-solstice-edition",
+    "company_name": "Aegis Dynamics"
+  },
+  {
+    "id": 136,
+    "name": "Nomad",
+    "name_full": "C.O. Nomad",
+    "slug": "cnou-nomad",
+    "company_name": "Consolidated Outland"
+  },
+  {
+    "id": 137,
+    "name": "Nova Tank",
+    "name_full": "Tumbril Nova Tank",
+    "slug": "nova-tank",
+    "company_name": "Tumbril Land Systems"
+  },
+  {
+    "id": 138,
+    "name": "Nox",
+    "name_full": "Aopoa Nox",
+    "slug": "xian-nox",
+    "company_name": "Aopoa"
+  },
+  {
+    "id": 139,
+    "name": "Nox Kue",
+    "name_full": "Aopoa Nox Kue",
+    "slug": "xian-nox-kue",
+    "company_name": "Aopoa"
+  },
+  {
+    "id": 140,
+    "name": "Odyssey",
+    "name_full": "MISC Odyssey",
+    "slug": "odyssey",
+    "company_name": "Musashi Industrial and Starflight Concern"
+  },
+  {
+    "id": 141,
+    "name": "Orion",
+    "name_full": "RSI Orion",
+    "slug": "orion",
+    "company_name": "Roberts Space Industries"
+  },
+  {
+    "id": 142,
+    "name": "P-52 Merlin",
+    "name_full": "Kruger P-52 Merlin",
+    "slug": "krig-p52-merlin",
+    "company_name": "Kruger Intergalactic"
+  },
+  {
+    "id": 143,
+    "name": "P-72 Archimedes",
+    "name_full": "Kruger P-72 Archimedes",
+    "slug": "krig-p72-archimedes",
+    "company_name": "Kruger Intergalactic"
+  },
+  {
+    "id": 144,
+    "name": "P-72 Archimedes Emerald",
+    "name_full": "Kruger P-72 Archimedes Emerald",
+    "slug": "krig-p72-archimedes-emerald",
+    "company_name": "Kruger Intergalactic"
+  },
+  {
+    "id": 145,
+    "name": "Perseus",
+    "name_full": "RSI Perseus",
+    "slug": "perseus",
+    "company_name": "Roberts Space Industries"
+  },
+  {
+    "id": 146,
+    "name": "Pioneer",
+    "name_full": "C.O. Pioneer",
+    "slug": "pioneer",
+    "company_name": "Consolidated Outland"
+  },
+  {
+    "id": 147,
+    "name": "Polaris",
+    "name_full": "RSI Polaris",
+    "slug": "polaris",
+    "company_name": "Roberts Space Industries"
+  },
+  {
+    "id": 148,
+    "name": "Prospector",
+    "name_full": "MISC Prospector",
+    "slug": "misc-prospector",
+    "company_name": "Musashi Industrial and Starflight Concern"
+  },
+  {
+    "id": 149,
+    "name": "Prowler",
+    "name_full": "Esperia Prowler",
+    "slug": "prowler",
+    "company_name": "Esperia Incorporation"
+  },
+  {
+    "id": 150,
+    "name": "PTV",
+    "name_full": "Greycat PTV",
+    "slug": "grin-ptv",
+    "company_name": "Greycat Industrial"
+  },
+  {
+    "id": 151,
+    "name": "RAFT",
+    "name_full": "Argo RAFT",
+    "slug": "argo-raft",
+    "company_name": "Argo Astronautics"
+  },
+  {
+    "id": 152,
+    "name": "Railen",
+    "name_full": "Gatac Railen",
+    "slug": "railen",
+    "company_name": "Gatac Manufacture"
+  },
+  {
+    "id": 153,
+    "name": "Ranger CV",
+    "name_full": "Tumbril Ranger CV",
+    "slug": "ranger-cv",
+    "company_name": "Tumbril Land Systems"
+  },
+  {
+    "id": 154,
+    "name": "Ranger RC",
+    "name_full": "Tumbril Ranger RC",
+    "slug": "ranger-rc",
+    "company_name": "Tumbril Land Systems"
+  },
+  {
+    "id": 155,
+    "name": "Ranger TR",
+    "name_full": "Tumbril Ranger TR",
+    "slug": "ranger-tr",
+    "company_name": "Tumbril Land Systems"
+  },
+  {
+    "id": 156,
+    "name": "Razor",
+    "name_full": "Mirai Razor",
+    "slug": "misc-razor",
+    "company_name": "Mirai"
+  },
+  {
+    "id": 157,
+    "name": "Razor EX",
+    "name_full": "Mirai Razor EX",
+    "slug": "misc-razor-ex",
+    "company_name": "Mirai"
+  },
+  {
+    "id": 158,
+    "name": "Razor LX",
+    "name_full": "Mirai Razor LX",
+    "slug": "misc-razor-lx",
+    "company_name": "Mirai"
+  },
+  {
+    "id": 159,
+    "name": "Reclaimer",
+    "name_full": "Aegis Reclaimer",
+    "slug": "aegs-reclaimer",
+    "company_name": "Aegis Dynamics"
+  },
+  {
+    "id": 160,
+    "name": "Reclaimer Best In Show Edition",
+    "name_full": "Aegis Reclaimer Best In Show Edition",
+    "slug": "reclaimer-best-in-show-edition",
+    "company_name": "Aegis Dynamics"
+  },
+  {
+    "id": 161,
+    "name": "Redeemer",
+    "name_full": "Aegis Redeemer",
+    "slug": "redeemer",
+    "company_name": "Aegis Dynamics"
+  },
+  {
+    "id": 162,
+    "name": "Reliant Kore",
+    "name_full": "MISC Reliant Kore",
+    "slug": "misc-reliant",
+    "company_name": "Musashi Industrial and Starflight Concern"
+  },
+  {
+    "id": 163,
+    "name": "Reliant Mako",
+    "name_full": "MISC Reliant Mako",
+    "slug": "misc-reliant-mako",
+    "company_name": "Musashi Industrial and Starflight Concern"
+  },
+  {
+    "id": 164,
+    "name": "Reliant Sen",
+    "name_full": "MISC Reliant Sen",
+    "slug": "misc-reliant-sen",
+    "company_name": "Musashi Industrial and Starflight Concern"
+  },
+  {
+    "id": 165,
+    "name": "Reliant Tana",
+    "name_full": "MISC Reliant Tana",
+    "slug": "misc-reliant-tana",
+    "company_name": "Musashi Industrial and Starflight Concern"
+  },
+  {
+    "id": 166,
+    "name": "Retaliator",
+    "name_full": "Aegis Retaliator",
+    "slug": "retaliator",
+    "company_name": "Aegis Dynamics"
+  },
+  {
+    "id": 167,
+    "name": "Retaliator Bomber",
+    "name_full": "Aegis Retaliator Bomber",
+    "slug": "retaliator-bomber",
+    "company_name": "Aegis Dynamics"
+  },
+  {
+    "id": 168,
+    "name": "ROC",
+    "name_full": "Greycat ROC",
+    "slug": "grin-roc",
+    "company_name": "Greycat Industrial"
+  },
+  {
+    "id": 169,
+    "name": "ROC-DS",
+    "name_full": "Greycat ROC-DS",
+    "slug": "grin-roc-ds",
+    "company_name": "Greycat Industrial"
+  },
+  {
+    "id": 170,
+    "name": "Sabre",
+    "name_full": "Aegis Sabre",
+    "slug": "aegs-sabre",
+    "company_name": "Aegis Dynamics"
+  },
+  {
+    "id": 171,
+    "name": "Sabre Comet",
+    "name_full": "Aegis Sabre Comet",
+    "slug": "aegs-sabre-comet",
+    "company_name": "Aegis Dynamics"
+  },
+  {
+    "id": 172,
+    "name": "Sabre Raven",
+    "name_full": "Aegis Sabre Raven",
+    "slug": "aegs-sabre-raven",
+    "company_name": "Aegis Dynamics"
+  },
+  {
+    "id": 173,
+    "name": "San tok.Yāi",
+    "name_full": "Aopoa San tok.Yāi",
+    "slug": "san-tok-y-i",
+    "company_name": "Aopoa"
+  },
+  {
+    "id": 174,
+    "name": "Scorpius",
+    "name_full": "RSI Scorpius",
+    "slug": "scorpius",
+    "company_name": "Roberts Space Industries"
+  },
+  {
+    "id": 175,
+    "name": "Scorpius Antares",
+    "name_full": "RSI Scorpius Antares",
+    "slug": "rsi-scorpius-antares",
+    "company_name": "Roberts Space Industries"
+  },
+  {
+    "id": 176,
+    "name": "Scythe",
+    "name_full": "Vanduul Scythe",
+    "slug": "scythe",
+    "company_name": "Vanduul Clans"
+  },
+  {
+    "id": 177,
+    "name": "Spartan",
+    "name_full": "Anvil Spartan",
+    "slug": "anvl-spartan",
+    "company_name": "Anvil Aerospace"
+  },
+  {
+    "id": 178,
+    "name": "A1 Spirit",
+    "name_full": "Crusader A1 Spirit",
+    "slug": "a1-spirit",
+    "company_name": "Crusader Industries"
+  },
+  {
+    "id": 179,
+    "name": "C1 Spirit",
+    "name_full": "Crusader C1 Spirit",
+    "slug": "c1-spirit",
+    "company_name": "Crusader Industries"
+  },
+  {
+    "id": 180,
+    "name": "E1 Spirit",
+    "name_full": "Crusader E1 Spirit",
+    "slug": "e1-spirit",
+    "company_name": "Crusader Industries"
+  },
+  {
+    "id": 181,
+    "name": "SRV",
+    "name_full": "Argo SRV",
+    "slug": "srv",
+    "company_name": "Argo Astronautics"
+  },
+  {
+    "id": 182,
+    "name": "Starfarer",
+    "name_full": "MISC Starfarer",
+    "slug": "misc-starfarer",
+    "company_name": "Musashi Industrial and Starflight Concern"
+  },
+  {
+    "id": 183,
+    "name": "Starfarer Gemini",
+    "name_full": "MISC Starfarer Gemini",
+    "slug": "misc-starfarer-gemini",
+    "company_name": "Musashi Industrial and Starflight Concern"
+  },
+  {
+    "id": 184,
+    "name": "Storm",
+    "name_full": "Tumbril Storm",
+    "slug": "tmbl-storm",
+    "company_name": "Tumbril Land Systems"
+  },
+  {
+    "id": 186,
+    "name": "Storm AA",
+    "name_full": "Tumbril Storm AA",
+    "slug": "tmbl-storm-aa",
+    "company_name": "Tumbril Land Systems"
+  },
+  {
+    "id": 187,
+    "name": "STV",
+    "name_full": "Greycat STV",
+    "slug": "stv",
+    "company_name": "Greycat Industrial"
+  },
+  {
+    "id": 188,
+    "name": "Syulen",
+    "name_full": "Gatac Syulen",
+    "slug": "gama-syulen",
+    "company_name": "Gatac Manufacture"
+  },
+  {
+    "id": 189,
+    "name": "Talon",
+    "name_full": "Esperia Talon",
+    "slug": "espr-talon",
+    "company_name": "Esperia Incorporation"
+  },
+  {
+    "id": 190,
+    "name": "Talon Shrike",
+    "name_full": "Esperia Talon Shrike",
+    "slug": "espr-talon-shrike",
+    "company_name": "Esperia Incorporation"
+  },
+  {
+    "id": 191,
+    "name": "Terrapin",
+    "name_full": "Anvil Terrapin",
+    "slug": "anvl-terrapin",
+    "company_name": "Anvil Aerospace"
+  },
+  {
+    "id": 192,
+    "name": "Ursa",
+    "name_full": "RSI Ursa",
+    "slug": "rsi-ursa-rover",
+    "company_name": "Roberts Space Industries"
+  },
+  {
+    "id": 193,
+    "name": "Ursa Fortuna",
+    "name_full": "RSI Ursa Fortuna",
+    "slug": "rsi-ursa-rover-emerald",
+    "company_name": "Roberts Space Industries"
+  },
+  {
+    "id": 194,
+    "name": "Valkyrie",
+    "name_full": "Anvil Valkyrie",
+    "slug": "anvl-valkyrie",
+    "company_name": "Anvil Aerospace"
+  },
+  {
+    "id": 195,
+    "name": "Valkyrie Liberator Edition",
+    "name_full": "Anvil Valkyrie Liberator Edition",
+    "slug": "valkyrie-liberator-edition",
+    "company_name": "Anvil Aerospace"
+  },
+  {
+    "id": 196,
+    "name": "Vanguard Harbinger",
+    "name_full": "Aegis Vanguard Harbinger",
+    "slug": "aegs-vanguard-harbinger",
+    "company_name": "Aegis Dynamics"
+  },
+  {
+    "id": 197,
+    "name": "Vanguard Hoplite",
+    "name_full": "Aegis Vanguard Hoplite",
+    "slug": "aegs-vanguard-hoplite",
+    "company_name": "Aegis Dynamics"
+  },
+  {
+    "id": 198,
+    "name": "Vanguard Sentinel",
+    "name_full": "Aegis Vanguard Sentinel",
+    "slug": "aegs-vanguard-sentinel",
+    "company_name": "Aegis Dynamics"
+  },
+  {
+    "id": 199,
+    "name": "Vanguard Warden",
+    "name_full": "Aegis Vanguard Warden",
+    "slug": "aegs-vanguard",
+    "company_name": "Aegis Dynamics"
+  },
+  {
+    "id": 200,
+    "name": "Vulcan",
+    "name_full": "Aegis Vulcan",
+    "slug": "vulcan",
+    "company_name": "Aegis Dynamics"
+  },
+  {
+    "id": 201,
+    "name": "Vulture",
+    "name_full": "Drake Vulture",
+    "slug": "vulture",
+    "company_name": "Drake Interplanetary"
+  },
+  {
+    "id": 202,
+    "name": "X1",
+    "name_full": "Origin X1",
+    "slug": "orig-x1",
+    "company_name": "Origin Jumpworks"
+  },
+  {
+    "id": 203,
+    "name": "X1 Force",
+    "name_full": "Origin X1 Force",
+    "slug": "orig-x1-force",
+    "company_name": "Origin Jumpworks"
+  },
+  {
+    "id": 204,
+    "name": "X1 Velocity",
+    "name_full": "Origin X1 Velocity",
+    "slug": "orig-x1-velocity",
+    "company_name": "Origin Jumpworks"
+  },
+  {
+    "id": 205,
+    "name": "Zeus Mk II ES",
+    "name_full": "RSI Zeus Mk II ES",
+    "slug": "zeus-mk-ii-es",
+    "company_name": "Roberts Space Industries"
+  },
+  {
+    "id": 206,
+    "name": "Zeus Mk II MR",
+    "name_full": "RSI Zeus Mk II MR",
+    "slug": "zeus-mk-ii-mr",
+    "company_name": "Roberts Space Industries"
+  },
+  {
+    "id": 207,
+    "name": "Zeus Mk II CL",
+    "name_full": "RSI Zeus Mk II CL",
+    "slug": "zeus-mk-ii-cl",
+    "company_name": "Roberts Space Industries"
+  },
+  {
+    "id": 208,
+    "name": "Endeavor Landing Bay Pod",
+    "name_full": "MISC Endeavor Landing Bay Pod",
+    "slug": "endeavor-landing-bay-pod",
+    "company_name": "Musashi Industrial and Starflight Concern"
+  },
+  {
+    "id": 209,
+    "name": "Endeavor General Research Pod",
+    "name_full": "MISC Endeavor General Research Pod",
+    "slug": "endeavor-general-research-pod",
+    "company_name": "Musashi Industrial and Starflight Concern"
+  },
+  {
+    "id": 210,
+    "name": "Endeavor Medical Bay Pod",
+    "name_full": "MISC Endeavor Medical Bay Pod",
+    "slug": "endeavor-medical-bay-pod",
+    "company_name": "Musashi Industrial and Starflight Concern"
+  },
+  {
+    "id": 211,
+    "name": "Endeavor Telescope Array Bay Pod",
+    "name_full": "MISC Endeavor Telescope Array Bay Pod",
+    "slug": "endeavor-telescope-array-bay-pod",
+    "company_name": "Musashi Industrial and Starflight Concern"
+  },
+  {
+    "id": 212,
+    "name": "Endeavor Fuel Bay Pod",
+    "name_full": "MISC Endeavor Fuel Bay Pod",
+    "slug": "endeavor-fuel-bay-pod",
+    "company_name": "Musashi Industrial and Starflight Concern"
+  },
+  {
+    "id": 213,
+    "name": "Galaxy Cargo Module",
+    "name_full": "RSI Galaxy Cargo Module",
+    "slug": "galaxy-cargo-module",
+    "company_name": "Roberts Space Industries"
+  },
+  {
+    "id": 214,
+    "name": "Galaxy Medical Module",
+    "name_full": "RSI Galaxy Medical Module",
+    "slug": "galaxy-medical-module",
+    "company_name": "Roberts Space Industries"
+  },
+  {
+    "id": 215,
+    "name": "Galaxy Refinery Module",
+    "name_full": "RSI Galaxy Refinery Module",
+    "slug": "galaxy-refinery-module",
+    "company_name": "Roberts Space Industries"
+  },
+  {
+    "id": 216,
+    "name": "Retaliator Cargo Module - Stern",
+    "name_full": "Aegis Retaliator Cargo Module - Stern",
+    "slug": "retaliator-cargo-module---stern",
+    "company_name": "Aegis Dynamics"
+  },
+  {
+    "id": 217,
+    "name": "Retaliator Cargo Module - Bow",
+    "name_full": "Aegis Retaliator Cargo Module - Bow",
+    "slug": "retaliator-cargo-module---bow",
+    "company_name": "Aegis Dynamics"
+  },
+  {
+    "id": 218,
+    "name": "Retaliator Living Front Module",
+    "name_full": "Aegis Retaliator Living Front Module",
+    "slug": "retaliator-living-front-module",
+    "company_name": "Aegis Dynamics"
+  },
+  {
+    "id": 219,
+    "name": "Retaliator Living Rear Module",
+    "name_full": "Aegis Retaliator Living Rear Module",
+    "slug": "retaliator-living-rear-module",
+    "company_name": "Aegis Dynamics"
+  },
+  {
+    "id": 220,
+    "name": "Retaliator Torpedo Module – Bow",
+    "name_full": "Aegis Retaliator Torpedo Module – Bow",
+    "slug": "retaliator-torpedo-module-bow",
+    "company_name": "Aegis Dynamics"
+  },
+  {
+    "id": 221,
+    "name": "Retaliator Dropship Front Module",
+    "name_full": "Aegis Retaliator Dropship Front Module",
+    "slug": "retaliator-dropship-front-module",
+    "company_name": "Aegis Dynamics"
+  },
+  {
+    "id": 222,
+    "name": "F8C Lightning Executive Edition",
+    "name_full": "Anvil F8C Lightning Executive Edition",
+    "slug": "anvl-lightning-f8c-exec",
+    "company_name": "Anvil Aerospace"
+  },
+  {
+    "id": 223,
+    "name": "F7A Hornet Mk II",
+    "name_full": "Anvil F7A Hornet Mk II",
+    "slug": "f7a-hornet-mk-ii",
+    "company_name": "Anvil Aerospace"
+  },
+  {
+    "id": 224,
+    "name": "F7C Hornet Mk I",
+    "name_full": "Anvil F7C Hornet Mk I",
+    "slug": "anvl-hornet-f7c",
+    "company_name": "Anvil Aerospace"
+  },
+  {
+    "id": 225,
+    "name": "Pulse",
+    "name_full": "Mirai Pulse",
+    "slug": "mrai-pulse",
+    "company_name": "Mirai"
+  },
+  {
+    "id": 226,
+    "name": "Pulse LX",
+    "name_full": "Mirai Pulse LX",
+    "slug": "mrai-pulse-lx",
+    "company_name": "Mirai"
+  },
+  {
+    "id": 227,
+    "name": "MPUV Tractor",
+    "name_full": "Argo MPUV Tractor",
+    "slug": "mpuv-tractor",
+    "company_name": "Argo Astronautics"
+  },
+  {
+    "id": 228,
+    "name": "Sabre Firebird",
+    "name_full": "Aegis Sabre Firebird",
+    "slug": "aegs-sabre-firebird",
+    "company_name": "Aegis Dynamics"
+  },
+  {
+    "id": 229,
+    "name": "Ursa Medivac",
+    "name_full": "RSI Ursa Medivac",
+    "slug": "ursa-medivac",
+    "company_name": "Roberts Space Industries"
+  },
+  {
+    "id": 230,
+    "name": "Ironclad",
+    "name_full": "Drake Ironclad",
+    "slug": "ironclad",
+    "company_name": "Drake Interplanetary"
+  },
+  {
+    "id": 231,
+    "name": "Ironclad Assault",
+    "name_full": "Drake Ironclad Assault",
+    "slug": "ironclad-assault",
+    "company_name": "Drake Interplanetary"
+  },
+  {
+    "id": 232,
+    "name": "Sabre Peregrine",
+    "name_full": "Aegis Sabre Peregrine",
+    "slug": "aegs-sabre-peregrine",
+    "company_name": "Aegis Dynamics"
+  },
+  {
+    "id": 233,
+    "name": "ATLS",
+    "name_full": "Argo ATLS",
+    "slug": "atls",
+    "company_name": "Argo Astronautics"
+  },
+  {
+    "id": 234,
+    "name": "Fortune",
+    "name_full": "MISC Fortune",
+    "slug": "misc-fortune",
+    "company_name": "Musashi Industrial and Starflight Concern"
+  },
+  {
+    "id": 236,
+    "name": "Intrepid",
+    "name_full": "Crusader Intrepid",
+    "slug": "crus-intrepid",
+    "company_name": "Crusader Industries"
+  },
+  {
+    "id": 238,
+    "name": "Guardian",
+    "name_full": "Mirai Guardian",
+    "slug": "mrai-guardian",
+    "company_name": "Mirai"
+  },
+  {
+    "id": 239,
+    "name": "Guardian QI",
+    "name_full": "Mirai Guardian QI",
+    "slug": "guardian-qi",
+    "company_name": "Mirai"
+  },
+  {
+    "id": 240,
+    "name": "CSV-SM",
+    "name_full": "Argo CSV-SM",
+    "slug": "csv-sm",
+    "company_name": "Argo Astronautics"
+  },
+  {
+    "id": 241,
+    "name": "Starlancer TAC",
+    "name_full": "MISC Starlancer TAC",
+    "slug": "starlancer-tac",
+    "company_name": "Musashi Industrial and Starflight Concern"
+  },
+  {
+    "id": 242,
+    "name": "Starlancer MAX",
+    "name_full": "MISC Starlancer MAX",
+    "slug": "starlancer-max",
+    "company_name": "Musashi Industrial and Starflight Concern"
+  },
+  {
+    "id": 243,
+    "name": "Starlancer BLD",
+    "name_full": "MISC Starlancer BLD",
+    "slug": "starlancer-bld",
+    "company_name": "Musashi Industrial and Starflight Concern"
+  },
+  {
+    "id": 244,
+    "name": "CSV-FM",
+    "name_full": "Argo CSV-FM",
+    "slug": "csv-fm",
+    "company_name": "Argo Astronautics"
+  },
+  {
+    "id": 246,
+    "name": "F7C-R Hornet Tracker Mk II",
+    "name_full": "Anvil F7C-R Hornet Tracker Mk II",
+    "slug": "anvl-hornet-f7cr-mk2",
+    "company_name": "Anvil Aerospace"
+  },
+  {
+    "id": 247,
+    "name": "F7C-S Hornet Ghost Mk II",
+    "name_full": "Anvil F7C-S Hornet Ghost Mk II",
+    "slug": "anvl-hornet-f7cs-mk2",
+    "company_name": "Anvil Aerospace"
+  },
+  {
+    "id": 248,
+    "name": "Terrapin Medic",
+    "name_full": "Anvil Terrapin Medic",
+    "slug": "anvl-terrapin-medic",
+    "company_name": "Anvil Aerospace"
+  },
+  {
+    "id": 249,
+    "name": "Paladin",
+    "name_full": "Anvil Paladin",
+    "slug": "paladin",
+    "company_name": "Anvil Aerospace"
+  },
+  {
+    "id": 250,
+    "name": "F7C-M Super Hornet Mk II",
+    "name_full": "Anvil F7C-M Super Hornet Mk II",
+    "slug": "anvl-hornet-f7cm-mk2",
+    "company_name": "Anvil Aerospace"
+  },
+  {
+    "id": 251,
+    "name": "Golem",
+    "name_full": "Drake Golem",
+    "slug": "golem",
+    "company_name": "Drake Interplanetary"
+  },
+  {
+    "id": 252,
+    "name": "ATLS GEO",
+    "name_full": "Argo ATLS GEO",
+    "slug": "atls-geo",
+    "company_name": "Argo Astronautics"
+  },
+  {
+    "id": 254,
+    "name": "Retaliator Torpedo Module – Stern",
+    "name_full": "Aegis Retaliator Torpedo Module – Stern",
+    "slug": "retaliator-torpedo-module-stern",
+    "company_name": "Aegis Dynamics"
+  },
+  {
+    "id": 255,
+    "name": "Asgard",
+    "name_full": "Anvil Asgard",
+    "slug": "anvl-asgard",
+    "company_name": "Anvil Aerospace"
+  },
+  {
+    "id": 256,
+    "name": "MTC",
+    "name_full": "Greycat MTC",
+    "slug": "grin-mtc",
+    "company_name": "Greycat Industrial"
+  },
+  {
+    "id": 257,
+    "name": "Guardian MX",
+    "name_full": "Mirai Guardian MX",
+    "slug": "guardian-mx",
+    "company_name": "Mirai"
+  },
+  {
+    "id": 258,
+    "name": "ATLS IKTI",
+    "name_full": "Argo ATLS IKTI",
+    "slug": "atls-ikti",
+    "company_name": "Argo Astronautics"
+  },
+  {
+    "id": 259,
+    "name": "ATLS IKTI Rad",
+    "name_full": "Argo ATLS IKTI Rad",
+    "slug": "atls-ikti-rad",
+    "company_name": "Argo Astronautics"
+  },
+  {
+    "id": 260,
+    "name": "ATLS IKTI GEO",
+    "name_full": "Argo ATLS IKTI GEO",
+    "slug": "atls-ikti-geo",
+    "company_name": "Argo Astronautics"
+  },
+  {
+    "id": 261,
+    "name": "ATLS IKTI GEO Rad",
+    "name_full": "Argo ATLS IKTI GEO Rad",
+    "slug": "atls-ikti-geo-rad",
+    "company_name": "Argo Astronautics"
+  },
+  {
+    "id": 262,
+    "name": "Prowler Utility",
+    "name_full": "Esperia Prowler Utility",
+    "slug": "prowler-utility",
+    "company_name": "Esperia Incorporation"
+  },
+  {
+    "id": 263,
+    "name": "Meteor",
+    "name_full": "RSI Meteor",
+    "slug": "meteor",
+    "company_name": "Roberts Space Industries"
+  },
+  {
+    "id": 264,
+    "name": "L-21 Wolf",
+    "name_full": "Kruger L-21 Wolf",
+    "slug": "l-21-wolf",
+    "company_name": "Kruger Intergalactic"
+  },
+  {
+    "id": 265,
+    "name": "Stinger",
+    "name_full": "Esperia Stinger",
+    "slug": "stinger",
+    "company_name": "Esperia Incorporation"
+  },
+  {
+    "id": 266,
+    "name": "Shiv",
+    "name_full": "Grey's Market Shiv",
+    "slug": "shiv",
+    "company_name": "Grey&apos;s Market"
+  },
+  {
+    "id": 267,
+    "name": "L-22 Alpha Wolf",
+    "name_full": "Kruger L-22 Alpha Wolf",
+    "slug": "l-22-alpha-wolf",
+    "company_name": "Kruger Intergalactic"
+  },
+  {
+    "id": 268,
+    "name": "Clipper",
+    "name_full": "Drake Clipper",
+    "slug": "clipper",
+    "company_name": "Drake Interplanetary"
+  },
+  {
+    "id": 269,
+    "name": "Golem Ox",
+    "name_full": "Drake Golem Ox",
+    "slug": "golem-ox",
+    "company_name": "Drake Interplanetary"
+  },
+  {
+    "id": 270,
+    "name": "MDC",
+    "name_full": "Greycat MDC",
+    "slug": "mdc",
+    "company_name": "Greycat Industrial"
+  },
+  {
+    "id": 271,
+    "name": "Salvation",
+    "name_full": "RSI Salvation",
+    "slug": "salvation",
+    "company_name": "Roberts Space Industries"
+  },
+  {
+    "id": 272,
+    "name": "Auxilia",
+    "name_full": "Anvil Auxilia",
+    "slug": "auxilia",
+    "company_name": "Anvil Aerospace"
+  },
+  {
+    "id": 274,
+    "name": "S-65 Stingray",
+    "name_full": "Kruger S-65 Stingray",
+    "slug": "s-65-stingray",
+    "company_name": "Kruger Intergalactic"
+  },
+  {
+    "id": 275,
+    "name": "Hermes",
+    "name_full": "RSI Hermes",
+    "slug": "hermes",
+    "company_name": "Roberts Space Industries"
+  },
+  {
+    "id": 276,
+    "name": "MOTH",
+    "name_full": "Argo MOTH",
+    "slug": "moth",
+    "company_name": "Argo Astronautics"
+  },
+  {
+    "id": 278,
+    "name": "Aurora Mk II",
+    "name_full": "RSI Aurora Mk II",
+    "slug": "aurora-mk-ii",
+    "company_name": "Roberts Space Industries"
+  },
+  {
+    "id": 279,
+    "name": "Aurora Mk I SE",
+    "name_full": "RSI Aurora Mk I SE",
+    "slug": "aurora-mk-i-se",
+    "company_name": "Roberts Space Industries"
+  },
+  {
+    "id": 280,
+    "name": "UTV",
+    "name_full": "Greycat UTV",
+    "slug": "utv",
+    "company_name": "Greycat Industrial"
+  },
+  {
+    "id": 282,
+    "name": "Pitbull",
+    "name_full": "Drake Pitbull",
+    "slug": "pitbull",
+    "company_name": "Drake Interplanetary"
+  },
+  {
+    "id": 283,
+    "name": "M80",
+    "name_full": "Origin M80",
+    "slug": "m80",
+    "company_name": "Origin Jumpworks"
+  },
+  {
+    "id": 284,
+    "name": "Starlite",
+    "name_full": "MISC Starlite",
+    "slug": "starlite",
+    "company_name": "Musashi Industrial and Starflight Concern"
+  },
+  {
+    "id": 285,
+    "name": "Tiburon",
+    "name_full": "Aegis Tiburon",
+    "slug": "tiburon",
+    "company_name": "Aegis Dynamics"
+  },
+  {
+    "id": 286,
+    "name": "Odin",
+    "name_full": "Anvil Odin",
+    "slug": "odin",
+    "company_name": "Anvil Aerospace"
+  },
+  {
+    "id": 287,
+    "name": "Tyilui",
+    "name_full": "Gatac Tyilui",
+    "slug": "tyilui",
+    "company_name": "Gatac Manufacture"
+  },
+  {
+    "id": 289,
+    "name": "Basher",
+    "name_full": "Grey's Market Basher",
+    "slug": "basher",
+    "company_name": "Grey&apos;s Market"
+  },
+  {
+    "id": 290,
+    "name": "Sabre Raven EX",
+    "name_full": "Aegis Sabre Raven EX",
+    "slug": "sabre-raven-ex",
+    "company_name": "Aegis Dynamics"
+  },
+  {
+    "id": 291,
+    "name": "Sabre Raven EX",
+    "name_full": "Aegis Sabre Raven EX",
+    "slug": "sabre-raven-ex",
+    "company_name": "Aegis Dynamics"
+  }
+]

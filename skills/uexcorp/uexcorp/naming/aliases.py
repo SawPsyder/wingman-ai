@@ -53,6 +53,20 @@ def item_company_alias(company_name: str | None, name: str | None) -> str | None
     return combined
 
 
+def vehicle_name_words(name: str | None, full_name: str | None, slug: str | None) -> set[str]:
+    """Casefolded words of the short name, the full name, and the slug."""
+    found = set()
+    for text in (name, full_name):
+        for word in str(text or "").split():
+            token = word.casefold()
+            if len(token) >= 3:
+                found.add(token)
+    for part in str(slug or "").casefold().split("-"):
+        if len(part) >= 3:
+            found.add(part)
+    return found
+
+
 def vehicle_model_token(full_name: str | None, slug: str | None, company_name: str | None = None) -> str | None:
     """First word of ``name_full`` that the slug also uses.
 
@@ -60,7 +74,7 @@ def vehicle_model_token(full_name: str | None, slug: str | None, company_name: s
     rest of the slug still matches a word of the full name. ``fury-mx``
     keeps ``Fury``, because dropping that token leaves nothing to match.
     The company name is not a token. A later step keeps the word only
-    when one vehicle uses it.
+    when no other vehicle's name, full name, or slug contains it.
     """
     words = [word for word in str(full_name or "").split() if len(word) >= 3]
     parts = [part for part in str(slug or "").casefold().split("-") if part]
@@ -84,32 +98,33 @@ def vehicle_model_token(full_name: str | None, slug: str | None, company_name: s
 
 
 def add_vehicle_model_aliases(records: list[dict]) -> None:
-    """Alias that model word when no other vehicle uses it.
+    """Alias a model word only when one vehicle's names contain it.
 
-    ``Mercury`` then names the Star Runner. ``Fury`` and ``Hornet`` stay
-    shared, so they stay candidate lists. The record may carry
-    ``model_token``; this removes it.
+    Uniqueness is the word itself, not the token each ship happened to
+    choose. ``Constellation`` is Andromeda's token, but Aquila's full
+    name contains it, so it stays a candidate list. ``Mercury`` appears
+    on the Star Runner alone. Each record may carry ``model_token`` and
+    ``name_words``; this removes both.
     """
-    grouped: dict[str, list[dict]] = {}
+    owners: dict[str, int] = {}
+    for row in records:
+        for word in row.get("name_words") or ():
+            owners[word] = owners.get(word, 0) + 1
     for row in records:
         token = str(row.get("model_token") or "").strip()
-        if len(token) < 3:
+        folded = token.casefold()
+        if len(folded) < 3 or owners.get(folded) != 1:
             continue
-        grouped.setdefault(token.casefold(), []).append(row)
-    for rows in grouped.values():
-        if len(rows) != 1:
-            continue
-        row = rows[0]
-        token = str(row.get("model_token") or "").strip()
         name = str(row.get("name") or "")
         aliases = [str(alias) for alias in (row.get("aliases") or []) if str(alias).strip()]
         known = {alias.casefold() for alias in aliases}
         known.add(name.casefold())
-        if token.casefold() not in known:
+        if folded not in known:
             aliases.append(token)
             row["aliases"] = aliases
     for row in records:
         row.pop("model_token", None)
+        row.pop("name_words", None)
 
 
 def vehicle_slug_remainder(slug: str | None, short_name: str | None, full_name: str | None) -> str | None:

@@ -43,6 +43,7 @@ def _vehicle_records(vehicles) -> list[dict]:
     from skills.uexcorp.uexcorp.naming.aliases import (
         add_vehicle_model_aliases,
         vehicle_model_token,
+        vehicle_name_words,
         vehicle_slug_remainder,
     )
 
@@ -64,6 +65,7 @@ def _vehicle_records(vehicles) -> list[dict]:
         company_getter = getattr(vehicle, "get_company_name", None)
         company = company_getter() if callable(company_getter) else None
         record = {"key": full, "name": full, "aliases": aliases, "codes": []}
+        record["name_words"] = vehicle_name_words(short, full, slug)
         token = vehicle_model_token(full, slug, company)
         if token:
             record["model_token"] = token
