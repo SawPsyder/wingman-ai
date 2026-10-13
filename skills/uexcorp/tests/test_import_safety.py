@@ -2738,15 +2738,22 @@ class ParallelRouteFetchTest(_SqliteCase):
             f"({orbit_id}, 'Pad {orbit_id}', NULL, {orbit_id}, 'commodity', 1)"
             for orbit_id in self.COLD_ORBITS
         )
+        planet_terminals = ",".join(
+            f"({planet_id}, 'City {planet_id}', {planet_id}, {planet_id}, 'commodity', 1)"
+            for planet_id in range(1, self.COLD_PLANETS + 1)
+        )
         self._db.execute(
             "INSERT INTO terminal (id, name, id_planet, id_orbit, type, is_available) "
-            f"VALUES {terminal_values}"
+            f"VALUES {terminal_values}, {planet_terminals}"
         )
         extra = []
         price_id = 10000
         for commodity_id in self.COLD_CAPPED:
             for orbit_id in self.COLD_ORBITS:
                 extra.append(f"({price_id}, {commodity_id}, {orbit_id}, 5, 0)")
+                price_id += 1
+            for planet_id in range(1, self.COLD_PLANETS + 1):
+                extra.append(f"({price_id}, {commodity_id}, {planet_id}, 5, 0)")
                 price_id += 1
         self._db.execute(
             "INSERT INTO commodity_price (id, id_commodity, id_terminal, price_buy, price_sell) "
@@ -3186,14 +3193,135 @@ class OffPlanetOrbitQueryTest(_SqliteCase):
                 planets.append(int(query["id_planet_origin"][0]))
             if "id_orbit_origin" in query:
                 orbits.append(int(query["id_orbit_origin"][0]))
-        self.assertEqual(set(planets), {1, 2, 3})
-        self.assertEqual(len(planets), 3)
+        # Hurston has a price. ArcCorp and microTech are available and do not.
+        self.assertEqual(planets, [1])
         self.assertEqual(orbits, [550, 551])
+        self.assertNotIn(2, planets)
+        self.assertNotIn(3, planets)
         self.assertNotIn(9, planets)
         self.assertNotIn(10, orbits)
         self.assertNotIn(552, orbits)
-        self.assertEqual(len(session.urls), 1 + 3 + 2)
+        self.assertEqual(len(session.urls), 1 + 1 + 2)
         self.assertLess(len(session.urls), 1 + 3 + 30)
+
+    def test_capped_split_skips_planets_with_no_local_price(self) -> None:
+        """A capped commodity fetches planets that buy or sell it, and skips the rest."""
+        from skills.uexcorp.uexcorp.handler.import_handler import ImportHandler
+        from skills.uexcorp.uexcorp.tradable import trade_planet_ids
+
+        self._db.execute(
+            """
+            INSERT INTO imports (`table`, date_imported, dataset_count, time_taken, last_import_run_id)
+            VALUES
+                ('commodity', ?, 1, 0, 1),
+                ('commodity_price', ?, 1, 0, 1)
+            """,
+            (NOW, NOW),
+        )
+        self._db.execute(
+            """
+            INSERT INTO planet (id, name, is_available) VALUES
+                (1, 'Hurston', 1),
+                (2, 'ArcCorp', 1),
+                (3, 'microTech', 1),
+                (9, 'Hidden', 0)
+            """
+        )
+        self._db.execute(
+            """
+            INSERT INTO terminal (id, name, id_planet, id_orbit, type, is_available) VALUES
+                (101, 'Lorville', 1, 10, 'commodity', 1),
+                (201, 'Area18', 2, 11, 'commodity', 1),
+                (301, 'New Babbage', 3, 12, 'commodity', 1),
+                (401, 'Hidden pad', 9, 19, 'commodity', 1),
+                (501, 'Orbituary', NULL, 550, 'commodity', 1)
+            """
+        )
+        self._db.execute(
+            """
+            INSERT INTO commodity_price (id, id_commodity, id_terminal, price_buy, price_sell) VALUES
+                (1, 44, 101, 5, 0),
+                (2, 44, 201, 0, 8),
+                (3, 44, 301, 0, 0),
+                (4, 44, 401, 4, 0),
+                (5, 44, 501, 0, 6)
+            """
+        )
+        self._db.commit()
+        self.assertEqual(trade_planet_ids(self._db, 44), [1, 2, 9])
+
+        def body_for(url: str):
+            query = parse_qs(urlparse(url).query)
+            if "id_planet_origin" not in query and "id_orbit_origin" not in query:
+                return [
+                    {"id": i, "id_orbit_origin": 10, "price_origin": 5, "price_destination": 9}
+                    for i in range(1, ROUTE_PAGE_CAP + 1)
+                ]
+            if "id_planet_origin" in query:
+                planet = int(query["id_planet_origin"][0])
+                return [
+                    {
+                        "id": 7000 + planet,
+                        "id_orbit_origin": 10,
+                        "price_origin": 5,
+                        "price_destination": 9,
+                        "origin": f"planet-{planet}",
+                    }
+                ]
+            orbit = int(query["id_orbit_origin"][0])
+            return [
+                {
+                    "id": 8000 + orbit,
+                    "price_origin": 5,
+                    "price_destination": 9,
+                    "origin": "orbit",
+                }
+            ]
+
+        class _Capped:
+            def __init__(self):
+                self.urls = []
+
+            def get(self, url, params=None, timeout=None, headers=None, stream=None):
+                self.urls.append(url)
+                return _Response(200, {"status": "ok", "data": body_for(url)})
+
+        session = _Capped()
+        handler = ImportHandler(self._helper)
+        self._helper.set_import_handler(handler)
+        clock = _Clock()
+        api = Uex(
+            self._helper,
+            sleeper=clock.sleep,
+            monotonic=clock.monotonic,
+            rng=lambda: 0.0,
+        )
+        api.session = session
+        handler._ImportHandler__api = api
+        imported = handler._ImportHandler__import_data_commodity_route()
+        self.assertGreater(imported, 0)
+
+        planets = []
+        orbits = []
+        for url in session.urls:
+            query = parse_qs(urlparse(url).query)
+            if "id_planet_origin" in query:
+                planets.append(int(query["id_planet_origin"][0]))
+            if "id_orbit_origin" in query:
+                orbits.append(int(query["id_orbit_origin"][0]))
+        self.assertEqual(planets, [1, 2])
+        self.assertNotIn(3, planets)
+        self.assertNotIn(9, planets)
+        self.assertEqual(orbits, [550])
+        stored = {
+            row["id"]
+            for row in self._db.execute_fetchall("SELECT id FROM commodity_route")
+        }
+        self.assertIn(7001, stored)
+        self.assertIn(7002, stored)
+        self.assertNotIn(7003, stored)
+        self.assertNotIn(7009, stored)
+        self.assertIn(8550, stored)
 
 
 class ConnectionErrorBreakerTest(_SqliteCase):

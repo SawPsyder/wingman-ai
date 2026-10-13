@@ -562,16 +562,17 @@ class ImportHandler:
         from skills.uexcorp.uexcorp.data_access.planet_data_access import PlanetDataAccess
         from skills.uexcorp.uexcorp.tradable import (
             off_planet_trade_orbit_ids,
+            trade_planet_ids,
             tradable_commodity_ids,
         )
 
         from skills.uexcorp.uexcorp.log import info, warn
 
         commodity_ids = tradable_commodity_ids(self.__helper.get_database())
-        planet_ids = [
+        available_planet_ids = {
             planet.get_id()
             for planet in PlanetDataAccess().add_filter_by_is_available(True).load()
-        ]
+        }
         stored_counts = {
             row["id_commodity"]: row["n"]
             for row in self.__helper.get_database().execute_fetchall(
@@ -582,11 +583,18 @@ class ImportHandler:
         def _fetch_route_page(query: dict):
             return self.__api.fetch(self.__api.COMMODITIES_ROUTES, query)
 
-        # Station orbits are a main-thread read. Workers only fetch.
+        # Planets and station orbits are a main-thread read. Workers only fetch.
+        database = self.__helper.get_database()
         orbit_ids_by_commodity = {
-            commodity_id: off_planet_trade_orbit_ids(
-                self.__helper.get_database(), commodity_id
-            )
+            commodity_id: off_planet_trade_orbit_ids(database, commodity_id)
+            for commodity_id in commodity_ids
+        }
+        planet_ids_by_commodity = {
+            commodity_id: [
+                planet_id
+                for planet_id in trade_planet_ids(database, commodity_id)
+                if planet_id in available_planet_ids
+            ]
             for commodity_id in commodity_ids
         }
 
@@ -595,6 +603,7 @@ class ImportHandler:
             # retry stay in order. Row-count lines are replayed on this thread.
             stored = int(stored_counts.get(commodity_id) or 0)
             orbit_ids = orbit_ids_by_commodity[commodity_id]
+            planet_ids = planet_ids_by_commodity[commodity_id]
             events: list[tuple[str, int | str]] = []
 
             def load():
