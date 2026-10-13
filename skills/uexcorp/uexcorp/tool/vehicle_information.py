@@ -3,6 +3,20 @@ from skills.uexcorp.uexcorp.tool.tool import Tool
 from skills.uexcorp.uexcorp.tool.validator import Validator
 
 
+def _collapse_loaded(vehicles):
+    """One stored name, the lower id. Same rule the matcher already logs."""
+    from skills.uexcorp.uexcorp.naming.duplicates import collapse_same_name
+
+    records = []
+    for vehicle in vehicles:
+        records.append({
+            "name": vehicle.get_name_full() or str(vehicle),
+            "id": vehicle.get_id(),
+            "vehicle": vehicle,
+        })
+    return [row["vehicle"] for row in collapse_same_name(records)]
+
+
 class VehicleInformation(Tool):
     REQUIRES_AUTHENTICATION = False
     TOOL_NAME = "uex_get_vehicle_information"
@@ -60,7 +74,7 @@ class VehicleInformation(Tool):
             if offset:
                 vehicle_data_access.offset(offset)
 
-        vehicles = vehicle_data_access.load(debug=True) # TODO remove debug=True
+        vehicles = _collapse_loaded(vehicle_data_access.load(debug=True)) # TODO remove debug=True
 
         if not vehicles:
             helper.get_handler_tool().add_note(

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from types import SimpleNamespace
 
 from skills.uexcorp.tests.test_import_safety import _SqliteCase
@@ -38,14 +39,14 @@ class ShortVehicleNameTest(_SqliteCase):
         super().setUp()
         self._db.execute(
             """
-            INSERT INTO vehicle (id, name, name_full, is_spaceship) VALUES
-                (39, 'Carrack', 'Anvil Carrack', 1),
-                (40, 'Carrack Expedition', 'Anvil Carrack Expedition', 1),
-                (122, 'MOLE', 'Argo MOLE', 1),
-                (200, 'Hornet', 'F7C Hornet', 1),
-                (201, 'Hornet', 'F7C-M Super Hornet', 1),
-                (290, 'Sabre Raven EX', 'Aegis Sabre Raven EX', 1),
-                (291, 'Sabre Raven EX', 'Aegis Sabre Raven EX', 1)
+            INSERT INTO vehicle (id, name, name_full, is_spaceship, scu) VALUES
+                (39, 'Carrack', 'Anvil Carrack', 1, NULL),
+                (40, 'Carrack Expedition', 'Anvil Carrack Expedition', 1, NULL),
+                (122, 'MOLE', 'Argo MOLE', 1, NULL),
+                (200, 'Hornet', 'F7C Hornet', 1, NULL),
+                (201, 'Hornet', 'F7C-M Super Hornet', 1, NULL),
+                (290, 'Sabre Raven EX', 'Aegis Sabre Raven EX', 1, 114),
+                (291, 'Sabre Raven EX', 'Aegis Sabre Raven EX', 1, 1)
             """
         )
         self._db.commit()
@@ -103,3 +104,14 @@ class ShortVehicleNameTest(_SqliteCase):
             self.assertIn("F7C Hornet", notes)
             self.assertIn("F7C-M Super Hornet", notes)
         self.assertEqual(self._picker.decisions, 0)
+
+    def test_a_duplicate_name_returns_the_lower_id(self) -> None:
+        from skills.uexcorp.uexcorp.tool.vehicle_information import VehicleInformation
+
+        payload, _instant = VehicleInformation().execute(
+            filter_vehicles=["Aegis Sabre Raven EX"]
+        )
+        rows = json.loads(payload)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["name"], "Aegis Sabre Raven EX")
+        self.assertEqual(rows[0]["scu"], 114)
