@@ -30,10 +30,12 @@ def test_item_alias_is_company_plus_name_not_the_company_alone():
 
 
 class _Vehicle:
-    def __init__(self, short, full, slug):
+    def __init__(self, short, full, slug, row_id=None, company=None):
         self._short = short
         self._full = full
         self._slug = slug
+        self._id = row_id
+        self._company = company
 
     def __str__(self):
         return self._full
@@ -43,6 +45,36 @@ class _Vehicle:
 
     def get_slug(self):
         return self._slug
+
+    def get_id(self):
+        return self._id
+
+    def get_company_name(self):
+        return self._company
+
+
+def test_mercury_aliases_the_star_runner_and_not_a_fury():
+    rows = _vehicle_records([
+        _Vehicle("Fury", "Mirai Fury", "fury", 84, "Mirai"),
+        _Vehicle("Fury LX", "Mirai Fury LX", "misc-fury-lx", 85, "Mirai"),
+        _Vehicle("Fury MX", "Mirai Fury MX", "fury-mx", 86, "Mirai"),
+        _Vehicle(
+            "Mercury Star Runner",
+            "Crusader Mercury Star Runner",
+            "mercury-star-runner",
+            121,
+            "Crusader Industries",
+        ),
+    ])
+    merc = next(row for row in rows if row["id"] == 121)
+    assert merc["name"] == "Crusader Mercury Star Runner"
+    assert "Mercury" in merc["aliases"]
+    assert "mercury-star-runner" in merc["aliases"]
+    assert "Star" not in merc["aliases"]
+    assert "Runner" not in merc["aliases"]
+    assert "Crusader" not in merc["aliases"]
+    fury_lx = next(row for row in rows if row["id"] == 85)
+    assert "Fury" not in fury_lx["aliases"]
 
 
 def test_vehicle_slug_alias_drops_a_four_letter_maker_prefix():

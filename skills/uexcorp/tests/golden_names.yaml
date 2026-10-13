@@ -963,6 +963,16 @@
     - Anvil Carrack
     - Anvil Carrack Expedition
     note: Anvil Carrack, Anvil Carrack Expedition
+- id: vehicle-Mercury
+  kind: vehicle
+  pool: vehicles
+  query: Mercury
+  expect:
+    pick: Crusader Mercury Star Runner
+    method: alias
+    candidates:
+    - Crusader Mercury Star Runner
+    note: null
 - id: place-Ruin
   kind: place
   pool: places

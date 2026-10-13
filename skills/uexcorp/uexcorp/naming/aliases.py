@@ -53,6 +53,65 @@ def item_company_alias(company_name: str | None, name: str | None) -> str | None
     return combined
 
 
+def vehicle_model_token(full_name: str | None, slug: str | None, company_name: str | None = None) -> str | None:
+    """First word of ``name_full`` that the slug also uses.
+
+    A 4-letter maker prefix (``misc-freelancer-max``) is skipped when the
+    rest of the slug still matches a word of the full name. ``fury-mx``
+    keeps ``Fury``, because dropping that token leaves nothing to match.
+    The company name is not a token. A later step keeps the word only
+    when one vehicle uses it.
+    """
+    words = [word for word in str(full_name or "").split() if len(word) >= 3]
+    parts = [part for part in str(slug or "").casefold().split("-") if part]
+    if not words or not parts:
+        return None
+    groups = [parts]
+    if len(parts) >= 2 and len(parts[0]) == 4 and parts[0].isalpha():
+        groups.insert(0, parts[1:])
+    company = str(company_name or "").strip().casefold()
+    company_word = company.split()[0] if company else ""
+    for group in groups:
+        folded = set(group)
+        for word in words:
+            token = word.casefold()
+            if token not in folded:
+                continue
+            if company and (token == company or token == company_word):
+                continue
+            return word
+    return None
+
+
+def add_vehicle_model_aliases(records: list[dict]) -> None:
+    """Alias that model word when no other vehicle uses it.
+
+    ``Mercury`` then names the Star Runner. ``Fury`` and ``Hornet`` stay
+    shared, so they stay candidate lists. The record may carry
+    ``model_token``; this removes it.
+    """
+    grouped: dict[str, list[dict]] = {}
+    for row in records:
+        token = str(row.get("model_token") or "").strip()
+        if len(token) < 3:
+            continue
+        grouped.setdefault(token.casefold(), []).append(row)
+    for rows in grouped.values():
+        if len(rows) != 1:
+            continue
+        row = rows[0]
+        token = str(row.get("model_token") or "").strip()
+        name = str(row.get("name") or "")
+        aliases = [str(alias) for alias in (row.get("aliases") or []) if str(alias).strip()]
+        known = {alias.casefold() for alias in aliases}
+        known.add(name.casefold())
+        if token.casefold() not in known:
+            aliases.append(token)
+            row["aliases"] = aliases
+    for row in records:
+        row.pop("model_token", None)
+
+
 def vehicle_slug_remainder(slug: str | None, short_name: str | None, full_name: str | None) -> str | None:
     """Slug with a 4-letter maker prefix removed (``orig-100i`` → ``100i``).
 

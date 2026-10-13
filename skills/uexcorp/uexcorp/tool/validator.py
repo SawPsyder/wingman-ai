@@ -40,7 +40,11 @@ def _commodity_records(commodities) -> list[dict]:
 
 def _vehicle_records(vehicles) -> list[dict]:
     """Full names, plus the short name, slug, and slug without the maker prefix."""
-    from skills.uexcorp.uexcorp.naming.aliases import vehicle_slug_remainder
+    from skills.uexcorp.uexcorp.naming.aliases import (
+        add_vehicle_model_aliases,
+        vehicle_model_token,
+        vehicle_slug_remainder,
+    )
 
     records = []
     for vehicle in vehicles:
@@ -57,13 +61,20 @@ def _vehicle_records(vehicles) -> list[dict]:
             aliases.append(remainder)
         getter = getattr(vehicle, "get_id", None)
         row_id = getter() if callable(getter) else None
+        company_getter = getattr(vehicle, "get_company_name", None)
+        company = company_getter() if callable(company_getter) else None
         record = {"key": full, "name": full, "aliases": aliases, "codes": []}
+        token = vehicle_model_token(full, slug, company)
+        if token:
+            record["model_token"] = token
         if row_id is not None and not isinstance(row_id, bool):
             record["id"] = row_id
         records.append(record)
     from skills.uexcorp.uexcorp.naming.duplicates import collapse_same_name
 
-    return collapse_same_name(records)
+    collapsed = collapse_same_name(records)
+    add_vehicle_model_aliases(collapsed)
+    return collapsed
 
 
 def _item_records(items) -> list[dict]:
