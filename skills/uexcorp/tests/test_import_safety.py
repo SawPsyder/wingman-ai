@@ -8,6 +8,7 @@ No live HTTP. Run from the project root:
 from __future__ import annotations
 
 import json
+import math
 import os
 import tempfile
 import threading
@@ -2453,6 +2454,8 @@ class _OverlapClock:
     A worker that just finished only holds the clock while another submitted
     task has not started. The pool queue is not that count: its shutdown
     sentinel and cancelled work items would keep ``now`` from moving.
+    A positive sleep always reaches its wake, even when the gap is smaller
+    than a nanosecond. Dropping that gap makes the rate limiter spin.
     """
 
     def __init__(self):
@@ -2536,10 +2539,15 @@ class _OverlapClock:
         ident = threading.get_ident()
         with self._cond:
             wake = self.now + float(seconds)
+            # A rate-limit gap can be a fraction of a nanosecond. Treating
+            # that as zero makes the caller spin: fake time never reaches
+            # the deadline it is waiting for.
+            if wake <= self.now:
+                wake = math.nextafter(self.now, math.inf)
             self._sleepers[ident] = wake
-            while self.now + 1e-9 < wake:
+            while self.now < wake:
                 self._advance()
-                if self.now + 1e-9 < wake:
+                if self.now < wake:
                     self._cond.wait()
             self._sleepers.pop(ident, None)
             self._advance()
@@ -2947,6 +2955,75 @@ class ParallelRouteFetchTest(_SqliteCase):
         if not rows:
             return None
         return rows[0]["short_streak"]
+
+    def test_overlapping_read_timeouts_still_import(self) -> None:
+        """Twenty commodities. The first request of the stalled ones times out.
+
+        The retry succeeds. One stalled request and ten stalled together both
+        import. Ten overlapping 60s waits charge one window, not ten.
+        A single worker charges the same 60s plus its backoff.
+        """
+        import requests
+
+        commodity_ids = list(range(1, 21))
+        self._seed_prices(commodity_ids)
+        one_wait = float(LARGE_READ_TIMEOUT_SECONDS) + 0.25
+
+        class _Stall:
+            def __init__(self, clock: _OverlapClock, stalled: set[int]):
+                self.clock = clock
+                self.stalled = stalled
+                self.seen: dict[int, int] = {}
+                self._lock = threading.Lock()
+                self._next_id = 90000
+
+            def get(self, url, params=None, timeout=None, headers=None, stream=None):
+                commodity_id = int(parse_qs(urlparse(url).query)["id_commodity"][0])
+                with self._lock:
+                    attempt = self.seen.get(commodity_id, 0) + 1
+                    self.seen[commodity_id] = attempt
+                    self._next_id += 1
+                    route_id = self._next_id
+                if commodity_id in self.stalled and attempt == 1:
+                    read = timeout[1] if isinstance(timeout, tuple) else LARGE_READ_TIMEOUT_SECONDS
+                    self.clock.sleep(float(read))
+                    raise requests.exceptions.ReadTimeout(
+                        f"Read timed out. (read timeout={read})"
+                    )
+                return _Response(
+                    200,
+                    {
+                        "status": "ok",
+                        "data": [
+                            {
+                                "id": route_id,
+                                "id_commodity": commodity_id,
+                                "price_origin": 5,
+                                "price_destination": 9,
+                                "commodity_name": "Fresh",
+                            }
+                        ],
+                    },
+                )
+
+        def run(workers: int, stalled_count: int) -> float:
+            self._clear_routes()
+            clock = _OverlapClock()
+            session = _Stall(clock, set(range(1, stalled_count + 1)))
+            imported, handler, _workers = self._run_routes(
+                session, clock, workers=workers, tasks=len(commodity_ids)
+            )
+            self.assertNotEqual(imported, handler.IMPORT_FAILED)
+            self.assertEqual(imported, len(commodity_ids))
+            return handler._ImportHandler__api._timeout_spent
+
+        alone = run(1, 1)
+        self.assertAlmostEqual(alone, one_wait, places=6)
+        self.assertAlmostEqual(run(10, 1), alone, places=6)
+        for stalled_count in range(1, 11):
+            spent = run(10, stalled_count)
+            self.assertLess(spent, IMPORT_DEADLINE_SECONDS)
+            self.assertLess(spent, one_wait * 2)
 
     def test_one_worker_failure_drops_other_results_and_does_not_stamp(self) -> None:
         commodity_ids = list(range(1, 9))

@@ -43,10 +43,12 @@ LARGE_READ_TIMEOUT_MAX = 90
 # Read timeouts open the breaker only after this many different endpoints
 # have each used every attempt. One slow list must not wipe the run.
 TIMEOUT_ENDPOINTS_BEFORE_BREAK = 2
-# Accumulated time spent in attempts that timed out, plus their retry backoff.
-# Healthy reads are not charged and are not refused. Once this is spent, only
-# further retries stop. The next endpoint's first attempt still goes out.
-# One large endpoint (4 x 60s + backoff) still fits, so it can use every retry.
+# Wall-clock time spent in attempts that timed out, plus their retry backoff.
+# Overlapping waits share one interval. A single worker's waits do not overlap,
+# so its total stays the sum. Healthy reads are not charged and are not refused.
+# Once this is spent, only further retries stop. The next endpoint's first
+# attempt still goes out. One large endpoint (4 x 60s + backoff) still fits,
+# so it can use every retry.
 IMPORT_DEADLINE_SECONDS = 270
 # Healthy cold-import GETs measured 2026-10-11 (api.uexcorp.uk/2.0). The
 # all-timeout worst case in the import log uses this count. The test pins it.
@@ -88,6 +90,35 @@ def _backoff_delay(attempt: int) -> float:
     """Retry backoff before the jitter factor. Attempt 1 is the first try."""
     delay = OTHER_ERROR_BACKOFF_BASE * (2 ** max(attempt - 1, 0))
     return min(MAX_BACKOFF_SECONDS, delay)
+
+
+def _union_interval(
+    intervals: list[tuple[float, float]], start: float, end: float
+) -> list[tuple[float, float]]:
+    """Add ``[start, end]`` to sorted, non-overlapping intervals.
+
+    Touching or overlapping spans become one span. The covered length is
+    wall-clock time, so waits that run together are not added twice.
+    """
+    if end <= start:
+        return list(intervals)
+    merged: list[tuple[float, float]] = []
+    pending = True
+    for left, right in intervals:
+        if right < start:
+            merged.append((left, right))
+            continue
+        if pending and end < left:
+            merged.append((start, end))
+            pending = False
+        if not pending:
+            merged.append((left, right))
+            continue
+        start = min(start, left)
+        end = max(end, right)
+    if pending:
+        merged.append((start, end))
+    return merged
 
 
 def _retry_backoff_worst() -> float:
@@ -274,7 +305,8 @@ class Uex:
         self._blocked = False
         self._blocked_error: str | None = None
         self._timeout_endpoints: set[str] = set()
-        # Seconds spent in timed-out attempts and their retry backoff.
+        # Union of timed-out waits and the retry backoff that follows them.
+        self._timeout_intervals: list[tuple[float, float]] = []
         self._timeout_spent: float = 0.0
         self._min_interval = 60.0 / REQUESTS_PER_MINUTE
 
@@ -296,6 +328,7 @@ class Uex:
             self._blocked_error = None
             self._pause_until = 0.0
             self._timeout_endpoints = set()
+            self._timeout_intervals = []
             self._timeout_spent = 0.0
         self.helper.get_handler_debug().write(timeout_budget_message(self._read_timeout("items_prices_all")))
 
@@ -575,11 +608,18 @@ class Uex:
     def _read_timeout(self, endpoint: str) -> int:
         return self._timeouts(endpoint)[1]
 
-    def _charge_timeout(self, seconds: float) -> None:
-        if seconds <= 0:
+    def _charge_timeout_interval(self, start: float, end: float) -> None:
+        """Charge the wall-clock span ``[start, end]``.
+
+        Ten workers stalled across the same window add that window once.
+        One worker's later wait starts after the earlier one ends, so the
+        union is the sum.
+        """
+        if end <= start:
             return
         with self._rate_lock:
-            self._timeout_spent += float(seconds)
+            self._timeout_intervals = _union_interval(self._timeout_intervals, start, end)
+            self._timeout_spent = sum(right - left for left, right in self._timeout_intervals)
 
     def _timeout_budget_exhausted(self) -> bool:
         with self._rate_lock:
@@ -595,15 +635,16 @@ class Uex:
     ) -> FetchResult | None:
         """Retry a read timeout like a 5xx, until the timeout budget is spent.
 
-        Charged time is the wait that just timed out, plus the backoff of a
-        retry that will actually run. A spent budget fails this endpoint and
-        counts it as exhausted, the same as using every attempt. The breaker
-        opens after two different endpoints. Until then, the next endpoint's
-        first attempt still goes out. Return None when the caller should try again.
+        Charged time is the wall-clock union of this timed-out wait and the
+        backoff of a retry that will actually run. A spent budget fails this
+        endpoint and counts it as exhausted, the same as using every attempt.
+        The breaker opens after two different endpoints. Until then, the next
+        endpoint's first attempt still goes out. Return None when the caller
+        should try again.
         """
         message = str(error) or "read_timeout"
-        waited = max(0.0, self._monotonic() - started_attempt)
-        self._charge_timeout(waited)
+        finished = self._monotonic()
+        self._charge_timeout_interval(started_attempt, finished)
         self.helper.get_handler_debug().write(
             f"Error while retrieving data from {url}: {error}",
             attempt == MAX_ATTEMPTS,
@@ -611,7 +652,8 @@ class Uex:
         self.helper.get_handler_error().write("Api.fetch", [url], error)
         if attempt < MAX_ATTEMPTS and not self._timeout_budget_exhausted():
             backoff = self._backoff_seconds(attempt)
-            self._charge_timeout(backoff)
+            now = self._monotonic()
+            self._charge_timeout_interval(now, now + backoff)
             self._sleeper(backoff)
             return None
         if attempt < MAX_ATTEMPTS:
