@@ -38,9 +38,6 @@ class _FakeConfig:
     def get_behavior_commodity_route_default_count(self) -> int:
         return 15
 
-    def get_behavior_commodity_route_advanced_info(self) -> bool:
-        return False
-
 
 class _FakeToolHandler:
     def __init__(self):

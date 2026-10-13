@@ -654,7 +654,6 @@ def evaluate_g6(helper, snapshot: bool = False) -> dict:
     from skills.uexcorp.uexcorp.local_routes import set_forced_source
     from skills.uexcorp.uexcorp.tool.commodity_route import CommodityRoute
 
-    config = helper.get_handler_config()
     places = _snapshot_places(helper.get_database()) if snapshot else None
     queries = g6_queries(places)
     if places and places.get("commodities"):
@@ -691,7 +690,6 @@ def evaluate_g6(helper, snapshot: bool = False) -> dict:
         details.append(f"{query['name']} overlap {overlap}/{denom} top1 {'same' if top1 else 'differs'}")
 
     example_failures = []
-    config.advanced = True
     try:
         set_forced_source("local")
         for query in examples:
@@ -702,7 +700,6 @@ def evaluate_g6(helper, snapshot: bool = False) -> dict:
                 example_failures.append(query["name"])
                 details.append(f"{query['name']} is not in D3 order")
     finally:
-        config.advanced = False
         set_forced_source(None)
     example_ok = not example_failures
     return _gate(
@@ -949,11 +946,6 @@ def _open_memory(path: str):
 
         def get_behavior_commodity_route_default_count(self):
             return 5
-
-        advanced = False
-
-        def get_behavior_commodity_route_advanced_info(self):
-            return self.advanced
 
         def get_cache_lifetime_short(self):
             return 30 * 60

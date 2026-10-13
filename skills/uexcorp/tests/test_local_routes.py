@@ -413,7 +413,6 @@ class LocalServeTest(_SqliteCase):
 
         self._helper.get_handler_config().route_source = "local"
         self._helper.mirror_routes_to_local = True
-        self._helper.get_handler_config().get_behavior_commodity_route_advanced_info = lambda: True
         self._db.execute(
             """
             INSERT INTO commodity (id, name, is_illegal, is_blacklisted, is_available)
@@ -447,10 +446,9 @@ class LocalServeTest(_SqliteCase):
         self.assertNotIn("uex_score", shown)
         self.assertNotIn("scu_margin", shown)
 
-    def test_uex_advanced_row_keeps_the_original_key_order(self):
+    def test_uex_row_matches_the_pre_local_answer(self):
         from skills.uexcorp.uexcorp.model.commodity_route import CommodityRoute as RouteModel
 
-        self._helper.get_handler_config().get_behavior_commodity_route_advanced_info = lambda: True
         model = RouteModel(
             1,
             score=9,
@@ -478,50 +476,28 @@ class LocalServeTest(_SqliteCase):
         )
         shown = model.get_data_for_ai()
         self.assertEqual(
-            list(shown),
-            [
-                "commodity",
-                "buy_for",
-                "buy_at",
-                "buy_volume_in_scu",
-                "sell_for",
-                "sell_at",
-                "estimated_profit",
-                "origin_star_system_name",
-                "origin_planet_name",
-                "destination_star_system_name",
-                "destination_planet_name",
-                "distance_in_giga_meters",
-                "profit_margin",
-                "origin_orbit_name",
-                "origin_faction_name",
-                "destination_orbit_name",
-                "destination_faction_name",
-                "uex_score",
-                "has_refuel_origin",
-                "has_refuel_destination",
-                "is_monitored_origin",
-                "is_monitored_destination",
-            ],
-        )
-        self.assertEqual(
             json.dumps(shown, separators=(",", ":")),
             (
                 '{"commodity":"Gold","buy_for":40,"buy_at":"A","buy_volume_in_scu":4,'
                 '"sell_for":80,"sell_at":"B","estimated_profit":40,'
                 '"origin_star_system_name":"Stanton","origin_planet_name":"Hurston",'
-                '"destination_star_system_name":"Stanton","destination_planet_name":"ArcCorp",'
-                '"distance_in_giga_meters":3,"profit_margin":50,"origin_orbit_name":"Hurston",'
-                '"origin_faction_name":"Hurston Dynamics","destination_orbit_name":"ArcCorp",'
-                '"destination_faction_name":"ArcCorp","uex_score":9,"has_refuel_origin":1,'
-                '"has_refuel_destination":0,"is_monitored_origin":1,"is_monitored_destination":0}'
+                '"destination_star_system_name":"Stanton","destination_planet_name":"ArcCorp"}'
             ),
         )
-        model.demand_unknown = 0
-        local_keys = list(model.get_data_for_ai())
-        self.assertNotIn("uex_score", local_keys)
-        faction = local_keys.index("destination_faction_name")
-        self.assertEqual(local_keys[faction + 1], "has_refuel_origin")
+        for key in (
+            "distance_in_giga_meters",
+            "profit_margin",
+            "origin_orbit_name",
+            "origin_faction_name",
+            "destination_orbit_name",
+            "destination_faction_name",
+            "uex_score",
+            "has_refuel_origin",
+            "has_refuel_destination",
+            "is_monitored_origin",
+            "is_monitored_destination",
+        ):
+            self.assertNotIn(key, shown)
 
     def test_local_fallback_to_uex_still_adds_the_source_note(self):
         from skills.uexcorp.uexcorp.tool.commodity_route import CommodityRoute

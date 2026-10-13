@@ -141,7 +141,6 @@ class ConfigHandler:
         self.__behavior_enabled_tools_need_authentication: bool = needs_authentication
         self.__behavior_commodity_route_default_count: int = 1
         self.__behavior_commodity_route_use_estimated_availability: bool = True
-        self.__behavior_commodity_route_advanced_info: bool = False
         # Read just-in-time. Defaults keep today's UEX routes when an older
         # config has no property yet.
 
@@ -154,10 +153,6 @@ class ConfigHandler:
 
             self.set_behavior_commodity_route_use_estimated_availability(
                 retrieve_custom_property_value("commodity_route_use_estimated_availability", errors)
-            )
-
-            self.set_behavior_commodity_route_advanced_info(
-                retrieve_custom_property_value("commodity_route_advanced_info", errors)
             )
 
             api_url = retrieve_custom_property_value("api_url", errors)
@@ -475,16 +470,6 @@ class ConfigHandler:
 
     def set_behavior_commodity_route_use_estimated_availability(self, use_estimated_availability: bool):
         self.__behavior_commodity_route_use_estimated_availability = use_estimated_availability
-
-    def get_behavior_commodity_route_advanced_info(self) -> bool:
-        errors = []
-        value = self.__property_retriever("commodity_route_advanced_info", errors)
-        if not errors:
-            self.set_behavior_commodity_route_advanced_info(value)
-        return self.__behavior_commodity_route_advanced_info
-
-    def set_behavior_commodity_route_advanced_info(self, advanced_info: bool):
-        self.__behavior_commodity_route_advanced_info = advanced_info
 
     def set_wingman(self, wingman: "WingmanContext"):
         self.__wingman = wingman

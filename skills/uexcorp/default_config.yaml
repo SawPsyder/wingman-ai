@@ -144,13 +144,6 @@ custom_properties:
     required: true
     property_type: boolean
 
-  - id: commodity_route_advanced_info
-    name: Show advanced trade route info
-    hint: Shows additional information as more location data (terminal name is always included), flags if locations are monitored and more like the score by uexcorp.
-    value: false
-    required: true
-    property_type: boolean
-
   - id: behavior_commodity_route_source
     name: Trade route source
     hint: uex is the UEX route table (default). shadow builds a local table but still answers from UEX. local answers from prices. The default is never changed by an upgrade.

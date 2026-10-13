@@ -235,23 +235,6 @@ class CommodityRoute(DataModel):
             ):
                 data["price_stale"] = True
 
-        if helper.get_handler_config().get_behavior_commodity_route_advanced_info():
-            # uex_score stays where it was before local routes: after
-            # destination_faction_name, before the refuel flags. Appending it
-            # changed the uex row bytes whenever advanced info was on.
-            data["distance_in_giga_meters"] = self.get_distance()
-            data["profit_margin"] = self.get_price_margin()
-            data["origin_orbit_name"] = self.get_origin_orbit_name()
-            data["origin_faction_name"] = self.get_origin_faction_name()
-            data["destination_orbit_name"] = self.get_destination_orbit_name()
-            data["destination_faction_name"] = self.get_destination_faction_name()
-            if not local:
-                data["uex_score"] = self.get_score()
-            data["has_refuel_origin"] = self.get_has_refuel_origin()
-            data["has_refuel_destination"] = self.get_has_refuel_destination()
-            data["is_monitored_origin"] = self.get_is_monitored_origin()
-            data["is_monitored_destination"] = self.get_is_monitored_destination()
-
         return data
 
     def get_id(self) -> int:
