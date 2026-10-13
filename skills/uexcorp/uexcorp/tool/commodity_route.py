@@ -6,10 +6,12 @@ from skills.uexcorp.uexcorp.tool.validator import Validator
 def _annotate_route_source(helper, routes=None, served: str | None = None) -> None:
     from skills.uexcorp.uexcorp.local_routes import SOURCE_UEX, route_source, source_note
 
-    mode = served or getattr(helper, "_route_answer_source", None) or route_source(helper)
-    # uex mode stays byte-identical: no source note. shadow and local keep one.
-    if mode == SOURCE_UEX:
+    # Skip the note only when the configured source is uex. A local answer that
+    # fell back to the UEX table still says so.
+    configured = route_source(helper)
+    if configured == SOURCE_UEX:
         return
+    mode = served or getattr(helper, "_route_answer_source", None) or configured
     helper.get_handler_tool().add_note(source_note(helper, routes, served=mode))
 
 
@@ -419,8 +421,9 @@ class CommodityRoute(Tool):
 
         max_scu = f"{max_scu}, " if max_scu is not None else ""
         available_money = f"CAST(({int(available_money)} / price_origin) AS INTEGER), " if available_money else ""
-        commodity_route_data_access.add_col(f"MIN({available_money}{max_scu}scu_origin, scu_destination) as 'scu_origin'")
-        commodity_route_data_access.add_col(f"(MIN({available_money}{max_scu}scu_origin, scu_destination) * (price_destination - price_origin)) as 'profit'")
+        volume_expr = f"MIN({available_money}{max_scu}scu_origin, scu_destination)"
+        commodity_route_data_access.add_col(f"{volume_expr} as 'scu_origin'")
+        commodity_route_data_access.add_col(f"({volume_expr} * (price_destination - price_origin)) as 'profit'")
 
         if example_route and served != SOURCE_LOCAL:
             commodity_route_data_access.order_by("score", "DESC")
@@ -431,6 +434,14 @@ class CommodityRoute(Tool):
 
         commodity_route_data_access.order_by("id_star_system_origin = id_star_system_destination", "DESC")
         commodity_route_data_access.order_by("distance", "ASC")
+        if served == SOURCE_LOCAL:
+            # Equal profit and a NULL distance (cross-system) would otherwise
+            # follow insertion order. Break the tie on the quoted investment,
+            # then the terminal and commodity ids.
+            commodity_route_data_access.order_by(f"({volume_expr} * price_origin)", "ASC")
+            commodity_route_data_access.order_by("id_terminal_origin", "ASC")
+            commodity_route_data_access.order_by("id_terminal_destination", "ASC")
+            commodity_route_data_access.order_by("id_commodity", "ASC")
         routes = commodity_route_data_access.load(debug=True) # TODO remove debug=True
         _annotate_route_source(helper, routes, served=served)
 

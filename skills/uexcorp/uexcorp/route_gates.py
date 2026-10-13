@@ -30,6 +30,12 @@ G6_OVERLAP_MIN = 0.8
 G7_MAX_SECONDS = 1.0
 PROFIT_ABS = 2.0
 MARGIN_ABS = 0.01
+# Live windows: prices and SCU match, and the money columns still differ by a
+# few aUEC because UEX rounds the published profit and investment. snap1 and
+# snap2 both stay within 36 aUEC of profit and 50 of investment. Anything
+# larger stays unclassified.
+ROUND_PROFIT = 50.0
+ROUND_INVEST = 100.0
 
 
 def _rows(database, sql, params=()):
@@ -50,21 +56,42 @@ def _close(left, right, tolerance) -> bool:
     return abs(float(left) - float(right)) <= tolerance
 
 
+def _money_delta(left, right) -> float:
+    return abs(float(left or 0) - float(right or 0))
+
+
+def _price_is_newer(uex) -> bool:
+    added = uex.get("date_added")
+    for side in ("date_modified_origin", "date_modified_destination"):
+        modified = uex.get(side)
+        if modified is not None and added is not None and int(modified) > int(added):
+            return True
+    return False
+
+
 def _classify(uex, local) -> str:
-    """Accepted G2 reasons. Anything else stays unclassified and fails the gate."""
+    """Accepted G2 reasons. Anything else stays unclassified and fails the gate.
+
+    fallback disagreement: the published prices match and UEX's destination SCU
+    is not the D7 value (the terminal-778 pattern).
+    rounding: prices and destination SCU match, and the profit and investment
+    residuals stay inside ROUND_PROFIT / ROUND_INVEST.
+    newer price: a price date_modified is later than the route date_added.
+    """
     prices_match = _close(uex.get("price_origin"), local.get("price_origin"), 0) and _close(
         uex.get("price_destination"), local.get("price_destination"), 0
     )
-    newer = False
-    for side in ("date_modified_origin", "date_modified_destination"):
-        modified = uex.get(side)
-        added = uex.get("date_added")
-        if modified is not None and added is not None and int(modified) > int(added):
-            newer = True
-    if prices_match and (
-        not _close(uex.get("scu_destination"), local.get("scu_destination"), 0)
-        or not _close(uex.get("profit"), local.get("profit"), PROFIT_ABS)
-    ):
+    scu_changed = not _close(uex.get("scu_destination"), local.get("scu_destination"), 0)
+    profit_delta = _money_delta(uex.get("profit"), local.get("profit"))
+    invest_delta = _money_delta(uex.get("investment"), local.get("investment"))
+    money_close = profit_delta <= PROFIT_ABS and invest_delta <= PROFIT_ABS
+    rounding = profit_delta <= ROUND_PROFIT and invest_delta <= ROUND_INVEST
+    newer = _price_is_newer(uex)
+    if newer and not prices_match:
+        return "newer price"
+    if prices_match and not scu_changed and not money_close and rounding:
+        return "rounding"
+    if prices_match and (scu_changed or not money_close):
         return "fallback disagreement"
     if newer:
         return "newer price"
@@ -110,6 +137,12 @@ def evaluate_table_gates(database) -> list[dict]:
                 "local_profit": local.get("profit"),
             })
     unclassified = [item for item in exceptions if item["reason"] == "unclassified"]
+    class_counts: dict[str, int] = {}
+    for item in exceptions:
+        class_counts[item["reason"]] = class_counts.get(item["reason"], 0) + 1
+    class_text = ", ".join(
+        f"{reason} {class_counts[reason]}" for reason in sorted(class_counts)
+    ) or "none"
 
     reach_ok = 0
     per_commodity: dict[int, list[int]] = {}
@@ -200,10 +233,13 @@ def evaluate_table_gates(database) -> list[dict]:
         _gate(
             "G2",
             f"{formula_ok}/{len(present) or 0} matched, {len(exceptions)} listed",
-            "100% except listed fallback/newer-price rows",
+            "100% except listed fallback, newer-price, and rounding rows",
             not unclassified,
-            "exceptions: " + (
-                "; ".join(f"{item['key']} {item['reason']}" for item in exceptions) or "none"
+            "classes: " + class_text + (
+                "" if len(exceptions) > 12 else (
+                    "; " + "; ".join(f"{item['key']} {item['reason']}" for item in exceptions)
+                    if exceptions else ""
+                )
             ),
         ),
         _gate(
@@ -312,30 +348,129 @@ def _unavailable_uex_routes(database, uex_positive) -> list:
     return bad
 
 
-def g6_queries() -> list[dict]:
+def g6_queries(places: dict | None = None) -> list[dict]:
+    """Fixture queries use Term A–F. A snapshot passes the loaded place names."""
+    places = places or {}
+    start_a = places.get("start_a") or "Term A"
+    start_b = places.get("start_b") or "Term B"
+    dest_c = places.get("dest_c") or "Term C"
+    dest_e = places.get("dest_e") or "Term E"
+    dest_f = places.get("dest_f") or "Term F"
+    commodity = places.get("commodity") or "Gold"
     cargo = {"available_cargo_space_scu": 1000, "limit": 5}
     return [
         {"name": "cargo-all", "kwargs": dict(cargo)},
-        {"name": "cargo-gold", "kwargs": {**cargo, "filter_commodity_whitelist": ["Gold"]}},
+        {"name": "cargo-gold", "kwargs": {**cargo, "filter_commodity_whitelist": [commodity]}},
         {"name": "cargo-10", "kwargs": {"available_cargo_space_scu": 10, "limit": 5}},
         {"name": "money-500", "kwargs": {"available_money": 500, "limit": 5}},
-        {"name": "start-a", "kwargs": {**cargo, "filter_start_location": "Term A"}},
-        {"name": "start-b", "kwargs": {**cargo, "filter_start_location": "Term B"}},
-        {"name": "dest-c", "kwargs": {**cargo, "filter_destination_location": "Term C"}},
-        {"name": "dest-f", "kwargs": {**cargo, "filter_destination_location": "Term F"}},
+        {"name": "start-a", "kwargs": {**cargo, "filter_start_location": start_a}},
+        {"name": "start-b", "kwargs": {**cargo, "filter_start_location": start_b}},
+        {"name": "dest-c", "kwargs": {**cargo, "filter_destination_location": dest_c}},
+        {"name": "dest-f", "kwargs": {**cargo, "filter_destination_location": dest_f}},
         {"name": "same-system", "kwargs": {**cargo, "filter_allow_star_system_change": False}},
-        {"name": "dest-e-cargo-10", "kwargs": {"available_cargo_space_scu": 10, "limit": 5, "filter_destination_location": "Term E"}},
-        {"name": "a-to-c", "kwargs": {**cargo, "filter_start_location": "Term A", "filter_destination_location": "Term C"}},
+        {"name": "dest-e-cargo-10", "kwargs": {"available_cargo_space_scu": 10, "limit": 5, "filter_destination_location": dest_e}},
+        {"name": "a-to-c", "kwargs": {**cargo, "filter_start_location": start_a, "filter_destination_location": dest_c}},
         {"name": "money-200-cargo-20", "kwargs": {"available_money": 200, "available_cargo_space_scu": 20, "limit": 5}},
         {"name": "cargo-100", "kwargs": {"available_cargo_space_scu": 100, "limit": 5}},
-        {"name": "gold-from-b", "kwargs": {**cargo, "filter_commodity_whitelist": ["Gold"], "filter_start_location": "Term B"}},
+        {"name": "gold-from-b", "kwargs": {**cargo, "filter_commodity_whitelist": [commodity], "filter_start_location": start_b}},
         {"name": "cargo-50", "kwargs": {"available_cargo_space_scu": 50, "limit": 5}},
         {"name": "money-5000", "kwargs": {"available_money": 5000, "limit": 5}},
-        {"name": "start-a-cargo-10", "kwargs": {"available_cargo_space_scu": 10, "limit": 5, "filter_start_location": "Term A"}},
-        {"name": "same-system-cargo", "kwargs": {**cargo, "filter_allow_star_system_change": False, "filter_commodity_whitelist": ["Gold"]}},
+        {"name": "start-a-cargo-10", "kwargs": {"available_cargo_space_scu": 10, "limit": 5, "filter_start_location": start_a}},
+        {"name": "same-system-cargo", "kwargs": {**cargo, "filter_allow_star_system_change": False, "filter_commodity_whitelist": [commodity]}},
         {"name": "example-all", "kwargs": {"limit": 5}},
-        {"name": "example-start-a", "kwargs": {"limit": 5, "filter_start_location": "Term A"}},
+        {"name": "example-start-a", "kwargs": {"limit": 5, "filter_start_location": start_a}},
     ]
+
+
+def _snapshot_places(database) -> dict:
+    """Terminal and commodity names that exist on the loaded UEX routes."""
+    commodities = [
+        row["commodity_name"]
+        for row in _rows(
+            database,
+            f"""
+            SELECT commodity_name, COUNT(*) AS n
+            FROM {UEX_TABLE}
+            WHERE COALESCE(profit, 0) > 0
+              AND commodity_name IS NOT NULL AND commodity_name != ''
+            GROUP BY commodity_name
+            ORDER BY n DESC, commodity_name ASC
+            """,
+        )
+    ]
+    commodity = "Gold" if "Gold" in commodities else (commodities[0] if commodities else "Gold")
+    origins = _rows(
+        database,
+        f"""
+        SELECT origin_terminal_name AS name
+        FROM {UEX_TABLE}
+        WHERE COALESCE(profit, 0) > 0
+          AND origin_terminal_name IS NOT NULL AND origin_terminal_name != ''
+          AND commodity_name = ?
+        GROUP BY origin_terminal_name
+        ORDER BY COUNT(*) DESC, origin_terminal_name ASC
+        """,
+        (commodity,),
+    )
+    if not origins:
+        origins = _rows(
+            database,
+            f"""
+            SELECT origin_terminal_name AS name
+            FROM {UEX_TABLE}
+            WHERE COALESCE(profit, 0) > 0
+              AND origin_terminal_name IS NOT NULL AND origin_terminal_name != ''
+            GROUP BY origin_terminal_name
+            ORDER BY COUNT(*) DESC, origin_terminal_name ASC
+            """,
+        )
+    start_a = origins[0]["name"] if origins else "Term A"
+    start_b = origins[1]["name"] if len(origins) > 1 else start_a
+    dests = _rows(
+        database,
+        f"""
+        SELECT destination_terminal_name AS name
+        FROM {UEX_TABLE}
+        WHERE COALESCE(profit, 0) > 0
+          AND origin_terminal_name = ?
+          AND destination_terminal_name IS NOT NULL AND destination_terminal_name != ''
+        GROUP BY destination_terminal_name
+        ORDER BY COUNT(*) DESC, destination_terminal_name ASC
+        """,
+        (start_a,),
+    )
+    if not dests:
+        dests = _rows(
+            database,
+            f"""
+            SELECT destination_terminal_name AS name
+            FROM {UEX_TABLE}
+            WHERE COALESCE(profit, 0) > 0
+              AND destination_terminal_name IS NOT NULL AND destination_terminal_name != ''
+            GROUP BY destination_terminal_name
+            ORDER BY COUNT(*) DESC, destination_terminal_name ASC
+            """,
+        )
+    dest_c = dests[0]["name"] if dests else "Term C"
+    dest_f = dests[1]["name"] if len(dests) > 1 else dest_c
+    dest_e = dests[2]["name"] if len(dests) > 2 else dest_f
+    return {
+        "start_a": start_a,
+        "start_b": start_b,
+        "dest_c": dest_c,
+        "dest_e": dest_e,
+        "dest_f": dest_f,
+        "commodity": commodity,
+        "commodities": commodities,
+    }
+
+
+def _scope_to_snapshot_commodities(query: dict, commodities: list[str]) -> dict:
+    if not commodities or query["kwargs"].get("filter_commodity_whitelist"):
+        return query
+    kwargs = dict(query["kwargs"])
+    kwargs["filter_commodity_whitelist"] = list(commodities)
+    return {**query, "kwargs": kwargs}
 
 
 def _identities(routes: list[dict]) -> list[tuple]:
@@ -421,8 +556,8 @@ FROZEN_G6_LOCAL_TOP5 = {
     "money-200-cargo-20": [
         ("Term A", "Term E", "Gold"),
         ("Term A", "Term C", "Gold"),
-        ("Term N2", "Term C", "Gold"),
         ("Term N2", "Term E", "Gold"),
+        ("Term N2", "Term C", "Gold"),
         ("Term B", "Term E", "Gold"),
     ],
     "cargo-100": [
@@ -490,13 +625,22 @@ def _query_is_example(query: dict) -> bool:
     return not kwargs.get("available_cargo_space_scu") and kwargs.get("available_money") is None
 
 
+def _route_field(route: dict, full: str, short: str):
+    """Tool output shortens long keys (ep, ossn, dssn) when a legend is used."""
+    if full in route:
+        return route.get(full)
+    return route.get(short)
+
+
 def _d3_sort_key(route: dict) -> tuple:
     """D3: profit per SCU DESC, same system DESC, distance ASC (NULL first)."""
-    profit = float(route.get("estimated_profit") or 0)
-    volume = float(route.get("buy_volume_in_scu") or 0)
+    profit = float(_route_field(route, "estimated_profit", "ep") or 0)
+    volume = float(_route_field(route, "buy_volume_in_scu", "bvis") or 0)
     per_scu = profit / volume if volume else profit
-    same = route.get("origin_star_system_name") == route.get("destination_star_system_name")
-    distance = route.get("distance_in_giga_meters")
+    origin = _route_field(route, "origin_star_system_name", "ossn")
+    destination = _route_field(route, "destination_star_system_name", "dssn")
+    same = origin == destination
+    distance = _route_field(route, "distance_in_giga_meters", "digm")
     distance_key = (-1, 0.0) if distance is None else (0, float(distance))
     return (-per_scu, 0 if same else 1, distance_key)
 
@@ -506,14 +650,21 @@ def _follows_d3(routes: list[dict]) -> bool:
     return keys == sorted(keys)
 
 
-def evaluate_g6(helper) -> dict:
+def evaluate_g6(helper, snapshot: bool = False) -> dict:
     from skills.uexcorp.uexcorp.local_routes import set_forced_source
     from skills.uexcorp.uexcorp.tool.commodity_route import CommodityRoute
 
     config = helper.get_handler_config()
-    non_example = [query for query in g6_queries() if not _query_is_example(query)]
-    examples = [query for query in g6_queries() if _query_is_example(query)]
+    places = _snapshot_places(helper.get_database()) if snapshot else None
+    queries = g6_queries(places)
+    if places and places.get("commodities"):
+        queries = [
+            _scope_to_snapshot_commodities(query, places["commodities"]) for query in queries
+        ]
+    non_example = [query for query in queries if not _query_is_example(query)]
+    examples = [query for query in queries if _query_is_example(query)]
     passed = 0
+    considered = 0
     mismatches = []
     details = []
     tool = CommodityRoute()
@@ -524,6 +675,10 @@ def evaluate_g6(helper) -> dict:
         uex_routes = _execute(tool, query["kwargs"])
         local_ids = _identities(local_routes)
         uex_ids = _identities(uex_routes)
+        if snapshot and not local_ids and not uex_ids:
+            details.append(f"{query['name']} skipped (no rows)")
+            continue
+        considered += 1
         overlap = len(set(local_ids) & set(uex_ids))
         denom = max(len(local_ids), len(uex_ids), 1)
         ratio = overlap / denom
@@ -552,12 +707,12 @@ def evaluate_g6(helper) -> dict:
     example_ok = not example_failures
     return _gate(
         "G6",
-        f"{passed}/{len(non_example)} non-example, example D3 {'ok' if example_ok else 'fail'}",
+        f"{passed}/{considered} non-example, example D3 {'ok' if example_ok else 'fail'}",
         (
-            f"{len(non_example)}/{len(non_example)} non-example with top-5 overlap >= 4/5 "
+            f"{considered}/{considered} non-example with top-5 overlap >= 4/5 "
             "and identical top-1; example mode follows profit per SCU, same system, distance"
         ),
-        passed == len(non_example) and example_ok,
+        considered > 0 and passed == considered and example_ok,
         "non-example mismatches: " + (", ".join(mismatches) or "none")
         + ". example D3: " + (", ".join(example_failures) or "ok")
         + ". " + "; ".join(details),
@@ -569,8 +724,16 @@ def _execute(tool, kwargs) -> list[dict]:
 
     payload, _instant = tool.execute(**kwargs)
     data = json.loads(payload)
+    legend = {}
     if isinstance(data, dict) and LEGEND_KEY in data:
+        legend = data.get(LEGEND_KEY) or {}
         data = data.get("data") or []
+    if legend and isinstance(data, list):
+        data = [
+            {legend.get(key, key): value for key, value in route.items()}
+            for route in data
+            if isinstance(route, dict)
+        ]
     return data
 
 
@@ -683,7 +846,10 @@ def load_snapshot(helper, database, directory: str) -> None:
             helper.timestamp = int(meta["now"])
     ensure_trade_route_schema(database)
     for filename, table in _SNAPSHOT_TABLES.items():
-        _insert_rows(database, table, _load_json_rows(os.path.join(directory, filename)))
+        rows = _load_json_rows(os.path.join(directory, filename))
+        if filename == "routes.json" and not rows:
+            raise ValueError(f"Snapshot {directory} routes.json has no UEX routes.")
+        _insert_rows(database, table, rows)
     moment = int(helper.get_timestamp())
     for table in ("commodity_price", "terminal", "orbit_distance"):
         database.execute(
@@ -731,15 +897,26 @@ def _seed_scale(database, pairs_side: int) -> None:
 
 def measure_fixture(helper, database, snapshot: str | None = None) -> list[dict]:
     load_snapshot(helper, database, snapshot or fixture_snapshot_dir())
-    build_local_route_table(helper)
+    started = time.perf_counter()
+    count = build_local_route_table(helper)
+    elapsed = time.perf_counter() - started
     gates = evaluate_table_gates(database)
-    gates.append(evaluate_g6(helper))
+    gates.append(evaluate_g6(helper, snapshot=bool(snapshot)))
+    if snapshot:
+        gates.append(_gate(
+            "G7",
+            f"{elapsed:.3f}s ({count} routes)",
+            f"<= {G7_MAX_SECONDS:.0f}s",
+            elapsed <= G7_MAX_SECONDS and count > 0,
+            "live snapshot build",
+        ))
     return gates
 
 
 def measure(helper, database, helper_factory, snapshot: str | None = None) -> tuple[list[dict], str]:
     gates = measure_fixture(helper, database, snapshot)
-    gates.append(evaluate_g7(helper_factory))
+    if not any(gate["id"] == "G7" for gate in gates):
+        gates.append(evaluate_g7(helper_factory))
     gates.append(evaluate_g8())
     order = ["G1", "G2", "G3", "G4", "G5", "G6", "G7", "G8", "G9"]
     by_id = {gate["id"]: gate for gate in gates}
@@ -852,7 +1029,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         try:
             gates, live = measure(helper, database, factory, snapshot=args.snapshot)
-        except FileNotFoundError as exc:
+        except (FileNotFoundError, ValueError, json.JSONDecodeError) as exc:
             print(exc)
             return 1
         print(format_report(gates, live))

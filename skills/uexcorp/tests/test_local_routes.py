@@ -447,7 +447,6 @@ class LocalServeTest(_SqliteCase):
         self.assertNotIn("uex_score", shown)
         self.assertNotIn("scu_margin", shown)
 
-
     def test_uex_advanced_row_keeps_the_original_key_order(self):
         from skills.uexcorp.uexcorp.model.commodity_route import CommodityRoute as RouteModel
 
@@ -523,6 +522,78 @@ class LocalServeTest(_SqliteCase):
         self.assertNotIn("uex_score", local_keys)
         faction = local_keys.index("destination_faction_name")
         self.assertEqual(local_keys[faction + 1], "has_refuel_origin")
+
+    def test_local_fallback_to_uex_still_adds_the_source_note(self):
+        from skills.uexcorp.uexcorp.tool.commodity_route import CommodityRoute
+
+        ensure_trade_route_schema(self._db)
+        self._db.execute(
+            """
+            INSERT INTO commodity (id, name, is_illegal, is_blacklisted, is_available)
+            VALUES (1, 'Gold', 0, 0, 1)
+            """
+        )
+        self._db.execute(
+            f"""
+            INSERT INTO {UEX_TABLE} (
+                id, id_commodity, commodity_name, price_origin, price_destination,
+                scu_origin, scu_destination, profit, score,
+                origin_terminal_name, destination_terminal_name
+            ) VALUES (1, 1, 'Gold', 10, 20, 4, 4, 40, 5, 'A', 'B')
+            """
+        )
+        self._db.execute(
+            """
+            INSERT INTO imports (`table`, date_imported, dataset_count, time_taken, last_import_run_id)
+            VALUES ('commodity_route', ?, 1, 0, 1)
+            """,
+            (NOW - 60,),
+        )
+        self._db.commit()
+        self._helper.get_handler_config().route_source = "local"
+        self._helper.get_handler_config().local_fallback = "uex"
+        payload, _instant = CommodityRoute().execute(limit=5, available_cargo_space_scu=10)
+        notes = " ".join(self._helper.get_handler_tool().notes)
+        self.assertIn("Routes from UEX route table", notes)
+        data = json.loads(payload)
+        if isinstance(data, dict):
+            data = data.get("data") or []
+        self.assertEqual([route["buy_at"] for route in data], ["A"])
+
+    def test_null_distance_tie_breaks_on_investment_then_ids(self):
+        from skills.uexcorp.uexcorp.tool.commodity_route import CommodityRoute
+
+        ensure_trade_route_schema(self._db)
+        self._db.execute(
+            """
+            INSERT INTO imports (`table`, date_imported, dataset_count, time_taken, last_import_run_id)
+            VALUES ('commodity_route_local', ?, 1, 0, 1)
+            """,
+            (NOW,),
+        )
+        self._db.execute(
+            f"""
+            INSERT INTO {LOCAL_TABLE} (
+                id, id_commodity, commodity_name,
+                id_terminal_origin, id_terminal_destination,
+                id_star_system_origin, id_star_system_destination,
+                price_origin, price_destination, scu_origin, scu_destination,
+                profit, investment, distance,
+                origin_terminal_name, destination_terminal_name
+            ) VALUES
+                (1, 1, 'Construction Materials', 9, 2, 1, 2, 5, 15, 100, 100, 1000, 500, NULL, 'Late', 'Far'),
+                (2, 1, 'Construction Materials', 1, 2, 1, 2, 5, 15, 100, 100, 1000, 500, NULL, 'Early', 'Far'),
+                (3, 1, 'Construction Materials', 3, 4, 1, 2, 10, 20, 100, 100, 1000, 1000, NULL, 'Costly', 'Far')
+            """
+        )
+        self._db.commit()
+        self._helper.get_handler_config().route_source = "local"
+        payload, _instant = CommodityRoute().execute(limit=5, available_cargo_space_scu=1000)
+        data = json.loads(payload)
+        if isinstance(data, dict):
+            data = data.get("data") or []
+        self.assertEqual([route["buy_at"] for route in data], ["Early", "Late", "Costly"])
+
 
 class SchemaAndBlockTest(_SqliteCase):
     def test_local_route_schema_parity(self):
@@ -698,6 +769,90 @@ class GateReportTest(unittest.TestCase):
         from skills.uexcorp.uexcorp.route_gates import main
 
         self.assertEqual(main([]), 0)
+
+    def test_shuffled_compressed_example_order_fails_d3(self):
+        from skills.uexcorp.uexcorp.route_gates import _follows_d3
+
+        ordered = [
+            {"ep": 30, "bvis": 1, "ossn": "Stanton", "dssn": "Stanton", "digm": None},
+            {"ep": 10, "bvis": 1, "ossn": "Stanton", "dssn": "Pyro", "digm": 4},
+        ]
+        self.assertTrue(_follows_d3(ordered))
+        self.assertFalse(_follows_d3(list(reversed(ordered))))
+        same_profit = [
+            {"ep": 10, "bvis": 1, "ossn": "Stanton", "dssn": "Pyro", "digm": None},
+            {"ep": 10, "bvis": 1, "ossn": "Stanton", "dssn": "Stanton", "digm": 1},
+        ]
+        self.assertFalse(_follows_d3(same_profit))
+
+    def test_rounding_is_an_accepted_formula_class(self):
+        from skills.uexcorp.uexcorp.route_gates import _classify
+
+        uex = {
+            "price_origin": 3109,
+            "price_destination": 3700,
+            "scu_destination": 1796,
+            "profit": 1061440,
+            "investment": 5583760,
+            "date_added": 10,
+        }
+        local = {
+            "price_origin": 3109,
+            "price_destination": 3700,
+            "scu_destination": 1796,
+            "profit": 1061436,
+            "investment": 5583764,
+        }
+        self.assertEqual(_classify(uex, local), "rounding")
+        fallback = dict(uex)
+        fallback["scu_destination"] = 1050
+        self.assertEqual(_classify(fallback, local), "fallback disagreement")
+        broken = dict(uex)
+        broken["profit"] = 1
+        broken["investment"] = 1
+        self.assertEqual(_classify(broken, local), "fallback disagreement")
+        shifted = dict(uex)
+        shifted["price_origin"] = 1
+        self.assertEqual(_classify(shifted, local), "unclassified")
+
+    def test_empty_routes_json_fails_the_harness(self):
+        import json
+        import tempfile
+
+        from skills.uexcorp.uexcorp.route_gates import main
+
+        snapshot = tempfile.mkdtemp(prefix="uex-empty-routes-")
+
+        def _write(name, payload):
+            with open(f"{snapshot}/{name}", "w", encoding="utf-8") as handle:
+                json.dump(payload, handle)
+
+        _write("commodities.json", [{"id": 1, "name": "Gold", "is_available": 1}])
+        _write("terminals.json", [])
+        _write("prices.json", [])
+        _write("distances.json", [])
+        _write("routes.json", [])
+        _write("meta.json", {"now": 1_700_000_000})
+        self.assertEqual(main(["--snapshot", snapshot]), 1)
+
+    def test_snapshot_g6_queries_use_loaded_place_names(self):
+        from skills.uexcorp.uexcorp.route_gates import g6_queries
+
+        places = {
+            "start_a": "Lorville",
+            "start_b": "Area 18",
+            "dest_c": "Everus Harbor",
+            "dest_e": "Baijini Point",
+            "dest_f": "New Babbage",
+            "commodity": "Gold",
+        }
+        queries = {query["name"]: query["kwargs"] for query in g6_queries(places)}
+        self.assertEqual(queries["start-a"]["filter_start_location"], "Lorville")
+        self.assertEqual(queries["gold-from-b"]["filter_start_location"], "Area 18")
+        self.assertEqual(queries["dest-c"]["filter_destination_location"], "Everus Harbor")
+        self.assertNotIn("Term A", str(queries))
+        fixture = g6_queries()
+        self.assertEqual(fixture[4]["kwargs"]["filter_start_location"], "Term A")
 
     def test_g6_local_top5_is_pinned_on_the_frozen_fixture(self):
         import tempfile
