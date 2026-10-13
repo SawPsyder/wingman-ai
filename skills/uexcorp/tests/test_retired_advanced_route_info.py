@@ -75,6 +75,12 @@ class RetiredAdvancedRouteInfoTest(unittest.IsolatedAsyncioTestCase):
             )
 
     async def test_saved_advanced_route_switch_loads_and_the_skill_runs(self) -> None:
+        await self._saved_switch_loads(True)
+
+    async def test_saved_advanced_route_switch_false_loads_and_the_skill_runs(self) -> None:
+        await self._saved_switch_loads(False)
+
+    async def _saved_switch_loads(self, value: bool) -> None:
         from services.config_manager import ConfigManager
 
         manager = ConfigManager(REPO_ROOT)
@@ -87,7 +93,7 @@ class RetiredAdvancedRouteInfoTest(unittest.IsolatedAsyncioTestCase):
         skills.append(
             {
                 "module": "skills.uexcorp.main",
-                "custom_properties": [{"id": SETTING_ID, "value": True}],
+                "custom_properties": [{"id": SETTING_ID, "value": value}],
             }
         )
         wingman["skills"] = skills

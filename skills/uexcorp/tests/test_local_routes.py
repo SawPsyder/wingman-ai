@@ -767,6 +767,7 @@ class GateReportTest(unittest.TestCase):
         uex = {
             "price_origin": 3109,
             "price_destination": 3700,
+            "scu_origin": 1796,
             "scu_destination": 1796,
             "profit": 1061440,
             "investment": 5583760,
@@ -775,7 +776,9 @@ class GateReportTest(unittest.TestCase):
         local = {
             "price_origin": 3109,
             "price_destination": 3700,
+            "scu_origin": 1796,
             "scu_destination": 1796,
+            "scu_reachable": 1796,
             "profit": 1061436,
             "investment": 5583764,
         }
@@ -790,6 +793,73 @@ class GateReportTest(unittest.TestCase):
         shifted = dict(uex)
         shifted["price_origin"] = 1
         self.assertEqual(_classify(shifted, local), "unclassified")
+
+    def test_cheap_commodity_reach_bug_is_not_rounding(self):
+        from skills.uexcorp.uexcorp.route_gates import _classify
+
+        # 1 to 3 aUEC per SCU. A 20% reach cut (100 to 80) is a 40 aUEC gap,
+        # which the old absolute band called rounding.
+        uex = {
+            "price_origin": 1,
+            "price_destination": 3,
+            "scu_origin": 100,
+            "scu_destination": 100,
+            "profit": 200,
+            "investment": 100,
+        }
+        local = {
+            "price_origin": 1,
+            "price_destination": 3,
+            "scu_origin": 100,
+            "scu_destination": 100,
+            "scu_reachable": 80,
+            "profit": 160,
+            "investment": 80,
+        }
+        self.assertNotEqual(_classify(uex, local), "rounding")
+        zero = dict(local)
+        zero["scu_reachable"] = 100
+        zero["profit"] = 0
+        zero["investment"] = 100
+        published = dict(uex)
+        published["profit"] = 48
+        self.assertNotEqual(_classify(published, zero), "rounding")
+
+    def test_committed_rounding_rows_stay_inside_the_relative_bound(self):
+        import json
+        import os
+
+        from skills.uexcorp.uexcorp.route_gates import _classify, _rounding_allowance
+
+        directory = os.path.join(os.path.dirname(__file__), "evidence")
+        for name in ("g2_rounding_snap1.json", "g2_rounding_snap2.json"):
+            with open(os.path.join(directory, name), encoding="utf-8") as handle:
+                payload = json.load(handle)
+            self.assertGreater(payload["count"], 0)
+            self.assertEqual(len(payload["rows"]), payload["count"])
+            for row in payload["rows"]:
+                uex = {
+                    "price_origin": row["price_origin"],
+                    "price_destination": row["price_destination"],
+                    "scu_origin": row["scu_origin"],
+                    "scu_destination": row["scu_destination"],
+                    "profit": row["uex_profit"],
+                    "investment": row["uex_investment"],
+                }
+                local = {
+                    "price_origin": row["price_origin"],
+                    "price_destination": row["price_destination"],
+                    "scu_origin": row["scu_origin"],
+                    "scu_destination": row["scu_destination"],
+                    "scu_reachable": row["scu_reachable"],
+                    "profit": row["local_profit"],
+                    "investment": row["local_investment"],
+                }
+                self.assertEqual(_classify(uex, local), "rounding", row)
+                allowance = _rounding_allowance(row["scu_reachable"], row["uex_profit"])
+                self.assertLessEqual(row["profit_delta"], allowance)
+                self.assertGreater(row["uex_profit"], 0)
+                self.assertGreater(row["local_profit"], 0)
 
     def test_empty_routes_json_fails_the_harness(self):
         import json
@@ -829,6 +899,21 @@ class GateReportTest(unittest.TestCase):
         self.assertNotIn("Term A", str(queries))
         fixture = g6_queries()
         self.assertEqual(fixture[4]["kwargs"]["filter_start_location"], "Term A")
+        self.assertEqual(fixture[3]["kwargs"]["available_money"], 500)
+
+    def test_snapshot_money_budgets_follow_the_price_range(self):
+        from skills.uexcorp.uexcorp.route_gates import _money_budgets, g6_queries
+
+        budgets = _money_budgets([1000, 2000, 8000])
+        self.assertEqual(budgets["money_small"], 2000)
+        self.assertEqual(budgets["money_mid"], 40000)
+        self.assertEqual(budgets["money_large"], 8000)
+        queries = {query["name"]: query["kwargs"] for query in g6_queries(budgets)}
+        self.assertEqual(queries["money-500"]["available_money"], 2000)
+        self.assertEqual(queries["money-200-cargo-20"]["available_money"], 40000)
+        self.assertEqual(queries["money-200-cargo-20"]["available_cargo_space_scu"], 20)
+        self.assertEqual(queries["money-5000"]["available_money"], 8000)
+        self.assertEqual(_money_budgets([])["money_small"], 500)
 
     def test_g6_local_top5_is_pinned_on_the_frozen_fixture(self):
         import tempfile
