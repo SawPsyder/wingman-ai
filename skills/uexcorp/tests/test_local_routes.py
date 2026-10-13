@@ -678,7 +678,15 @@ class GateReportTest(unittest.TestCase):
             print(report)
             for name in ("G1", "G2", "G3", "G4", "G5", "G6", "G7", "G8", "G9"):
                 self.assertIn(name, report)
-            self.assertTrue(all(gate["passed"] for gate in gates), report)
+            by_id = {gate["id"]: gate for gate in gates}
+            # The fixture's (1, 1, 778) row matches destination SCU and still
+            # disagrees on profit, so it is unclassified and G2 fails.
+            self.assertFalse(by_id["G2"]["passed"], report)
+            self.assertIn("unclassified", by_id["G2"]["detail"])
+            self.assertTrue(
+                all(gate["passed"] for gate in gates if gate["id"] != "G2"),
+                report,
+            )
             self.assertIn("not measured", live)
         finally:
             database.destroy()
@@ -741,10 +749,19 @@ class GateReportTest(unittest.TestCase):
             database.destroy()
             Helper._instance = previous
 
-    def test_script_entrypoint_exits_zero(self):
+    def test_script_entrypoint_fails_on_the_fixture_money_gap(self):
+        import io
+        from contextlib import redirect_stdout
+
         from skills.uexcorp.uexcorp.route_gates import main
 
-        self.assertEqual(main([]), 0)
+        stdout = io.StringIO()
+        with redirect_stdout(stdout):
+            code = main([])
+        report = stdout.getvalue()
+        self.assertEqual(code, 1)
+        self.assertIn("unclassified", report)
+        self.assertIn("(1, 1, 778)", report)
 
     def test_shuffled_compressed_example_order_fails_d3(self):
         from skills.uexcorp.uexcorp.route_gates import _follows_d3
@@ -781,6 +798,7 @@ class GateReportTest(unittest.TestCase):
             "scu_reachable": 1796,
             "profit": 1061436,
             "investment": 5583764,
+            "demand_unknown": 0,
         }
         self.assertEqual(_classify(uex, local), "rounding")
         fallback = dict(uex)
@@ -789,7 +807,7 @@ class GateReportTest(unittest.TestCase):
         broken = dict(uex)
         broken["profit"] = 1
         broken["investment"] = 1
-        self.assertEqual(_classify(broken, local), "fallback disagreement")
+        self.assertEqual(_classify(broken, local), "unclassified")
         shifted = dict(uex)
         shifted["price_origin"] = 1
         self.assertEqual(_classify(shifted, local), "unclassified")
@@ -816,14 +834,68 @@ class GateReportTest(unittest.TestCase):
             "profit": 160,
             "investment": 80,
         }
-        self.assertNotEqual(_classify(uex, local), "rounding")
+        self.assertEqual(_classify(uex, local), "unclassified")
         zero = dict(local)
         zero["scu_reachable"] = 100
         zero["profit"] = 0
         zero["investment"] = 100
         published = dict(uex)
         published["profit"] = 48
-        self.assertNotEqual(_classify(published, zero), "rounding")
+        self.assertEqual(_classify(published, zero), "unclassified")
+
+    def test_twenty_percent_money_cut_fails_g2(self):
+        import io
+        import json
+        import tempfile
+        from contextlib import redirect_stdout
+
+        from skills.uexcorp.uexcorp.route_gates import main
+
+        snapshot = tempfile.mkdtemp(prefix="uex-cut-profit-")
+        now = 1_700_000_000
+        # Exact D7 money is profit 500 and investment 500. The published
+        # totals are 20% lower, with the same prices and the same SCU.
+        exact_profit = 500
+        exact_investment = 500
+
+        def _write(name, payload):
+            with open(f"{snapshot}/{name}", "w", encoding="utf-8") as handle:
+                json.dump(payload, handle)
+
+        _write("commodities.json", [{"id": 1, "name": "Gold", "is_available": 1}])
+        _write("terminals.json", [
+            {"id": 1, "name": "Buy", "type": "commodity", "is_available": 1, "id_star_system": 1, "id_orbit": 1, "star_system_name": "Stanton"},
+            {"id": 2, "name": "Sell", "type": "commodity", "is_available": 1, "id_star_system": 1, "id_orbit": 1, "star_system_name": "Stanton"},
+        ])
+        _write("prices.json", [
+            {"id": 1, "id_commodity": 1, "id_terminal": 1, "price_buy": 10, "price_sell": 0, "scu_buy": 100, "scu_sell": 0, "date_modified": now - 10},
+            {"id": 2, "id_commodity": 1, "id_terminal": 2, "price_buy": 0, "price_sell": 20, "scu_buy": 0, "scu_sell": 50, "date_modified": now - 10},
+        ])
+        _write("distances.json", [])
+        _write("routes.json", [{
+            "id": 1,
+            "id_commodity": 1,
+            "commodity_name": "Gold",
+            "id_terminal_origin": 1,
+            "id_terminal_destination": 2,
+            "price_origin": 10,
+            "price_destination": 20,
+            "scu_origin": 100,
+            "scu_destination": 50,
+            "profit": exact_profit * 0.8,
+            "investment": exact_investment * 0.8,
+            "origin_terminal_name": "Buy",
+            "destination_terminal_name": "Sell",
+        }])
+        _write("meta.json", {"now": now})
+        stdout = io.StringIO()
+        with redirect_stdout(stdout):
+            code = main(["--snapshot", snapshot])
+        report = stdout.getvalue()
+        self.assertEqual(code, 1)
+        self.assertIn("unclassified", report)
+        self.assertIn("G2", report)
+        self.assertIn("FAIL", report.split("G3")[0])
 
     def test_committed_rounding_rows_stay_inside_the_relative_bound(self):
         import json

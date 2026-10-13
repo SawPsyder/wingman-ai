@@ -115,11 +115,41 @@ def _is_rounding(uex, local) -> bool:
     )
 
 
+def _d7_fallback_applied(local) -> bool:
+    """Local destination SCU came from the D7 rule.
+
+    ``demand_unknown`` 1 means sell stock was 0 and the destination fell back
+    to the origin buy stock. ``demand_unknown`` 0 means D7 used a positive
+    sell stock. A row that never recorded the flag did not apply the rule.
+    """
+    unknown = local.get("demand_unknown")
+    if unknown is None:
+        return False
+    try:
+        flag = int(unknown)
+    except (TypeError, ValueError):
+        return False
+    if flag == 1:
+        return _close(local.get("scu_destination"), local.get("scu_origin"), 0)
+    return flag == 0 and local.get("scu_destination") is not None
+
+
+def _is_d7_disagreement(uex, local) -> bool:
+    """Prices match and only the destination SCU disagrees, because of D7."""
+    if _close(uex.get("scu_destination"), local.get("scu_destination"), 0):
+        return False
+    prices_match = _close(uex.get("price_origin"), local.get("price_origin"), 0) and _close(
+        uex.get("price_destination"), local.get("price_destination"), 0
+    )
+    return prices_match and _d7_fallback_applied(local)
+
+
 def _classify(uex, local) -> str:
     """Accepted G2 reasons. Anything else stays unclassified and fails the gate.
 
-    fallback disagreement: the published prices match and UEX's destination SCU
-    is not the D7 value (the terminal-778 pattern).
+    fallback disagreement: prices are equal, destination SCU differs, and the
+    local row applied D7. A money gap with the same destination SCU is not
+    this pattern.
     rounding: prices, origin SCU, destination SCU and reachable volume match,
     both profits are positive, and the money residuals stay inside
     ``_rounding_allowance``.
@@ -135,10 +165,10 @@ def _classify(uex, local) -> str:
     newer = _price_is_newer(uex)
     if newer and not prices_match:
         return "newer price"
+    if _is_d7_disagreement(uex, local):
+        return "fallback disagreement"
     if prices_match and not scu_changed and not money_close and _is_rounding(uex, local):
         return "rounding"
-    if prices_match and (scu_changed or not money_close):
-        return "fallback disagreement"
     if newer:
         return "newer price"
     return "unclassified"
