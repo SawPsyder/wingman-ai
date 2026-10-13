@@ -4,11 +4,13 @@ from skills.uexcorp.uexcorp.tool.validator import Validator
 
 
 def _annotate_route_source(helper, routes=None, served: str | None = None) -> None:
-    from skills.uexcorp.uexcorp.local_routes import source_note
+    from skills.uexcorp.uexcorp.local_routes import SOURCE_UEX, route_source, source_note
 
-    helper.get_handler_tool().add_note(
-        source_note(helper, routes, served=served or getattr(helper, "_route_answer_source", None))
-    )
+    mode = served or getattr(helper, "_route_answer_source", None) or route_source(helper)
+    # uex mode stays byte-identical: no source note. shadow and local keep one.
+    if mode == SOURCE_UEX:
+        return
+    helper.get_handler_tool().add_note(source_note(helper, routes, served=mode))
 
 
 def _no_routes(helper, note: str, served: str | None = None):

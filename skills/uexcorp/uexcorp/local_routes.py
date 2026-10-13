@@ -440,6 +440,20 @@ def price_is_stale(age_hours, hours: int = STALE_HOURS_DEFAULT) -> bool:
     return float(age_hours) > float(hours)
 
 
+def answered_price_age(stored_hours, built_at, now) -> float | None:
+    """Price age at answer time.
+
+    ``stored_hours`` is computed when the local table is built. Add the time
+    since that build so a later query does not freeze the age.
+    """
+    if stored_hours is None:
+        return None
+    age = float(stored_hours)
+    if built_at is None or now is None:
+        return age
+    return age + max(0, int(now) - int(built_at)) / 3600.0
+
+
 def format_price_age(hours) -> str:
     if hours is None:
         return "unknown"
@@ -737,15 +751,20 @@ def source_note(helper, routes=None, served: str | None = None) -> str:
     """Every answer names its source and a price age. Fees are not modelled."""
     mode = served or route_source(helper)
     if mode == SOURCE_LOCAL:
+        moment = _now(helper)
         oldest = None
         for route in routes or []:
-            age = getattr(route, "price_age_hours", None)
-            if age is None and isinstance(route, dict):
-                age = route.get("price_age_hours")
+            if isinstance(route, dict):
+                stored = route.get("price_age_hours")
+                built_at = route.get("date_added")
+            else:
+                stored = getattr(route, "price_age_hours", None)
+                built_at = route.get_date_added() if hasattr(route, "get_date_added") else None
+            age = answered_price_age(stored, built_at, moment)
             if age is None:
                 continue
-            if oldest is None or float(age) > oldest:
-                oldest = float(age)
+            if oldest is None or age > oldest:
+                oldest = age
         return (
             "Routes computed locally from UEX prices "
             f"(oldest price used: {format_price_age(oldest)}); fees not included."

@@ -187,7 +187,13 @@ class CommodityRoute(DataModel):
         from skills.uexcorp.uexcorp.helper import Helper
 
         helper = Helper.get_instance()
-        from skills.uexcorp.uexcorp.local_routes import show_stale_flag
+        from skills.uexcorp.uexcorp.local_routes import (
+            _now,
+            answered_price_age,
+            price_is_stale,
+            show_stale_flag,
+            stale_hours,
+        )
 
         # UEX rows never carry these columns. A fallback that serves the UEX
         # table while the config is local must still look like a UEX answer.
@@ -213,14 +219,20 @@ class CommodityRoute(DataModel):
             "destination_planet_name": self.get_destination_planet_name(),
         }
 
+        answered_age = None
         if local:
             if self.demand_unknown:
                 data["demand_unknown"] = True
             if self.jump_required:
                 data["jump_required"] = True
-            if self.price_age_hours is not None:
-                data["price_age_hours"] = round(float(self.price_age_hours), 1)
-            if show_stale_flag(helper) and self.price_stale:
+            answered_age = answered_price_age(
+                self.price_age_hours, self.get_date_added(), _now(helper)
+            )
+            if answered_age is not None:
+                data["price_age_hours"] = round(answered_age, 1)
+            if show_stale_flag(helper) and answered_age is not None and price_is_stale(
+                answered_age, stale_hours(helper)
+            ):
                 data["price_stale"] = True
 
         if helper.get_handler_config().get_behavior_commodity_route_advanced_info():

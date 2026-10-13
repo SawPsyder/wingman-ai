@@ -197,12 +197,38 @@ class Commodity(DataModel):
 
     def __calculate_profit(self) -> None:
         from skills.uexcorp.uexcorp.data_access.commodity_route_data_access import CommodityRouteDataAccess
+        from skills.uexcorp.uexcorp.helper import Helper
+        from skills.uexcorp.uexcorp.local_routes import (
+            SOURCE_LOCAL,
+            UEX_TABLE,
+            local_fallback,
+            local_table_is_fresh,
+            route_source,
+        )
 
         # Best and worst stored routes. A cross-terminal spread (cheapest buy
         # anywhere vs highest sell anywhere) is not a route the player can fly.
+        helper = Helper.get_instance()
+        table = None
+        if (
+            route_source(helper) == SOURCE_LOCAL
+            and not getattr(helper, "mirror_routes_to_local", False)
+            and not local_table_is_fresh(helper)
+        ):
+            if local_fallback(helper) != "uex":
+                self.profit_calculated = True
+                self.profit_from_route = False
+                self.profit_margin_max = None
+                self.profit_margin_min = None
+                self.profit_max = None
+                self.profit_min = None
+                self.base_profit_max = None
+                self.base_profit_min = None
+                return
+            table = UEX_TABLE
         best = None
         worst = None
-        routes = CommodityRouteDataAccess().add_filter_by_id_commodity(self.get_id()).load()
+        routes = CommodityRouteDataAccess(table=table).add_filter_by_id_commodity(self.get_id()).load()
         for route in routes:
             buy = route.get_price_origin()
             sell = route.get_price_destination()

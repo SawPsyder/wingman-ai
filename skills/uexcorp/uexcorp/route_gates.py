@@ -1,9 +1,10 @@
 """Shadow comparison for local trade routes. Prints G1–G9.
 
-Live UEX snapshots are not in the repo. The numbers below are measured on the
-frozen fixture (and a ~10k-pair build for G7). Pass ``--snapshot DIR`` with
-``routes.json``, ``prices.json``, ``terminals.json``, ``commodities.json`` and
-``distances.json`` to measure a live window the same way.
+``--snapshot DIR`` loads a real window. ``routes.json`` is the UEX route table
+and is never rebuilt from the local prices. ``prices.json``, ``terminals.json``,
+``commodities.json`` and ``distances.json`` feed the local build. Optional
+``meta.json`` may set ``now``. Without ``--snapshot`` the checked-in fixture
+snapshot is used, and the report says the live window was not measured.
 """
 
 from __future__ import annotations
@@ -19,14 +20,12 @@ from skills.uexcorp.uexcorp.local_routes import (
     LOCAL_TABLE,
     UEX_TABLE,
     build_local_route_table,
-    copy_local_routes_to_uex,
     ensure_trade_route_schema,
 )
 
 G1_MIN = 0.98
 G3_MIN = 0.95
 G4_MIN = 0.99
-G6_QUERY_MIN = 18
 G6_OVERLAP_MIN = 0.8
 G7_MAX_SECONDS = 1.0
 PROFIT_ABS = 2.0
@@ -485,18 +484,44 @@ FROZEN_G6_LOCAL_TOP5 = {
 }
 
 
+def _query_is_example(query: dict) -> bool:
+    """The tool's example mode: no cargo and no money."""
+    kwargs = query["kwargs"]
+    return not kwargs.get("available_cargo_space_scu") and kwargs.get("available_money") is None
+
+
+def _d3_sort_key(route: dict) -> tuple:
+    """D3: profit per SCU DESC, same system DESC, distance ASC (NULL first)."""
+    profit = float(route.get("estimated_profit") or 0)
+    volume = float(route.get("buy_volume_in_scu") or 0)
+    per_scu = profit / volume if volume else profit
+    same = route.get("origin_star_system_name") == route.get("destination_star_system_name")
+    distance = route.get("distance_in_giga_meters")
+    distance_key = (-1, 0.0) if distance is None else (0, float(distance))
+    return (-per_scu, 0 if same else 1, distance_key)
+
+
+def _follows_d3(routes: list[dict]) -> bool:
+    keys = [_d3_sort_key(route) for route in routes]
+    return keys == sorted(keys)
+
+
 def evaluate_g6(helper) -> dict:
     from skills.uexcorp.uexcorp.local_routes import set_forced_source
     from skills.uexcorp.uexcorp.tool.commodity_route import CommodityRoute
 
+    config = helper.get_handler_config()
+    non_example = [query for query in g6_queries() if not _query_is_example(query)]
+    examples = [query for query in g6_queries() if _query_is_example(query)]
     passed = 0
     mismatches = []
     details = []
-    for query in g6_queries():
+    tool = CommodityRoute()
+    for query in non_example:
         set_forced_source("local")
-        local_routes = _execute(CommodityRoute(), query["kwargs"])
+        local_routes = _execute(tool, query["kwargs"])
         set_forced_source("uex")
-        uex_routes = _execute(CommodityRoute(), query["kwargs"])
+        uex_routes = _execute(tool, query["kwargs"])
         local_ids = _identities(local_routes)
         uex_ids = _identities(uex_routes)
         overlap = len(set(local_ids) & set(uex_ids))
@@ -509,22 +534,33 @@ def evaluate_g6(helper) -> dict:
         else:
             mismatches.append(query["name"])
         details.append(f"{query['name']} overlap {overlap}/{denom} top1 {'same' if top1 else 'differs'}")
-    set_forced_source(None)
-    explained = [name for name in mismatches if name.startswith("example-")]
-    unexplained = [name for name in mismatches if name not in explained]
+
+    example_failures = []
+    config.advanced = True
+    try:
+        set_forced_source("local")
+        for query in examples:
+            routes = _execute(tool, query["kwargs"])
+            if _follows_d3(routes):
+                details.append(f"{query['name']} follows D3")
+            else:
+                example_failures.append(query["name"])
+                details.append(f"{query['name']} is not in D3 order")
+    finally:
+        config.advanced = False
+        set_forced_source(None)
+    example_ok = not example_failures
     return _gate(
         "G6",
-        f"{passed}/{len(g6_queries())}",
-        f">= {G6_QUERY_MIN}/{len(g6_queries())} with top-5 overlap >= 4/5 and identical top-1",
-        passed >= G6_QUERY_MIN and not unexplained,
-        "mismatches: " + (
-            ", ".join(
-                f"{name} (example mode ranks profit per SCU; UEX still ranks score)"
-                if name.startswith("example-")
-                else name
-                for name in mismatches
-            ) or "none"
-        ) + ". " + "; ".join(details),
+        f"{passed}/{len(non_example)} non-example, example D3 {'ok' if example_ok else 'fail'}",
+        (
+            f"{len(non_example)}/{len(non_example)} non-example with top-5 overlap >= 4/5 "
+            "and identical top-1; example mode follows profit per SCU, same system, distance"
+        ),
+        passed == len(non_example) and example_ok,
+        "non-example mismatches: " + (", ".join(mismatches) or "none")
+        + ". example D3: " + (", ".join(example_failures) or "ok")
+        + ". " + "; ".join(details),
     )
 
 
@@ -575,192 +611,90 @@ def format_report(gates: list[dict], live: str) -> str:
     return "\n".join(lines)
 
 
-def seed_fixture(database, now: int) -> None:
-    """Frozen prices and places. Profits are the D7 figures, not UEX score."""
-    ensure_trade_route_schema(database)
-    database.execute(
-        """
-        INSERT INTO commodity (id, name, code, is_available, is_illegal, is_blacklisted)
-        VALUES
-            (1, 'Gold', 'GOLD', 1, 0, 0),
-            (2, 'Iron', 'IRON', 1, 0, 0),
-            (3, 'Hidden', 'HIDE', 0, 0, 0)
-        """
-    )
-    terminals = [
-        (1, "Term A", 1, 1, "commodity", 1, "Stanton"),
-        (2, "Term B", 1, 2, "commodity", 1, "Stanton"),
-        (3, "Term C", 1, 3, "commodity", 1, "Stanton"),
-        (4, "Term D", 1, 4, "commodity", 1, "Stanton"),
-        (5, "Term E", 1, 5, "commodity", 1, "Stanton"),
-        (6, "Term F", 1, 1, "commodity", 1, "Stanton"),
-        (7, "Term G", 1, 6, "commodity", 1, "Stanton"),
-        (8, "Term N", 3, 30, "commodity", 1, "Nyx"),
-        (9, "Term N2", 3, 30, "commodity", 1, "Nyx"),
-        (10, "Term N3", 3, 31, "commodity", 1, "Nyx"),
-        (778, "Term 778", 1, 7, "commodity", 1, "Stanton"),
-        (11, "Term IronBuy", 1, 8, "commodity", 1, "Stanton"),
-        (12, "Term IronSell", 1, 9, "commodity", 1, "Stanton"),
-        (13, "Term IronSell2", 1, 10, "commodity", 1, "Stanton"),
-        (15, "Term Loss", 1, 12, "commodity", 1, "Stanton"),
-        (98, "Term Shop", 1, 13, "shop", 1, "Stanton"),
-        (99, "Term Closed", 1, 14, "commodity", 0, "Stanton"),
-    ]
-    for terminal_id, name, system, orbit, kind, available, system_name in terminals:
-        database.execute(
-            """
-            INSERT INTO terminal (
-                id, name, type, is_available, id_star_system, id_orbit,
-                star_system_name, has_loading_dock, has_docking_port, has_freight_elevator
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, 1, 1)
-            """,
-            (terminal_id, name, kind, available, system, orbit, system_name),
-        )
-    # One moon id is NULL, one is set, so schema parity can see both.
-    database.execute("UPDATE terminal SET id_moon = NULL WHERE id = 1")
-    database.execute("UPDATE terminal SET id_moon = 4 WHERE id = 2")
+SNAPSHOT_FILES = (
+    "commodities.json",
+    "terminals.json",
+    "prices.json",
+    "distances.json",
+    "routes.json",
+)
 
-    prices = [
-        (1, 1, 1, 10, 0, 100, 0, "1,2,4", now - 3600),
-        (2, 1, 2, 12, 0, 80, 0, "1,2,4", now - 7200),
-        (3, 1, 3, 0, 20, 0, 50, "2,4,8", now - 1800),
-        (4, 1, 4, 0, 18, 0, 40, "2,4", now - 1800),
-        (5, 1, 5, 0, 30, 0, 10, "1,2", now - 1800),
-        (6, 1, 6, 0, 16, 0, 100, "1,4", now - 1800),
-        (7, 1, 7, 0, 22, 0, 5, "4", now - 1800),
-        (8, 1, 8, 0, 11, 0, 100, "1", now - 86400),
-        (9, 1, 9, 10, 0, 20, 0, "1", now - 86400),
-        (10, 1, 10, 0, 14, 0, 20, "1", now - 86400),
-        (11, 1, 778, 0, 20, 0, 7, "1,2", now - 90000),
-        (12, 2, 11, 10, 0, 10, 0, None, now - 1000),
-        (13, 2, 12, 0, 12, 0, 10, None, now - 1000),
-        (14, 2, 13, 0, 14, 0, 10, None, now - 1000),
-        (16, 1, 15, 0, 9, 0, 10, None, now - 1000),
-        (17, 1, 98, 0, 40, 0, 10, None, now - 1000),
-        (18, 1, 99, 0, 40, 0, 10, None, now - 1000),
-        (19, 3, 3, 0, 99, 0, 10, None, now - 1000),
+_SNAPSHOT_TABLES = {
+    "commodities.json": "commodity",
+    "terminals.json": "terminal",
+    "prices.json": "commodity_price",
+    "distances.json": "orbit_distance",
+    "routes.json": UEX_TABLE,
+}
+
+
+def fixture_snapshot_dir() -> str:
+    return os.path.join(os.path.dirname(__file__), "fixtures", "trade_route_snapshot")
+
+
+def _load_json_rows(path: str) -> list:
+    with open(path, encoding="utf-8") as handle:
+        payload = json.load(handle)
+    if isinstance(payload, dict) and "data" in payload:
+        payload = payload["data"]
+    if not isinstance(payload, list):
+        raise ValueError(f"{path} must be a list or an object with a data list.")
+    return payload
+
+
+def _insert_rows(database, table: str, rows: list) -> None:
+    from skills.uexcorp.uexcorp.local_routes import _column_names
+
+    known = set(_column_names(database, table))
+    for row in rows:
+        if not isinstance(row, dict):
+            raise ValueError(f"{table} snapshot rows must be objects.")
+        columns = [key for key in row if key in known]
+        if not columns:
+            continue
+        quoted = ", ".join(f"`{column}`" for column in columns)
+        marks = ", ".join("?" for _ in columns)
+        database.execute(
+            f"INSERT INTO {table} ({quoted}) VALUES ({marks})",
+            tuple(row[column] for column in columns),
+        )
+    database.commit()
+
+
+def load_snapshot(helper, database, directory: str) -> None:
+    """Load prices and places, then the saved UEX routes.
+
+    The local table is not read here. ``routes.json`` is inserted into
+    ``commodity_route`` as UEX published it.
+    """
+    missing = [
+        name for name in SNAPSHOT_FILES
+        if not os.path.isfile(os.path.join(directory, name))
     ]
-    for price_id, commodity_id, terminal_id, buy, sell, scu_buy, scu_sell, sizes, modified in prices:
-        database.execute(
-            """
-            INSERT INTO commodity_price (
-                id, id_commodity, id_terminal, price_buy, price_sell,
-                scu_buy, scu_sell, scu_sell_avg, container_sizes, date_modified, status_buy, status_sell
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1)
-            """,
-            (price_id, commodity_id, terminal_id, buy, sell, scu_buy, scu_sell, 663 if terminal_id == 778 else None, sizes, modified),
+    if missing:
+        raise FileNotFoundError(
+            f"Snapshot {directory} is missing {', '.join(missing)}."
         )
-    for index in range(10):
-        terminal_id = 200 + index
-        database.execute(
-            """
-            INSERT INTO terminal (id, name, type, is_available, id_star_system, id_orbit, star_system_name)
-            VALUES (?, ?, 'commodity', 1, 1, ?, 'Stanton')
-            """,
-            (terminal_id, f"Filler {index}", 20 + index),
-        )
-        database.execute(
-            """
-            INSERT INTO commodity_price (
-                id, id_commodity, id_terminal, price_buy, price_sell, scu_buy, scu_sell, date_modified
-            ) VALUES (?, 1, ?, 10, 0, 1, 0, ?)
-            """,
-            (300 + index, terminal_id, now - 500),
-        )
-    database.execute(
-        """
-        INSERT INTO terminal (id, name, type, is_available, id_star_system, id_orbit, star_system_name)
-        VALUES (250, 'Filler Sell', 'commodity', 1, 1, 40, 'Stanton')
-        """
-    )
-    database.execute(
-        """
-        INSERT INTO commodity_price (
-            id, id_commodity, id_terminal, price_buy, price_sell, scu_buy, scu_sell, date_modified
-        ) VALUES (399, 1, 250, 0, 10.01, 0, 1, ?)
-        """,
-        (now - 500,),
-    )
-    distances = [
-        (1, 3, 12), (2, 3, 4), (1, 4, 5), (2, 1, 9), (1, 5, 8), (2, 5, 8),
-        (1, 6, 6), (2, 6, 3), (1, 7, 2), (2, 7, 2), (30, 31, 7),
-    ]
-    for index, (origin, destination, distance) in enumerate(distances, start=1):
-        database.execute(
-            """
-            INSERT INTO orbit_distance (id, id_orbit_origin, id_orbit_destination, distance)
-            VALUES (?, ?, ?, ?)
-            """,
-            (index, origin, destination, distance),
-        )
+    meta_path = os.path.join(directory, "meta.json")
+    if os.path.isfile(meta_path):
+        with open(meta_path, encoding="utf-8") as handle:
+            meta = json.load(handle)
+        if isinstance(meta, dict) and meta.get("now") is not None:
+            helper.timestamp = int(meta["now"])
+    ensure_trade_route_schema(database)
+    for filename, table in _SNAPSHOT_TABLES.items():
+        _insert_rows(database, table, _load_json_rows(os.path.join(directory, filename)))
+    moment = int(helper.get_timestamp())
     for table in ("commodity_price", "terminal", "orbit_distance"):
         database.execute(
             """
             INSERT INTO imports (`table`, date_imported, dataset_count, time_taken, last_import_run_id)
             VALUES (?, ?, 1, 0, 1)
             """,
-            (table, now),
+            (table, moment),
         )
     database.commit()
 
-
-def apply_uex_disagreements(database) -> None:
-    """UEX score is not profit per SCU, and terminal 778 uses a different volume.
-
-    The volume change is only for the formula gates. ``restore_uex_volume``
-    puts that one row back before the tool ranking check, so a listed
-    fallback disagreement does not move the top result.
-    """
-    database.execute(
-        f"""
-        UPDATE {UEX_TABLE}
-        SET score = CAST(ROUND((price_destination - price_origin) * 100) AS INTEGER)
-        """
-    )
-    database.execute(
-        f"UPDATE {UEX_TABLE} SET score = 1 WHERE id_terminal_origin = 1 AND id_terminal_destination = 5"
-    )
-    database.execute(
-        f"UPDATE {UEX_TABLE} SET score = 99999 WHERE id_terminal_origin = 2 AND id_terminal_destination = 5"
-    )
-    database.execute(
-        f"""
-        UPDATE {UEX_TABLE}
-        SET scu_destination = 105, profit = 1050, investment = 1000
-        WHERE id_terminal_origin = 1 AND id_terminal_destination = 778
-        """
-    )
-    database.commit()
-
-
-def restore_uex_volume(database) -> None:
-    """Copy the local 778 figures back onto the UEX row. Scores stay inverted."""
-    database.execute(
-        f"""
-        UPDATE {UEX_TABLE}
-        SET
-            scu_destination = (
-                SELECT scu_destination FROM {LOCAL_TABLE}
-                WHERE {LOCAL_TABLE}.id_terminal_origin = {UEX_TABLE}.id_terminal_origin
-                  AND {LOCAL_TABLE}.id_terminal_destination = {UEX_TABLE}.id_terminal_destination
-                  AND {LOCAL_TABLE}.id_commodity = {UEX_TABLE}.id_commodity
-            ),
-            profit = (
-                SELECT profit FROM {LOCAL_TABLE}
-                WHERE {LOCAL_TABLE}.id_terminal_origin = {UEX_TABLE}.id_terminal_origin
-                  AND {LOCAL_TABLE}.id_terminal_destination = {UEX_TABLE}.id_terminal_destination
-                  AND {LOCAL_TABLE}.id_commodity = {UEX_TABLE}.id_commodity
-            ),
-            investment = (
-                SELECT investment FROM {LOCAL_TABLE}
-                WHERE {LOCAL_TABLE}.id_terminal_origin = {UEX_TABLE}.id_terminal_origin
-                  AND {LOCAL_TABLE}.id_terminal_destination = {UEX_TABLE}.id_terminal_destination
-                  AND {LOCAL_TABLE}.id_commodity = {UEX_TABLE}.id_commodity
-            )
-        WHERE id_terminal_origin = 1 AND id_terminal_destination = 778
-        """
-    )
-    database.commit()
 
 
 def _seed_scale(database, pairs_side: int) -> None:
@@ -795,43 +729,33 @@ def _seed_scale(database, pairs_side: int) -> None:
     database.commit()
 
 
-def measure_fixture(helper, database) -> list[dict]:
-    seed_fixture(database, helper.get_timestamp())
+def measure_fixture(helper, database, snapshot: str | None = None) -> list[dict]:
+    load_snapshot(helper, database, snapshot or fixture_snapshot_dir())
     build_local_route_table(helper)
-    copy_local_routes_to_uex(database)
-    apply_uex_disagreements(database)
     gates = evaluate_table_gates(database)
-    restore_uex_volume(database)
     gates.append(evaluate_g6(helper))
-    gates.append(evaluate_g8())
-    gates.append(evaluate_g9_position(gates))
     return gates
 
 
-def evaluate_g9_position(gates: list[dict]) -> dict:
-    # G9 is already in the table gates. This keeps call sites simple.
-    return next(gate for gate in gates if gate["id"] == "G9")
-
-
-def measure(helper, database, helper_factory) -> tuple[list[dict], str]:
-    gates = [gate for gate in measure_fixture(helper, database) if gate["id"] != "G9" or True]
-    # measure_fixture appended G9 twice via evaluate_g9_position. Drop the duplicate.
-    seen = []
-    cleaned = []
-    for gate in gates:
-        if gate["id"] in seen:
-            continue
-        seen.append(gate["id"])
-        cleaned.append(gate)
-    cleaned.append(evaluate_g7(helper_factory))
+def measure(helper, database, helper_factory, snapshot: str | None = None) -> tuple[list[dict], str]:
+    gates = measure_fixture(helper, database, snapshot)
+    gates.append(evaluate_g7(helper_factory))
+    gates.append(evaluate_g8())
     order = ["G1", "G2", "G3", "G4", "G5", "G6", "G7", "G8", "G9"]
-    by_id = {gate["id"]: gate for gate in cleaned}
+    by_id = {gate["id"]: gate for gate in gates}
     ordered = [by_id[name] for name in order]
-    live = (
-        "Live snapshot: not measured (no route/price JSON in this run). "
-        "Nyx coverage below is the fixture, which includes a cached Nyx pair. "
-        "price_stale at 168h is report-only and routes are not dropped."
-    )
+    if snapshot:
+        live = (
+            f"Live snapshot: {snapshot}. UEX routes loaded from routes.json, "
+            "not from the local build. price_stale at 168h is report-only and routes are not dropped."
+        )
+    else:
+        live = (
+            "Live snapshot: not measured (no --snapshot directory). "
+            "Fixture UEX routes loaded from routes.json, not from the local build. "
+            "Nyx coverage below is the fixture, which includes a cached Nyx pair. "
+            "price_stale at 168h is report-only and routes are not dropped."
+        )
     return ordered, live
 
 
@@ -849,8 +773,10 @@ def _open_memory(path: str):
         def get_behavior_commodity_route_default_count(self):
             return 5
 
+        advanced = False
+
         def get_behavior_commodity_route_advanced_info(self):
-            return False
+            return self.advanced
 
         def get_cache_lifetime_short(self):
             return 30 * 60
@@ -924,9 +850,11 @@ def main(argv: list[str] | None = None) -> int:
         return scale_helper, scale_db
 
     try:
-        gates, live = measure(helper, database, factory)
-        if args.snapshot:
-            live = f"Live snapshot directory {args.snapshot} was passed but this build measures the frozen fixture. Load that directory in a follow-up run with the JSON keys routes, prices, terminals, commodities, distances."
+        try:
+            gates, live = measure(helper, database, factory, snapshot=args.snapshot)
+        except FileNotFoundError as exc:
+            print(exc)
+            return 1
         print(format_report(gates, live))
         return 0 if all(gate["passed"] for gate in gates) else 1
     finally:

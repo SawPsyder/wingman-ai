@@ -301,6 +301,71 @@ class LocalServeTest(_SqliteCase):
         self.assertIn("routes unavailable: price data is outdated", notes)
         self.assertIn("oldest price stamp", notes)
 
+    def test_price_age_grows_after_the_build(self):
+        from skills.uexcorp.uexcorp.local_routes import answered_price_age
+        from skills.uexcorp.uexcorp.tool.commodity_route import CommodityRoute
+
+        self.assertEqual(answered_price_age(1, NOW, NOW + 3600), 2)
+        ensure_trade_route_schema(self._db)
+        self._db.execute(
+            f"""
+            INSERT INTO {LOCAL_TABLE} (
+                id, commodity_name, price_origin, price_destination, scu_origin, scu_destination,
+                profit, price_age_hours, date_added, demand_unknown
+            ) VALUES (1, 'Gold', 10, 20, 5, 5, 50, 1, ?, 0)
+            """,
+            (NOW,),
+        )
+        self._db.execute(
+            """
+            INSERT INTO imports (`table`, date_imported, dataset_count, time_taken, last_import_run_id)
+            VALUES ('commodity_route_local', ?, 1, 0, 1)
+            """,
+            (NOW,),
+        )
+        self._db.commit()
+        self._helper.timestamp = NOW + 3600
+        self._helper.get_handler_config().route_source = "local"
+        CommodityRoute().execute(limit=5, available_cargo_space_scu=10)
+        notes = " ".join(self._helper.get_handler_tool().notes)
+        self.assertIn("2 hours", notes)
+
+    def test_stale_local_table_is_not_a_commodity_profit_summary(self):
+        from skills.uexcorp.uexcorp.model.commodity import Commodity
+
+        ensure_trade_route_schema(self._db)
+        self._db.execute(
+            f"""
+            INSERT INTO {LOCAL_TABLE} (
+                id, id_commodity, price_origin, price_destination, profit
+            ) VALUES (1, 1, 10, 50, 40)
+            """
+        )
+        self._db.execute(
+            f"""
+            INSERT INTO {UEX_TABLE} (
+                id, id_commodity, price_origin, price_destination, profit
+            ) VALUES (2, 1, 10, 15, 5)
+            """
+        )
+        self._db.execute(
+            """
+            INSERT INTO imports (`table`, date_imported, dataset_count, time_taken, last_import_run_id)
+            VALUES ('commodity_route_local', ?, 1, 0, 1)
+            """,
+            (NOW - (30 * 60 * 4) - 10,),
+        )
+        self._db.commit()
+        self._helper.get_handler_config().route_source = "local"
+        self._helper.get_handler_config().local_fallback = "none"
+        stale = Commodity(1, name="Gold")
+        self.assertIsNone(stale.get_profit_max())
+        self.assertFalse(stale.profit_from_route)
+
+        self._helper.get_handler_config().local_fallback = "uex"
+        fallback = Commodity(1, name="Gold")
+        self.assertEqual(fallback.get_profit_max(), 5)
+
     def test_local_fallback_default_none(self):
         from skills.uexcorp.uexcorp.local_routes import local_fallback
 
@@ -332,6 +397,11 @@ class LocalServeTest(_SqliteCase):
             (NOW - 40 * 60,),
         )
         self._db.commit()
+        CommodityRoute().execute(limit=5, available_cargo_space_scu=10)
+        notes = " ".join(self._helper.get_handler_tool().notes)
+        self.assertNotIn("Routes from UEX route table", notes)
+        self._helper.get_handler_tool().notes.clear()
+        self._helper.get_handler_config().route_source = "shadow"
         CommodityRoute().execute(limit=5, available_cargo_space_scu=10)
         notes = " ".join(self._helper.get_handler_tool().notes)
         self.assertIn("Routes from UEX route table", notes)
@@ -491,6 +561,63 @@ class GateReportTest(unittest.TestCase):
             database.destroy()
             Helper._instance = previous
 
+    def test_snapshot_keeps_saved_uex_routes(self):
+        import json
+        import tempfile
+
+        from skills.uexcorp.uexcorp.route_gates import (
+            UEX_TABLE,
+            _open_memory,
+            build_local_route_table,
+            load_snapshot,
+            main,
+        )
+
+        snapshot = tempfile.mkdtemp(prefix="uex-snapshot-")
+        now = 1_700_000_000
+
+        def _write(name, payload):
+            with open(f"{snapshot}/{name}", "w", encoding="utf-8") as handle:
+                json.dump(payload, handle)
+
+        _write("commodities.json", [{"id": 1, "name": "Gold", "is_available": 1}])
+        _write("terminals.json", [
+            {"id": 1, "name": "Buy", "type": "commodity", "is_available": 1, "id_star_system": 1, "id_orbit": 1, "star_system_name": "Stanton"},
+            {"id": 2, "name": "Sell", "type": "commodity", "is_available": 1, "id_star_system": 1, "id_orbit": 1, "star_system_name": "Stanton"},
+        ])
+        _write("prices.json", [
+            {"id": 1, "id_commodity": 1, "id_terminal": 1, "price_buy": 10, "price_sell": 0, "scu_buy": 8, "scu_sell": 0, "date_modified": now - 10},
+            {"id": 2, "id_commodity": 1, "id_terminal": 2, "price_buy": 0, "price_sell": 20, "scu_buy": 0, "scu_sell": 8, "date_modified": now - 10},
+        ])
+        _write("distances.json", [])
+        _write("routes.json", [{
+            "id": 9,
+            "id_commodity": 1,
+            "id_terminal_origin": 1,
+            "id_terminal_destination": 2,
+            "price_origin": 10,
+            "price_destination": 20,
+            "scu_origin": 8,
+            "scu_destination": 8,
+            "profit": 9999,
+            "commodity_name": "Gold",
+            "origin_terminal_name": "Buy",
+            "destination_terminal_name": "Sell",
+        }])
+        _write("meta.json", {"now": now})
+        helper, database, previous = _open_memory(tempfile.mkdtemp(prefix="uex-snapshot-db-"))
+        try:
+            load_snapshot(helper, database, snapshot)
+            build_local_route_table(helper)
+            uex = database.execute_fetchall(f"SELECT profit FROM {UEX_TABLE}")
+            local = database.execute_fetchall("SELECT profit FROM commodity_route_local")
+            self.assertEqual([row["profit"] for row in uex], [9999])
+            self.assertNotEqual([row["profit"] for row in local], [9999])
+            self.assertEqual(main(["--snapshot", snapshot]), 1)
+        finally:
+            database.destroy()
+            Helper._instance = previous
+
     def test_script_entrypoint_exits_zero(self):
         from skills.uexcorp.uexcorp.route_gates import main
 
@@ -505,23 +632,18 @@ class GateReportTest(unittest.TestCase):
             _execute,
             _identities,
             _open_memory,
-            apply_uex_disagreements,
             build_local_route_table,
-            copy_local_routes_to_uex,
+            fixture_snapshot_dir,
             g6_queries,
-            restore_uex_volume,
-            seed_fixture,
+            load_snapshot,
         )
         from skills.uexcorp.uexcorp.tool.commodity_route import CommodityRoute
 
         directory = tempfile.mkdtemp(prefix="uex-g6-pins-")
         helper, database, previous = _open_memory(directory)
         try:
-            seed_fixture(database, helper.get_timestamp())
+            load_snapshot(helper, database, fixture_snapshot_dir())
             build_local_route_table(helper)
-            copy_local_routes_to_uex(database)
-            apply_uex_disagreements(database)
-            restore_uex_volume(database)
             tool = CommodityRoute()
             set_forced_source("local")
             self.assertEqual(set(FROZEN_G6_LOCAL_TOP5), {query["name"] for query in g6_queries()})
