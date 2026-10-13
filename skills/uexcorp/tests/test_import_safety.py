@@ -2450,9 +2450,9 @@ class _OverlapClock:
     """One timeline for overlapping sleeps.
 
     ``now`` jumps to the soonest wake once every in-flight task is blocked.
-    A worker that just finished only holds the clock when the pool queue
-    still has a task for it. Idle workers left over after that queue drains
-    do not freeze the timeline.
+    A worker that just finished only holds the clock while another submitted
+    task has not started. The pool queue is not that count: its shutdown
+    sentinel and cancelled work items would keep ``now`` from moving.
     """
 
     def __init__(self):
@@ -2462,6 +2462,10 @@ class _OverlapClock:
         self._sleepers: dict[int, float] = {}
         # Threads that have left a task and not entered the next one.
         self._between: set[int] = set()
+        # Tasks submitted and not yet entered. The pool queue is the wrong
+        # count: shutdown leaves a None sentinel there, and a cancelled
+        # future stays until a worker pops it and does not call enter().
+        self._not_started = 0
         self._queue = None
         self._target = 0
         self.peak_active = 0
@@ -2485,8 +2489,17 @@ class _OverlapClock:
     def note_submit(self) -> None:
         with self._cond:
             self._submitted += 1
+            self._not_started += 1
             if self._expected and self._submitted >= self._expected:
                 self._gate.set()
+
+    def abandon(self) -> None:
+        """A submitted task was cancelled before enter()."""
+        with self._cond:
+            if self._not_started > 0:
+                self._not_started -= 1
+            self._advance()
+            self._cond.notify_all()
 
     def bind_queue(self, work_queue, workers: int) -> None:
         with self._cond:
@@ -2496,6 +2509,8 @@ class _OverlapClock:
 
     def enter(self) -> None:
         with self._cond:
+            if self._not_started > 0:
+                self._not_started -= 1
             self._between.discard(threading.get_ident())
             self._active += 1
             if self._active > self.peak_active:
@@ -2531,11 +2546,10 @@ class _OverlapClock:
             self._cond.notify_all()
 
     def _busy(self) -> int:
-        queued = 0 if self._queue is None else self._queue.qsize()
-        # Several workers can finish on the same jumped instant. Only as
-        # many as there are queued tasks are about to run; the rest block
-        # in the pool and must not keep ``now`` from moving.
-        blocking = min(len(self._between), queued)
+        # A finished worker only holds the clock while a task is still
+        # waiting to start. Sentinels and cancelled items are not in
+        # ``_not_started``, so they cannot freeze ``now``.
+        blocking = min(len(self._between), self._not_started)
         return (self._active - len(self._sleepers)) + blocking
 
     def _advance(self) -> None:
@@ -2628,15 +2642,32 @@ class ParallelRouteFetchTest(_SqliteCase):
 
             def wrapped(fn, *args, **kwargs):
                 clock.note_submit()
+                claim = threading.Lock()
+                started = False
 
                 def run(*fn_args, **fn_kwargs):
+                    nonlocal started
+                    with claim:
+                        started = True
                     clock.enter()
                     try:
                         return fn(*fn_args, **fn_kwargs)
                     finally:
                         clock.leave()
 
-                return submit(run, *args, **kwargs)
+                future = submit(run, *args, **kwargs)
+
+                def on_done(done):
+                    nonlocal started
+                    with claim:
+                        if started:
+                            return
+                        # Cancelled before the worker entered.
+                        started = True
+                    clock.abandon()
+
+                future.add_done_callback(on_done)
+                return future
 
             pool.submit = wrapped
             return pool
