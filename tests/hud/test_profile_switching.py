@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from api.enums import HudAlign
 from api.interface import HudProfile
 from hud_server.hud_manager import HudManager
 from services import hud_profiles
@@ -91,6 +92,34 @@ def test_giving_the_loaded_config_to_a_profile_switches_at_once(core):
 
     assert shown_accent(core) == RED
     assert core.hud.state().active_profile_id == core.racing.id
+
+
+def test_a_save_during_the_preview_keeps_the_dragged_areas(core):
+    from api.interface import HudProfilePreviewRequest
+
+    asyncio.run(core.hud.set_hud_profile_preview(core.racing.id, HudProfilePreviewRequest(enabled=True)))
+    page = core.racing.model_copy(deep=True)
+    asyncio.run(core.hud._preview_moved(
+        {"container": "chat", "x1": 600, "y1": 100, "x2": 900, "y2": 400, "final": True}
+    ))
+    page.name = "Renamed"
+    page.chat.align = HudAlign.BOTTOM
+
+    asyncio.run(core.hud.update_hud_profile(core.racing.id, page))
+
+    saved = hud_profiles.find_profile(core.hud.state().profiles, core.racing.id)
+    assert saved.name == "Renamed"
+    assert (saved.chat.x1, saved.chat.y1, saved.chat.x2, saved.chat.y2) == (600, 100, 900, 400)
+    assert saved.chat.align == HudAlign.BOTTOM
+
+
+def test_without_a_preview_a_save_sets_the_areas(core):
+    page = core.racing.model_copy(deep=True)
+    page.chat.x1 = 300
+
+    asyncio.run(core.hud.update_hud_profile(core.racing.id, page))
+
+    assert hud_profiles.find_profile(core.hud.state().profiles, core.racing.id).chat.x1 == 300
 
 
 def test_making_another_profile_the_default_switches_the_configs_no_profile_names(core):

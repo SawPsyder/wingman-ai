@@ -199,7 +199,16 @@ class HudService:
         stored = self._find(profile_id)
         index = self._profiles.index(stored)
         # The default flag has its own endpoint; a stale page must not move it
-        updated = profile.model_copy(update={"id": stored.id, "is_default": stored.is_default})
+        keep = {"id": stored.id, "is_default": stored.is_default}
+        if self._preview_profile_id == stored.id:
+            # While the preview runs the mouse places the containers: a save
+            # sent with the areas from before a drag must not undo it. The
+            # alignment is not dragged, so it comes from the page
+            keep.update(
+                chat=stored.chat.model_copy(update={"align": profile.chat.align}),
+                info=stored.info.model_copy(update={"align": profile.info.align}),
+            )
+        updated = profile.model_copy(update=keep)
         self._profiles[index] = updated
         hud_profiles.assign_configs(self._profiles, stored.id, updated.configs)
         return await self._changed()
@@ -720,6 +729,30 @@ class HudService:
         )
         self._info_changed(group)
         return True
+
+    def clear_info(self, group: str) -> bool:
+        """Empties a skill's own group. The shared info panel has no such call:
+        one Wingman must not wipe what another put there."""
+        manager = self._manager
+        if manager is None or group == GROUP_INFO:
+            return False
+        return manager.clear_items(group, PERSISTENT)
+
+    def append_message(self, group: str, text: str) -> bool:
+        manager = self._manager
+        return bool(manager and group != GROUP_CHAT and manager.append_message(group, MESSAGE, text))
+
+    def set_loader(self, group: str, element: str, show: bool, color: Optional[str] = None) -> bool:
+        manager = self._manager
+        return bool(manager and group != GROUP_CHAT and manager.set_loader(group, element, show, color))
+
+    def set_group_visible(self, group: str, element: str, visible: bool) -> bool:
+        manager = self._manager
+        if manager is None or group in (GROUP_CHAT, GROUP_INFO):
+            return False
+        if visible:
+            return manager.show_element(group, element)
+        return manager.hide_element(group, element)
 
     def info_items(self, group: str = GROUP_INFO) -> list[dict]:
         """What the panel shows right now, oldest first."""
