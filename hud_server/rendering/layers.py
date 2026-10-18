@@ -131,6 +131,7 @@ def lay_out(
         # A gap is the space to the piece below: the newest has none
         used += image.height + (piece.gap if chosen else 0)
         chosen.append((piece, image))
+        used += image.height + piece.gap
         if used >= limit:
             break
     more_above = next(pieces, None) is not None
