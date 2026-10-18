@@ -1603,44 +1603,6 @@ class MarkdownRenderer:
 
         return last_visible_y + 10 if visible_rows > 0 else y
 
-    TABLE_MIN_COLUMN = 40
-
-    def _table_column_widths(self, rows: List[List[str]], num_cols: int, font, bold_font,
-                             table_w: int, cell_padding: int) -> List[int]:
-        """Widths that follow the content, summing to table_w: a short column ('SCU') stays narrow and
-        a long one ('Recycled Material Composite') gets the room, instead of equal thirds where the long
-        one wraps. Space left over is shared by content width; when the content is too wide, columns
-        that fit their fair share keep their width and the others share the rest equally."""
-        natural = []
-        for ci in range(num_cols):
-            widest = 0
-            for ri, row in enumerate(rows):
-                cell = re.sub(r"\*\*|__|~~|`", "", row[ci].strip()) if ci < len(row) else ''
-                widest = max(widest, self._get_text_size(cell, bold_font if ri == 0 else font)[0])
-            natural.append(max(self.TABLE_MIN_COLUMN, widest + cell_padding * 2 + 4))
-
-        if sum(natural) <= table_w:
-            extra = table_w - sum(natural)
-            widths = [n + extra * n // sum(natural) for n in natural]
-        else:
-            widths = [0] * num_cols
-            open_columns = list(range(num_cols))
-            remaining = table_w
-            while open_columns:
-                share = remaining / len(open_columns)
-                fitting = [ci for ci in open_columns if natural[ci] <= share]
-                if not fitting:
-                    for ci in open_columns:
-                        widths[ci] = max(self.TABLE_MIN_COLUMN, int(share))
-                    break
-                for ci in fitting:
-                    widths[ci] = natural[ci]
-                    remaining -= natural[ci]
-                    open_columns.remove(ci)
-        # Rounding: the last column takes what is left, so the table is exactly table_w wide
-        widths[-1] = max(self.TABLE_MIN_COLUMN, table_w - sum(widths[:-1]))
-        return widths
-
     # ── Data blocks ──────────────────────────────────────────────────────
     # Fenced code blocks with one of these languages draw a small figure instead of code:
     #
