@@ -10,7 +10,7 @@ from providers.llama_cpp_remote import LlamaCppRemote
 from providers.wingman_support import WingmanSupport
 from services.local_model_manager import LocalModelManager
 from services.printr import Printr
-from services.token_utils import count_tokens, truncate_to_tokens
+from services.token_utils import count_tokens
 
 if TYPE_CHECKING:
     from services.skill_local_ai import SamplingPreset
@@ -234,10 +234,9 @@ class LocalAiService:
     ) -> "SupportResult":
         """Process text using the support model (local or remote).
 
-        The output token budget is computed automatically from the context
-        window (``n_ctx``). ``max_output_tokens`` lowers it further for calls
-        whose answer must stay small — a summary that is allowed to be as long
-        as the window costs money on the day the model decides to use it all.
+        The input is sent whole. ``max_output_tokens`` is accepted and ignored.
+        llama.cpp (local or the user's server) is asked for the room left in
+        its window. A cloud call omits ``max_tokens``.
 
         Sampling resolution order (highest priority first):
         1. Per-call keyword arguments (temperature, top_p, etc.)
@@ -258,27 +257,14 @@ class LocalAiService:
 
         safe_ctx = int(self._context_window() * SAFETY_MARGIN)
         system_tokens = count_tokens(system_prompt)
-        # Reasoning shares the output budget with the <think> block, so reserve
-        # more output (and truncate input more aggressively) on thinking calls.
         min_output = _output_reservation(bool(reasoning), safe_ctx)
-        max_input = safe_ctx - system_tokens - min_output
-        text_tokens = count_tokens(text)
-        if text_tokens > max_input:
-            text = truncate_to_tokens(text, max(0, max_input))
-            # The caller loses the end of its input without knowing, so the log
-            # has to say it. Server only: support calls run in the background.
-            printr.print(
-                f"Support model input cut from ~{text_tokens:,} to ~{max(0, max_input):,} "
-                f"tokens to fit its context window.",
-                color=LogType.WARNING,
-                server_only=True,
-            )
         input_tokens = system_tokens + count_tokens(text)
-        max_tokens = max(min_output, safe_ctx - input_tokens)
+        # max_output_tokens is accepted and ignored. The input is not cut.
         if self.settings.mode == LocalAiMode.CLOUD:
-            max_tokens = min(max_tokens, CLOUD_MAX_OUTPUT_TOKENS)
-        if max_output_tokens is not None:
-            max_tokens = max(1, min(max_tokens, max_output_tokens))
+            max_tokens = None
+        else:
+            # Room left in the llama.cpp window, not a product cap.
+            max_tokens = max(min_output, safe_ctx - input_tokens)
 
         # Resolve sampling: explicit args > preset > Qwen3.5 default constants
         t = temperature

@@ -276,3 +276,79 @@ def test_a_spelling_a_skill_adds_is_shown_to_the_user(monkeypatch):
     assert len(shown) == 1
     text, source = shown[0]
     assert "Houston" in text and "Hurston" in text and source == "Bob"
+
+
+def _conversation(messages, pending=()):
+    from services.conversation_manager import ConversationManager
+
+    manager = ConversationManager(config=SimpleNamespace(), settings=None, wingman_name="test")
+    manager.messages = list(messages)
+    manager.pending_tool_calls = list(pending)
+    return manager, facade.SkillConversation(SimpleNamespace(conversation=manager))
+
+
+_TOOL_TURN = [
+    {"role": "user", "content": "price of gold?"},
+    {"role": "assistant", "content": "", "tool_calls": [
+        {"id": "c1", "type": "function", "function": {"name": "price", "arguments": "{}"}}
+    ]},
+    {"role": "tool", "tool_call_id": "c1", "content": "1,234 aUEC"},
+    {"role": "assistant", "content": "1,234 aUEC."},
+]
+
+
+def test_remove_leading_removes_exactly_the_prefix_and_keeps_later_messages():
+    later = [{"role": "user", "content": "thanks"}, {"role": "assistant", "content": "Sure."}]
+    manager, conversation = _conversation(_TOOL_TURN + later)
+    prefix = conversation.history()[:4]
+    manager.messages.append({"role": "user", "content": "added meanwhile"})
+
+    assert conversation.remove_leading(prefix)
+    assert manager.messages == later + [{"role": "user", "content": "added meanwhile"}]
+
+
+def test_remove_leading_refuses_a_prefix_that_no_longer_matches():
+    manager, conversation = _conversation(_TOOL_TURN)
+    prefix = conversation.history()[:1]
+    manager.messages = [{"role": "user", "content": "after a reset"}]
+
+    assert not conversation.remove_leading(prefix)
+    assert manager.messages == [{"role": "user", "content": "after a reset"}]
+
+
+def test_remove_leading_refuses_to_split_a_tool_group():
+    manager, conversation = _conversation(_TOOL_TURN)
+
+    assert not conversation.remove_leading(conversation.history()[:2])
+    assert manager.messages == _TOOL_TURN
+
+
+def test_remove_leading_refuses_to_drop_a_pending_tool_call():
+    manager, conversation = _conversation(_TOOL_TURN, pending=["c1"])
+
+    assert not conversation.remove_leading(conversation.history()[:3])
+    assert len(manager.messages) == 4
+
+
+def test_generate_sends_an_input_over_the_old_cap_unchanged():
+    from services.context_budget import TOOL_CAP_TOKENS
+    from services.token_utils import count_tokens
+
+    data = "hello " * (TOOL_CAP_TOKENS + 1000)
+    assert count_tokens(data) > TOOL_CAP_TOKENS
+    sent = []
+
+    async def actual_llm_call(messages, tools=None, tool_choice="auto"):
+        sent.append(messages)
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="ok"))])
+
+    result = _run(
+        facade.SkillAi(SimpleNamespace(actual_llm_call=actual_llm_call, name="Computer")).generate(
+            "Use this.", data=data, auto_shorten=True
+        )
+    )
+
+    assert result == "ok"
+    assert len(sent) == 1
+    assert data in sent[0][-1]["content"]
+    assert count_tokens(sent[0][-1]["content"]) > TOOL_CAP_TOKENS

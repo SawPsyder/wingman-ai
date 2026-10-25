@@ -81,6 +81,33 @@ def test_the_remote_embed_server_answers_for_itself():
     assert service.embed_ready() is True
 
 
+def test_an_oversized_input_is_passed_through_uncut():
+    from services.local_ai_service import MIN_OUTPUT_TOKENS, SAFETY_MARGIN
+    from services.token_utils import count_tokens
+
+    text = "hello " * 20_000
+    assert count_tokens(text) > 4096
+
+    local = _service(LocalAiMode.LOCAL)
+    local.support(text=text, system_prompt="sys", max_output_tokens=16)
+    assert local.provider.support.call_args.args[0] == text
+    safe_ctx = int(4096 * SAFETY_MARGIN)
+    input_tokens = count_tokens("sys") + count_tokens(text)
+    assert local.provider.support.call_args.args[2] == max(
+        MIN_OUTPUT_TOKENS, safe_ctx - input_tokens
+    )
+
+    cloud = _service(LocalAiMode.CLOUD)
+    cloud.support(text=text, system_prompt="sys", max_output_tokens=16)
+    assert cloud.cloud.support.call_args.args[0] == text
+    assert cloud.cloud.support.call_args.args[2] is None
+
+    server = _service(LocalAiMode.SERVER)
+    server.support(text=text, system_prompt="sys", max_output_tokens=16)
+    assert server.remote.support.call_args.args[0] == text
+    assert server.remote.support.call_args.args[2] == local.provider.support.call_args.args[2]
+
+
 def test_the_budget_follows_the_model_that_answers():
     """n_ctx is a llama.cpp setting and means nothing to a cloud model. Planning
     against 4096 there would chunk every summary into needless pieces."""

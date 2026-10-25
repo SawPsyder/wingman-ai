@@ -40,8 +40,6 @@ from services.file import get_prompt
 from services.printr import Printr
 from services.skill_local_ai import SamplingPreset
 from services.spoken_language import language_name
-from services.token_utils import truncate_to_tokens
-
 if TYPE_CHECKING:
     from api.interface import SettingsConfig
     from services.local_ai_service import LocalAiService
@@ -89,7 +87,7 @@ def build_user_message(request: str, spoken_language: SpokenLanguage, other=None
     lines in English; with this cue 0 of 32. The cloud model got 24 of 24 right
     either way."""
     return (
-        f'User request: "{truncate_to_tokens(request, REQUEST_TOKENS)}"\n\n'
+        f'User request: "{request}"\n\n'
         f"Your line, in {language_name(spoken_language, other)}:"
     )
 
@@ -108,8 +106,7 @@ def build_system_prompt(
 ) -> str:
     return get_prompt("filler-response").format(
         name=name,
-        backstory=truncate_to_tokens(backstory or "", BACKSTORY_TOKENS).strip()
-        or "A helpful assistant.",
+        backstory=(backstory or "").strip() or "A helpful assistant.",
         tool_label=tool_label(tool_names),
         language_rule=language_rule(spoken_language, other),
     )
@@ -274,7 +271,6 @@ class FillerResponder:
                     system_prompt,
                     preset=SamplingPreset.BALANCED,
                     reasoning=False,
-                    max_output_tokens=MAX_OUTPUT_TOKENS,
                 )
                 with self._lock:
                     self._latency.add(time.perf_counter() - call_started)

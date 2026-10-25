@@ -43,6 +43,22 @@ def test_a_long_answer_is_dropped():
 # ── prompt ───────────────────────────────────────────────────────────
 
 
+def test_a_long_request_and_backstory_are_not_cut():
+    from services.filler_response import BACKSTORY_TOKENS, REQUEST_TOKENS, build_user_message
+    from services.token_utils import count_tokens
+
+    request = ("Where can I buy laranite in bulk? " * 40).strip()
+    backstory = ("The ship remembers every port. " * 80).strip()
+    assert count_tokens(request) > REQUEST_TOKENS
+    assert count_tokens(backstory) > BACKSTORY_TOKENS
+
+    user = build_user_message(request, SpokenLanguage.EN)
+    prompt = build_system_prompt("Emily", backstory, ["lookup"], SpokenLanguage.EN)
+
+    assert request in user
+    assert backstory in prompt
+
+
 def test_the_prompt_is_filled():
     prompt = build_system_prompt("Emily", "A trader.", ["uex_get_commodity_information"], SpokenLanguage.ES)
     assert "You are Emily." in prompt

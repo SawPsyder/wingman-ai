@@ -3,7 +3,7 @@ import json
 
 from api.enums import LogType, LogSource
 from services.printr import Printr
-from services.token_utils import count_tokens, truncate_to_tokens
+from services.token_utils import count_tokens
 
 printr = Printr()
 
@@ -21,7 +21,7 @@ class ToolResponseCompressor:
 
     The text is:
     1. Chunked (JSON-aware or newline-boundary)
-    2. Summarized via the support model (batched, capped at MAX_SUMMARIZE_CHUNKS)
+    2. Summarized via the support model, every chunk
     3. Merged into one summary
     """
 
@@ -50,47 +50,18 @@ class ToolResponseCompressor:
 
         # 1. Chunk
         chunks = self.chunk_text(response_text)
-        total_chunks = len(chunks)
 
-        # 2. Summarize
-        if total_chunks > self.SKIP_SUMMARIZE_THRESHOLD:
-            summary = truncate_to_tokens(response_text, 800)
-            capped = True
+        # 2. Summarize every chunk. A failed summary keeps the full text.
+        summary = await self._summarize_chunks(chunks, local_ai_service)
+        if not summary:
+            summary = response_text
             await printr.print_async(
-                f"Tool response too large for LLM summarization "
-                f"({total_chunks} chunks). Using truncated head.",
-                color=LogType.INFO,
+                f"Summarizing failed, kept the full text (~{original_tokens:,} tokens).",
+                color=LogType.WARNING,
                 server_only=True,
                 source_name=wingman_name,
                 source=LogSource.WINGMAN,
             )
-        else:
-            summarize_count = min(total_chunks, self.MAX_SUMMARIZE_CHUNKS)
-            capped = total_chunks > self.MAX_SUMMARIZE_CHUNKS
-            summary = await self._summarize_chunks(
-                chunks[:summarize_count], local_ai_service
-            )
-            if not summary:
-                summary = truncate_to_tokens(response_text, 500)
-                await printr.print_async(
-                    f"Summarizing failed, kept only the first ~500 of "
-                    f"~{original_tokens:,} tokens.",
-                    color=LogType.WARNING,
-                    server_only=True,
-                    source_name=wingman_name,
-                    source=LogSource.WINGMAN,
-                )
-
-            if capped:
-                remaining = total_chunks - summarize_count
-                await printr.print_async(
-                    f"Summarized {summarize_count}/{total_chunks} chunks. "
-                    f"Remaining {remaining} chunks truncated.",
-                    color=LogType.INFO,
-                    server_only=True,
-                    source_name=wingman_name,
-                    source=LogSource.WINGMAN,
-                )
 
         summary_tokens = count_tokens(summary)
 
@@ -101,14 +72,7 @@ class ToolResponseCompressor:
             source=LogSource.WINGMAN,
         )
 
-        cap_note = ""
-        if capped:
-            cap_note = (
-                f"\n[Note: Summary covers the first portion only. "
-                f"Full text was ~{original_tokens} tokens.]"
-            )
-
-        return f"{summary}{cap_note}"
+        return summary
 
     # ── chunking ────────────────────────────────────────────────
 
@@ -205,17 +169,13 @@ class ToolResponseCompressor:
                 batches.append("\n\n".join(current_batch_parts))
                 current_batch_parts = []
                 current_batch_tokens = 0
-            if chunk_tokens > data_budget:
-                printr.print(
-                    f"Summarizing: a chunk of ~{chunk_tokens:,} tokens was cut to "
-                    f"~{data_budget:,} to fit the support model.",
-                    color=LogType.WARNING,
-                    server_only=True,
-                )
-                chunk = truncate_to_tokens(chunk, data_budget)
-                chunk_tokens = count_tokens(chunk)
+            # A chunk larger than one call still goes out whole.
             current_batch_parts.append(chunk)
             current_batch_tokens += chunk_tokens
+            if chunk_tokens > data_budget:
+                batches.append("\n\n".join(current_batch_parts))
+                current_batch_parts = []
+                current_batch_tokens = 0
 
         if current_batch_parts:
             batches.append("\n\n".join(current_batch_parts))
@@ -270,23 +230,6 @@ class ToolResponseCompressor:
             f"PARTIAL SUMMARIES TO MERGE:\n{combined}\n\n"
             "Merge into a single coherent summary. Keep all key facts:"
         )
-
-        # Safety: truncate if merge input exceeds budget
-        merge_tokens = count_tokens(merge_prompt)
-        if merge_tokens > budget.max_input_tokens:
-            printr.print(
-                f"Summarizing: the partial summaries (~{merge_tokens:,} tokens) were "
-                f"cut to ~{budget.max_input_tokens - 100:,} to merge them in one call.",
-                color=LogType.WARNING,
-                server_only=True,
-            )
-            combined = truncate_to_tokens(
-                combined, budget.max_input_tokens - 100
-            )
-            merge_prompt = (
-                f"PARTIAL SUMMARIES TO MERGE:\n{combined}\n\n"
-                "Merge into a single coherent summary. Keep all key facts:"
-            )
 
         try:
             result = await loop.run_in_executor(

@@ -353,6 +353,23 @@ def test_one_broken_call_does_not_stop_the_calls_after_it():
     assert updated == [("bad", "Error"), ("good", "ok")]
 
 
+def test_a_tool_response_over_the_old_cap_reaches_the_history_unchanged():
+    from services.context_budget import TOOL_CAP_TOKENS
+    from services.token_utils import count_tokens
+
+    text = "hello " * (TOOL_CAP_TOKENS + 1000)
+    assert count_tokens(text) > TOOL_CAP_TOKENS
+    skill = FakeSkill(result=(text, None))
+
+    _, updated, added = handle(
+        [tool_call("save_note", "{}", call_id="abc")],
+        tool_skills={"save_note": skill},
+    )
+
+    assert updated == [("abc", text)]
+    assert added == []
+
+
 # ── memory ──
 
 

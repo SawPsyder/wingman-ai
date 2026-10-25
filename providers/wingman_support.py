@@ -63,7 +63,7 @@ class WingmanSupport:
         self,
         text: str,
         system_prompt: str = "",
-        max_tokens: int = 512,
+        max_tokens: int | None = 512,
         temperature: float = 1.0,
         top_p: float = 1.0,
         top_k: int = 20,
@@ -87,11 +87,12 @@ class WingmanSupport:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": text},
             ],
-            "max_tokens": max_tokens,
             "temperature": temperature,
             "top_p": top_p,
             "presence_penalty": presence_penalty,
         }
+        if max_tokens is not None:
+            payload["max_tokens"] = max_tokens
         chosen = (self.settings.support_cloud_model or "").strip()
         if chosen:
             payload["model"] = chosen

@@ -5,14 +5,12 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 
 from api.enums import (
-    LogSource,
     LogType,
     TtsProvider,
     WingmanProTtsProvider,
 )
 from services.printr import Printr
 from services.spoken_language import language_name
-from services.token_utils import count_tokens, truncate_to_tokens
 
 if TYPE_CHECKING:
     from api.interface import SettingsConfig, WingmanConfig
@@ -129,20 +127,8 @@ class ContextBuilder:
         # Build user context with environment metadata
         user_context = self.build_user_context(config_dir_name=config_dir_name)
 
-        # Sanity check: truncate if someone bypasses the client's 2048-token limit
-        MAX_BACKSTORY_TOKENS = 2048
+        # The backstory goes in whole. A provider that cannot take it refuses the request.
         backstory = self._config.prompts.backstory
-
-        if backstory and count_tokens(backstory) > MAX_BACKSTORY_TOKENS:
-            original_tokens = count_tokens(backstory)
-            backstory = truncate_to_tokens(backstory, MAX_BACKSTORY_TOKENS)
-            await printr.print_async(
-                f"[{self._wingman_name}] Backstory will be truncated to {MAX_BACKSTORY_TOKENS} tokens for conversations (is {original_tokens}). "
-                f"Your saved backstory is unchanged. Consider shortening it.",
-                color=LogType.WARNING,
-                source_name=self._wingman_name,
-                source=LogSource.SYSTEM,
-            )
 
         # Build conversation summary section
         conversation_summary_section = ""

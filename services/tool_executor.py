@@ -10,10 +10,10 @@ from services.benchmark import Benchmark
 from services.persistent_memory import MEMORY_TOOL_NAMES
 from services.printr import Printr
 from services.tool_response_limiter import ToolResponseLimiter
-from services.context_budget import DEFAULT_WINDOW, ContextBudget
 
 if TYPE_CHECKING:
     from api.interface import CommandConfig, WingmanConfig, SettingsConfig
+    from services.context_budget import ContextBudget
     from services.capability_registry import CapabilityRegistry
     from services.mcp_registry import McpRegistry
     from services.persistent_memory import PersistentMemoryService
@@ -188,19 +188,7 @@ class ToolExecutor:
                 if tool_label:
                     tool_timings.append((tool_label, tool_time_ms))
 
-                # Never feed an oversized tool/MCP response to the main model.
-                # Same cap as ai.generate, always on, cut rather than summarized
-                # (see services/tool_response_limiter.py).
-                budget = self._budget_fn() if self._budget_fn else ContextBudget(DEFAULT_WINDOW)
-                limited = await self._tool_response_limiter.limit(
-                    response_text=str(function_response),
-                    cap=budget.tool_cap,
-                    tool_name=function_name,
-                    wingman_name=self._wingman_name,
-                )
-                if limited != str(function_response):
-                    function_response = limited
-
+                # This build does not cap tool responses. They go into the history unchanged.
                 if tool_call.id:
                     # updating the dummy tool response with the actual response
                     await update_tool_response_fn(tool_call.id, function_response)

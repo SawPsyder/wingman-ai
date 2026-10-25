@@ -1,0 +1,26 @@
+module: skills.conversation_summary.main
+api_version: 3
+name: ConversationSummary
+display_name: Conversation Summary
+author: ShipBit
+version: 1.0.0
+auto_activate: true
+discoverable_by_default: false
+tags:
+  - Utility
+description:
+  en: Keeps long conversations short. When the history grows past a size you set, older messages are summarized in the background into a timeline that keeps numbers, names and open tasks, and the summary replaces them. The latest messages always stay word for word. Uses the Wingman's main AI model. Needs Wingman AI 3.2.11 or newer.
+  de: Hält lange Unterhaltungen kurz. Wird der Verlauf größer als eingestellt, fasst der Skill ältere Nachrichten im Hintergrund zu einer Zeitleiste zusammen, die Zahlen, Namen und offene Aufgaben behält, und ersetzt sie durch diese Zusammenfassung. Die letzten Nachrichten bleiben immer wörtlich erhalten. Nutzt das Haupt-KI-Modell des Wingman. Benötigt Wingman AI 3.2.11 oder neuer.
+custom_properties:
+  - id: trigger_tokens
+    name: Summarize above (tokens)
+    hint: "Summarizing starts once the conversation history is larger than this many tokens (about 4 characters each; the system prompt does not count). Tokens rather than messages, because one turn with tool results can be as big as twenty short ones."
+    property_type: number
+    value: 20000
+    required: false
+  - id: keep_recent_messages
+    name: Recent messages kept
+    hint: "The latest messages that are never summarized. A few more can stay, because the cut always lands at the start of one of your messages and never splits a tool call from its results."
+    property_type: number
+    value: 10
+    required: false

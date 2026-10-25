@@ -624,7 +624,7 @@ class ConversationManager:
                 tool_name = (
                     msg.get("name", "tool") if isinstance(msg, Mapping) else "tool"
                 )
-                lines.append(f"  [Tool result ({tool_name}): {content[:200]}]")
+                lines.append(f"  [Tool result ({tool_name}): {content}]")
         return "\n".join(lines)
 
     # ------------------------------------------------------------------

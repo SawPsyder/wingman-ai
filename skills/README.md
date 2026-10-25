@@ -1707,6 +1707,7 @@ Every callable function the wingman has: your `@tool`s, other active skills' too
 | --- | --- |
 | `.history()` | Shallow copy of the live history (`list[dict]`). Don't mutate individual messages. |
 | `.summary` | The condenser's running summary (`str`). |
+| `.remove_leading(expected)` | Remove the oldest messages: `expected` is the prefix as `history()` returned it. Returns `False` and changes nothing when the history no longer starts with it (reset, other changes), or when the cut would orphan a tool reply or drop a pending tool call. Later messages stay. |
 | `await .add_user(content)` | Append a user turn. |
 | `await .add_assistant(content)` | Append an assistant turn. |
 | `await .show(text, *, skill_name="")` | Show a line in the chat as said by this Wingman. Display only: pair it with `tts.speak` and `add_note` as needed. |

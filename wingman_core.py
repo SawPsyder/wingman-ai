@@ -106,7 +106,6 @@ from services import avatar_studio
 from services.stt_provider_manager import SttProviderManager
 from services.stt_service import SttService
 from services.local_ai_service import LocalAiService
-from services.token_utils import count_tokens
 from services.local_model_manager import LocalModelManager
 from services.voice_service import VoiceService
 from services.settings_service import SettingsService
@@ -4380,18 +4379,6 @@ class WingmanCore(WebSocketUser):
                 detail=f"Wingman '{wingman_name}' not found or has no conversation provider.",
             )
 
-        MAX_BACKSTORY_TOKENS = 2048
-        backstory_tokens = count_tokens(backstory)
-        if backstory_tokens > MAX_BACKSTORY_TOKENS:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"Backstory too long: ~{backstory_tokens} tokens "
-                    f"(max {MAX_BACKSTORY_TOKENS}). "
-                    f"Consider shortening your backstory."
-                ),
-            )
-
         system_prompt = get_prompt("enhance-backstory")
         messages = [
             {"role": "system", "content": system_prompt},
@@ -4452,12 +4439,12 @@ class WingmanCore(WebSocketUser):
 
     # GET /local-ai/enhance-backstory-budget
     async def api_enhance_backstory_budget(self) -> dict:
-        """Return the max backstory tokens for enhancement.
+        """Return the max backstory tokens the client should allow.
 
-        Since this now uses the conversation LLM (not the local support model),
-        the budget is simply the hard cap.
+        This build does not cut a backstory. The field stays so the client
+        keeps a number; 1_000_000 is large enough for any practical text.
         """
-        MAX_BACKSTORY_TOKENS = 2048
+        MAX_BACKSTORY_TOKENS = 1_000_000
         return {
             "max_backstory_tokens": MAX_BACKSTORY_TOKENS,
         }

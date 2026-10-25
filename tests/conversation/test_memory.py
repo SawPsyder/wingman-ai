@@ -74,6 +74,23 @@ def service(tmp_path, monkeypatch):
 # ── the filter ─────────────────────────────────────────────────────
 
 
+def test_an_assistant_message_is_not_cut_to_an_excerpt():
+    from services.persistent_memory import ASSISTANT_EXCERPT_TOKENS
+    from services.token_utils import count_tokens
+
+    content = "The price of laranite is 32 aUEC. " * 40
+    assert count_tokens(content) > ASSISTANT_EXCERPT_TOKENS
+
+    text, turns = PersistentMemoryService.conversation_text([
+        {"role": "user", "content": "price?"},
+        {"role": "assistant", "content": content},
+    ])
+
+    assert content in text
+    assert "[…]" not in text
+    assert turns == 1
+
+
 def test_typed_facts_outside_the_allowed_kinds_are_dropped(service):
     raw = [
         {"kind": "identity", "text": "Name is Shackles"},

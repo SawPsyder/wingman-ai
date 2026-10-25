@@ -1,5 +1,7 @@
 # What Wingman AI shortens, and when
 
+This build does not apply places 1–5. Tool responses, `ai.generate` input, the backstory and the history go to the main model whole: there is no tool cap, no brake, no `ai.generate` cap, no backstory cut and no history condensation. Places 6 and 7 are off as well, and so are the filler line and the memory excerpt: nothing is cut to a token limit. If a request is too big, the provider refuses it and the user sees that error; nothing here is shortened.
+
 A conversation with a Wingman grows with every turn: the pilot's words, the
 answers, and above all tool responses (a UEX price table, a web page from an MCP
 server). Every model has a context window it cannot exceed, and on the

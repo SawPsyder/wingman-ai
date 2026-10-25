@@ -7,7 +7,7 @@ from api.enums import LogType, LogSource
 from services.context_budget import KEEP_TURNS, ContextBudget
 from services.file import get_prompt
 from services.printr import Printr
-from services.token_utils import count_tokens, truncate_to_tokens
+from services.token_utils import count_tokens
 
 if TYPE_CHECKING:
     from api.interface import WingmanConfig
@@ -575,8 +575,6 @@ class ConversationCondenser:
         from providers.llama_cpp_provider import SupportResult
         from services.skill_local_ai import SamplingPreset
 
-        budget = local_ai_service.get_token_budget(system_prompt)
-
         # Convert token budget to approximate char limit for splitting
         # (splitting needs char positions; we use ~4 chars/token as a rough guide,
         # then verify with count_tokens)
@@ -602,28 +600,6 @@ class ConversationCondenser:
                 f"{condense_chunk_header(i + 1, len(chunks))}{chunk}"
                 f"{CONDENSE_SUFFIX}"
             )
-
-            # Safety: if chunk input exceeds budget, truncate chunk text
-            chunk_text_tokens = count_tokens(chunk)
-            prompt_overhead = count_tokens(user_prompt) - chunk_text_tokens
-            if prompt_overhead + chunk_text_tokens > budget.max_input_tokens:
-                safe_text_tokens = budget.max_input_tokens - prompt_overhead
-                if safe_text_tokens > 0:
-                    chunk = truncate_to_tokens(chunk, safe_text_tokens)
-                    user_prompt = (
-                        f"{existing_summary_section if i == 0 else ''}"
-                        f"{condense_chunk_header(i + 1, len(chunks))}{chunk}"
-                        f"{CONDENSE_SUFFIX}"
-                    )
-                await printr.print_async(
-                    f"Part {i + 1}/{len(chunks)} of the conversation was too long for the "
-                    f"support model and was cut from ~{chunk_text_tokens:,} to "
-                    f"~{max(0, safe_text_tokens):,} tokens before summarizing. The cut "
-                    f"part is not in the summary.",
-                    color=LogType.WARNING,
-                    source_name=self._wingman_name,
-                    source=LogSource.WINGMAN,
-                )
 
             result = await loop.run_in_executor(
                 None,
@@ -666,27 +642,6 @@ class ConversationCondenser:
             f"{CONDENSE_MERGE_HEADER}{combined}"
             f"{CONDENSE_MERGE_SUFFIX}"
         )
-
-        # Safety: truncate combined summaries if they exceed budget
-        if count_tokens(merge_prompt) > budget.max_input_tokens:
-            combined_tokens = count_tokens(combined)
-            overhead = count_tokens(merge_prompt) - combined_tokens
-            safe_combined = budget.max_input_tokens - overhead
-            if safe_combined > 0:
-                combined = truncate_to_tokens(combined, safe_combined)
-                merge_prompt = (
-                    f"{existing_summary_section}"
-                    f"{CONDENSE_MERGE_HEADER}{combined}"
-                    f"{CONDENSE_MERGE_SUFFIX}"
-                )
-            await printr.print_async(
-                f"The partial summaries were too long to merge in one call and were "
-                f"cut from ~{combined_tokens:,} to ~{max(0, safe_combined):,} tokens. "
-                f"The cut part is not in the summary.",
-                color=LogType.WARNING,
-                source_name=self._wingman_name,
-                source=LogSource.WINGMAN,
-            )
 
         return await loop.run_in_executor(
             None,

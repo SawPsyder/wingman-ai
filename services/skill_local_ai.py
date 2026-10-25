@@ -357,9 +357,8 @@ class SkillLocalAI:
     ) -> SupportResponse | None:
         """Sync version of summarize().
 
-        Sync version handles large text via truncation rather than chunked
-        summarization (ToolResponseCompressor is async-only). Use async
-        summarize() for full chunked summarization of large text.
+        The text is sent whole. Use async summarize() when it should be
+        split into chunks that fit the support model.
 
         Accepts the same ``preset`` / ``temperature`` / ``top_p`` / ``reasoning``
         overrides as ``generate()``.
@@ -367,39 +366,10 @@ class SkillLocalAI:
         if not self.available:
             return None
         try:
-            svc = self._wingman.local_ai_service
-            budget = svc.get_token_budget(instruction)
-            from services.token_utils import count_tokens, truncate_to_tokens
-
-            text_tokens = count_tokens(text)
-
-            if text_tokens <= budget.max_input_tokens:
-                return self.generate_sync(
-                    text, system_prompt=instruction,
-                    preset=preset, temperature=temperature, top_p=top_p,
-                    reasoning=reasoning,
-                )
-
-            # Too large for sync — truncate and mark as truncated
-            truncated_text = truncate_to_tokens(text, budget.max_input_tokens)
-            printr.print(
-                f"A skill's summarize() input was cut from ~{text_tokens:,} to "
-                f"~{budget.max_input_tokens:,} tokens to fit the support model.",
-                color=LogType.WARNING,
-                server_only=True,
-            )
-            result = self.generate_sync(
-                truncated_text, system_prompt=instruction,
+            return self.generate_sync(
+                text, system_prompt=instruction,
                 preset=preset, temperature=temperature, top_p=top_p,
                 reasoning=reasoning,
-            )
-            if result is None:
-                return None
-            return SupportResponse(
-                text=result.text,
-                prompt_tokens=result.prompt_tokens,
-                completion_tokens=result.completion_tokens,
-                truncated=True,
             )
         except Exception as e:
             self._log_error_sync("summarize_sync", e)

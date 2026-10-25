@@ -101,6 +101,17 @@ def test_the_backstory_and_the_system_prompt_end_up_in_the_context():
     assert "a grumpy ship AI" in context
 
 
+def test_a_backstory_over_2048_tokens_is_in_the_system_prompt_whole():
+    from services.token_utils import count_tokens
+
+    backstory = "The ship remembers every port. " * 800
+    assert count_tokens(backstory) > 2048
+
+    context = build(config=make_config(backstory=backstory))
+
+    assert backstory in context
+
+
 def test_a_prompt_with_raw_braces_still_builds():
     """A user's own system prompt with a JSON example in it used to raise on
     every turn. The placeholders are still filled, the braces stay."""

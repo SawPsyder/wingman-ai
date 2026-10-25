@@ -58,7 +58,6 @@ from services.context_budget import (
     SUBSCRIPTION_MAX_REQUEST_CHARS,
     ContextBudget,
     ContextOverflowError,
-    learn_window,
     model_window,
 )
 from services.conversation_manager import ConversationManager
@@ -845,7 +844,7 @@ class Wingman:
                 messages=messages, tools=tools, tool_choice=tool_choice
             )
         except ContextOverflowError:
-            raise  # _llm_call learns the window and retries
+            raise  # the caller reports the refusal; this call does not shorten
         except APIConnectionError as e:
             provider = self.config.features.conversation_provider.value
             cause = e.__cause__
@@ -889,36 +888,18 @@ class Wingman:
 
         messages = self.conversation.messages.copy()
         await self.add_context(messages)
-        messages = await self._fit_request(messages, tools)
 
         try:
             completion = await self.actual_llm_call(messages, tools, tool_choice)
         except ContextOverflowError as error:
-            # The provider says the window is smaller than we assumed. Learn it
-            # from the request that did not fit, shorten, and try once more.
-            request_tokens = self._request_tokens(messages, tools)
-            self._learned_window = learn_window(request_tokens)
             await printr.print_async(
-                f"The model refused a request of ~{request_tokens:,} tokens as too long "
-                f"({error}). Wingman now assumes a window of "
-                f"~{self._learned_window:,} tokens for it and retries.",
-                color=LogType.WARNING,
+                f"The model refused the request as too long for its window ({error}). "
+                f"Nothing was removed.",
+                color=LogType.ERROR,
                 source=LogSource.WINGMAN,
                 source_name=self.name,
             )
-            messages = self.conversation.messages.copy()
-            await self.add_context(messages)
-            messages = await self._fit_request(messages, tools)
-            try:
-                completion = await self.actual_llm_call(messages, tools, tool_choice)
-            except ContextOverflowError as again:
-                await printr.print_async(
-                    f"The model refused the shortened request too: {again}",
-                    color=LogType.ERROR,
-                    source=LogSource.WINGMAN,
-                    source_name=self.name,
-                )
-                return None
+            return None
 
         if self.last_gpt_call != thiscall:
             await printr.print_async(
@@ -1169,15 +1150,8 @@ class Wingman:
         """Delegates to ConversationManager and keeps the message for the next
         memory checkpoint."""
         self._memory_pending.append({"role": "user", "content": content})
-        await self.conversation.add_user_message(
-            content,
-            images=images,
-            condense_fn=lambda: self.condenser.maybe_condense(
-                self.local_ai_service,
-                self.metrics.last_turn_prompt_tokens,
-                self.context_budget,
-            ),
-        )
+        # No automatic condensation in this build.
+        await self.conversation.add_user_message(content, images=images)
 
     async def reset_conversation_history(self):
         if self.persistent_memory_service:

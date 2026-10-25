@@ -317,36 +317,20 @@ class SkillAi:
 
     ``generate`` is a single-turn side-call: the skill supplies its own prompt/system,
     the result is NOT added to the conversation, and there's no history/condensation.
-    This is the one chokepoint for the input-token cap (and future per-skill limits).
-    Bulk reduction belongs on the local model (``self.local_ai.summarize``).
+    The input is sent as is. Bulk reduction belongs on the local model
+    (``self.local_ai.summarize``).
     """
 
     def __init__(self, wingman: "Wingman") -> None:
         self._wingman = wingman
 
     def _max_input_tokens(self) -> int:
-        """The same cap as for a tool response: 32,000 tokens, or a quarter of a
-        smaller main model's window (services/context_budget.py)."""
+        """The old tool-response cap: 32,000 tokens, or a quarter of a smaller
+        window (services/context_budget.py). This build does not apply it."""
         return self._wingman.context_budget.tool_cap
 
     async def _call(self, messages: list):
-        from api.enums import ConversationProvider
-        from services.context_budget import ContextOverflowError, SUBSCRIPTION_MAX_REQUEST_CHARS
-        from services.conversation_manager import ConversationManager
-
-        # Wingman Pro refuses a request over its size limit (images count with
-        # their full base64): no need to send it to hear that.
-        if (
-            self._wingman.config.features.conversation_provider
-            == ConversationProvider.WINGMAN_PRO
-        ):
-            size = sum(ConversationManager.message_chars(m) for m in messages)
-            if size > SUBSCRIPTION_MAX_REQUEST_CHARS:
-                raise FacadeError(
-                    f"Skill tried to send {size:,} characters to Wingman Pro, but the "
-                    f"limit is {SUBSCRIPTION_MAX_REQUEST_CHARS:,} per request. Send less "
-                    f"(a smaller image, or less data)."
-                )
+        from services.context_budget import ContextOverflowError
 
         try:
             return await self._wingman.actual_llm_call(messages)
@@ -371,56 +355,18 @@ class SkillAi:
         ``prompt`` is the instruction; ``data`` is an optional larger payload appended
         to it; ``image`` is an optional data-URL for vision. Pass ``messages`` (a prebuilt
         OpenAI-style message list) to send your own turns directly — it is sent as-is and
-        ``prompt``/``system``/``data``/``image`` are ignored. The combined input is
-        capped like a tool response (32,000 tokens, less on a small model): over the
-        cap raises :class:`FacadeError`, or (for the prompt/data path) truncates if
-        ``auto_shorten``. The ``messages`` path can't be auto-shortened — it raises.
+        ``prompt``/``system``/``data``/``image`` are ignored. Nothing is shortened to a
+        token cap; ``auto_shorten`` is accepted and ignored. A provider that refuses the
+        request as too long raises :class:`FacadeError`.
         """
-        from services.token_utils import count_tokens, truncate_to_tokens
-
-        # Prebuilt message-list path: send the skill's own turns directly (still capped).
+        # Prebuilt message-list path: send the skill's own turns directly.
         if messages is not None:
-            cap = self._max_input_tokens()
-            total = _count_message_tokens(messages)
-            if total > cap:
-                raise FacadeError(
-                    f"Skill tried to send ~{total} tokens to the main model, but the "
-                    f"limit is {cap}. Reduce the messages or pre-summarize them cheaply "
-                    f"with self.local_ai.summarize(...). (A structured message list can't "
-                    f"be auto-shortened — trim it yourself.)"
-                )
             completion = await self._call(messages)
             if completion and completion.choices:
                 return completion.choices[0].message.content or ""
             return ""
 
         user_text = prompt if not data else f"{prompt}\n\n{data}"
-
-        cap = self._max_input_tokens()
-        system_tokens = count_tokens(system) if system else 0
-        image_tokens = IMAGE_TOKEN_ESTIMATE if image else 0
-        total = system_tokens + count_tokens(user_text) + image_tokens
-        if total > cap:
-            if auto_shorten:
-                budget = max(0, cap - system_tokens - image_tokens)
-                user_text = truncate_to_tokens(user_text, budget)
-                from api.enums import LogSource, LogType
-                from services.printr import Printr
-
-                await Printr().print_async(
-                    f"A skill's request to the AI was ~{total:,} tokens, above the "
-                    f"limit of {cap:,}. Its input was cut to fit (auto_shorten).",
-                    color=LogType.WARNING,
-                    source=LogSource.WINGMAN,
-                    source_name=self._wingman.name,
-                    wingman_name=self._wingman.name,
-                )
-            else:
-                raise FacadeError(
-                    f"Skill tried to send ~{total} tokens to the main model, but the "
-                    f"limit is {cap}. Reduce the input or pre-summarize it cheaply with "
-                    f"self.local_ai.summarize(...)."
-                )
 
         messages: list = []
         if system:
@@ -458,7 +404,7 @@ class SkillAi:
         return text
 
     async def summarize(self, text: str, *, system: str | None = None) -> str:
-        """Summarize text via the main CLOUD model (capped like generate). For bulk/cheap
+        """Summarize text via the main CLOUD model. For bulk/cheap
         summarization prefer ctx.local_ai.summarize() (free, local)."""
         return await self.generate(text, system=system or "Summarize the following concisely.")
 
@@ -1205,6 +1151,27 @@ class SkillConversation:
         answers are stored as message objects; skills get them as dicts too,
         so ``message.get("role")`` works on every entry."""
         return [_message_dict(m) for m in self._wingman.conversation.messages]
+
+    def remove_leading(self, expected: list[dict]) -> bool:
+        """Remove the first ``len(expected)`` messages if the live history still
+        starts with exactly these, as ``history()`` returned them. Refuses
+        (returns False, changes nothing) when the cut would leave a tool reply
+        without its call or remove a pending tool call. Messages added after
+        the prefix stay untouched."""
+        conversation = self._wingman.conversation
+        messages = conversation.messages
+        n = len(expected)
+        if n == 0 or n > len(messages):
+            return False
+        if [_message_dict(m) for m in messages[:n]] != list(expected):
+            return False
+        if n < len(messages) and conversation.get_message_role(messages[n]) == "tool":
+            return False
+        removed_ids = {_message_dict(m).get("tool_call_id") for m in messages[:n]} - {None}
+        if removed_ids & set(conversation.pending_tool_calls):
+            return False
+        del messages[:n]
+        return True
 
     @property
     def summary(self) -> str:

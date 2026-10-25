@@ -48,7 +48,7 @@ from api.enums import LogType
 from services.file import get_persistent_memory_dir
 from services.memory_debug_log import log_memory_event
 from services.printr import Printr
-from services.token_utils import count_tokens, truncate_to_tokens
+from services.token_utils import count_tokens
 
 printr = Printr()
 
@@ -489,12 +489,7 @@ class PersistentMemoryService:
 
     @classmethod
     def conversation_text(cls, messages: list) -> tuple[str, int]:
-        """The transcript a checkpoint sees, and how many user turns it holds.
-
-        Assistant lines are cut short: the model needs them for context, not
-        for the status report or price table the wingman read out, which is
-        exactly the text that used to come back as facts.
-        """
+        """The transcript a checkpoint sees, and how many user turns it holds."""
         parts = []
         user_turns = 0
         for msg in messages:
@@ -503,8 +498,6 @@ class PersistentMemoryService:
             content = cls._extract_text_content(raw)
             if not content or role not in ("user", "assistant"):
                 continue
-            if role == "assistant" and count_tokens(content) > ASSISTANT_EXCERPT_TOKENS:
-                content = truncate_to_tokens(content, ASSISTANT_EXCERPT_TOKENS) + " […]"
             if role == "user":
                 user_turns += 1
             parts.append(f"{role}: {content}")
