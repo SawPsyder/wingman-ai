@@ -11,6 +11,7 @@ from api.enums import (
     LocalAiMode,
     PocketTtsQuality,
     ScGameLogRulesProblem,
+    ScTelemetryState,
     SkillRequirement,
     StarCitizenFeatureKind,
     SpokenLanguage,
@@ -211,6 +212,10 @@ class ParakeetSettings(BaseModel):
     """Where a Parakeet server runs when `run_locally` is off. Empty until
     the user fills it in; nothing is contacted before that."""
     port: int = 9876
+    model: str
+    """The model name sent to that server. A server that hosts several models
+    (oMLX, LM Studio) wants its own id, e.g. `parakeet-tdt-0.6b-v3`. Its API
+    key, if it needs one, is the secret `parakeet`."""
 
 
 class ParakeetSttConfig(BaseModel):
@@ -1778,6 +1783,31 @@ class ScGameLogStatus(BaseModel):
     """Why the reader cannot run, e.g. its database cannot be opened."""
 
 
+class ScTelemetrySettings(BaseModel):
+    """Core reads Star Citizen's own telemetry stream (ship and pilot, about 17
+    times a second) and hands it to skills (services/sc_telemetry,
+    `self.wingman.sc_telemetry`). Runs only while `star_citizen.plays` is true."""
+
+    enabled: bool
+    """On Windows, on also sets the user variable GRPC_CLIENT_SERVER_ENABLED
+    that switches telemetry on in the game, and off removes it again if Core
+    set it. Elsewhere the user sets it in their launcher."""
+
+
+class ScTelemetryStatus(BaseModel):
+    """What Star Citizen's telemetry is doing, for the settings page."""
+
+    state: ScTelemetryState
+    variable_managed: bool
+    """Core can switch telemetry in the game itself (Windows)."""
+    variable_set: Optional[bool] = None
+    """Whether the game's switch is set; None where Core cannot see it."""
+    vehicle: Optional[str] = None
+    """The ship the pilot sits in, while live."""
+    detail: Optional[str] = None
+    """Why the stream is incompatible or unavailable, for a bug report."""
+
+
 class SettingsConfig(BaseModel):
     audio: Optional[AudioSettings] = None
     stt: SttSettings
@@ -1791,6 +1821,7 @@ class SettingsConfig(BaseModel):
     hud_profiles: list[HudProfile]
     star_citizen: StarCitizenSettings
     sc_gamelog: ScGameLogSettings
+    sc_telemetry: ScTelemetrySettings
     debug_mode: bool
     streamer_mode: bool
     show_token_count: bool
