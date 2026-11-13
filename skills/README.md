@@ -24,6 +24,7 @@ This guide explains how skills work in Wingman AI and how to create your own cus
   - [Required Files](#required-files)
   - [default_config.yaml - Skill Metadata](#default_configyaml---skill-metadata)
   - [Custom Properties — Available Types](#custom-properties--available-types)
+  - [Grouping Custom Properties](#grouping-custom-properties)
   - [Accessing Custom Properties](#accessing-custom-properties-in-your-skill)
 - [Creating a Skill](#creating-a-skill)
 - [Bundling Dependencies](#bundling-dependencies)
@@ -790,7 +791,12 @@ custom_properties: # User-configurable settings
     value: default_value # Default value
     required: true # Is this property required?
     property_type: string # See "Custom Properties — Available Types" below
+    group: your_group_id # Optional, see "Grouping Custom Properties" below
+    platforms: [windows] # Optional: only offered on these systems (windows, darwin, linux)
 ```
+
+A property with `platforms` is not there on other systems, so the skill reads it
+with a default instead of `retrieve_custom_property_value`, which reports it missing.
 
 ### Custom Properties — Available Types
 
@@ -1117,6 +1123,64 @@ AudioFileConfig(
     resume=False   # Resume last stopped audio
 )
 ```
+
+---
+
+### Grouping Custom Properties
+
+A skill with many settings can show them under collapsible headings, like the command groups in the client. Define the groups in `property_groups`, in the order the UI shows them, and name a group's `id` in the `group` of each property:
+
+```yaml
+property_groups:
+  - id: combat
+    name: Combat # The heading
+    hint: Shields, hits and locks. # Optional, shown below the heading
+    toggle: react_combat # Optional: a boolean setting shown as the switch in the heading
+  - id: survival
+    name: Survival
+
+custom_properties:
+  - id: max_reactions
+    name: Reactions until you speak again
+    property_type: number
+    value: 10 # No group: shown above all groups
+  - id: react_combat
+    name: Enabled # Only shown if the switch cannot be used in the heading
+    hint: Turns the whole group on or off.
+    property_type: boolean
+    value: true
+    group: combat
+  - id: react_shields
+    name: Shields down and back up
+    property_type: boolean
+    value: true
+    group: combat
+```
+
+How it is shown:
+
+- Properties without a `group` come first, above all groups, sorted by type. Groups start collapsed and show how many settings they hold.
+- Within a group, the properties keep the order of the manifest.
+- A group with a `toggle` shows that boolean setting as an "Enabled" switch at the right of its heading, like the other panels, and not again inside the group. While it is off, the group's settings are hidden.
+- A skill without `property_groups` shows one flat list.
+- A group with `feature: sc_telemetry` belongs to a feature that is not released on every update channel yet (`services/features.py`). In a build for a channel without it, Core drops the group and its settings, and the UI never shows them. Under `unreleased: {sc_telemetry: {description: ...}}` the skill gives fields, like its description, that replace its own in such a build.
+
+When and how to group:
+
+- Group from about ten settings on. Below that, a flat list is easier to scan.
+- Give each group at least two settings, and keep the number of groups small. A group of one is a heading the user has to open for nothing.
+- Leave the settings most users change ungrouped, so they see them without opening anything. A switch that starts or stops the whole skill belongs there too.
+- Group by what the user thinks about ("Timing", "Sound"), not by how your code is built.
+- Name groups with a short noun in sentence case ("Zones and safety"). Put a condition every setting of the group shares into the group's `hint` instead of repeating it in each setting ("Needs Star Citizen telemetry in the settings.").
+- Name settings in sentence case and do not repeat the group's name in them: in a group "Sound", call it "Volume", not "Sound volume".
+- Use a `toggle` only for a setting that really switches the whole group off. Call it "Enabled" with the hint "Turns the whole group on or off.", and give it the same `group`, so it is in the right place if the switch cannot be shown. Your skill still reads the toggle like any other setting and decides what "off" means, for example by ignoring the group's other switches.
+
+Robustness:
+
+- Groups only change the display. Renaming or moving them later keeps the user's values, because those belong to the property `id`. Saved Wingmen take the groups from your manifest, so there is nothing to migrate.
+- A mistake never stops the skill: a group without `id` or `name` is left out, the first of two groups with the same `id` wins, a property in a group the skill does not define is shown ungrouped, and a `toggle` that is no boolean setting of the skill is ignored. Core logs a warning when it scans the skills, and the client shows one for unknown groups.
+
+Examples: `sc_game_events` (14 groups, most with a switch) and `radio_chatter` (three groups, no switches).
 
 ---
 
@@ -1447,6 +1511,7 @@ If you're using an AI agent to create a skill, use this checklist to ensure ever
   - [ ] `tags` are appropriate
   - [ ] `description` (English at minimum)
   - [ ] `custom_properties` are defined (if needed)
+  - [ ] `property_groups` are defined if there are about ten settings or more
 - [ ] Create `logo.png` (256x256 or 512x512, PNG format)
 
 ### Code Implementation
@@ -1595,16 +1660,17 @@ Which provider transcribes is a global setting. A skill may add words the transc
 
 A fast, cheap model that picks from options you give it instead of writing text: which of these
 does the user mean, how urgent is this, yes or no. About 300 ms, a fraction of the cost of
-`ai.generate`. `.available` is `False` when the user switched it off or the plan lacks it; check
-it and fall back to `local_ai` or a rule. The entry point is `await .decide(state, questions)`
+`ai.generate`. `.available` is `False` when the user switched it off or its provider can't be
+reached; check it and fall back to `local_ai` or a rule. The entry point is `await .decide(state, questions)`
 (`.decide_sync(...)` for threads).
 
 Use it whenever the skill needs to **pick, rate or judge** rather than write.
 It cannot answer outside the options you give it, so there is nothing to parse
 and nothing to validate.
 
-This is a thin wrapper around [TypeSafe's Jev](https://docs.typesafe.ai) and
-keeps their names, so their docs and examples read straight across:
+It speaks [TypeSafe's System One API](https://docs.typesafe.ai), whichever decision model the
+user picked in Settings (through the Wingman Subscription, OpenRouter or a server of their own), and keeps
+TypeSafe's names, so their docs and examples read straight across:
 
 | TypeSafe SDK | here |
 |---|---|
@@ -1669,8 +1735,8 @@ The other readers on the answers:
 | `.levels(k)` | The level labels of a score, lowest first. |
 | `.raw(k=None)` | The answers exactly as the model sent them, for anything the readers above don't cover. |
 
-Always handle `available` being False — the user can switch System One off in
-Settings, and a plan may not include it. Every reader returns `None`/`{}` in
+Always handle `available` being False — the user can switch the decision model off in
+Settings, and the provider they chose may have no access, no key or no server. Every reader returns `None`/`{}` in
 that case, so the skill silently takes the None branch unless you check.
 
 ### `self.wingman.commands` — user commands

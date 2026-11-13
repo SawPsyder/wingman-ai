@@ -1615,15 +1615,18 @@ class SkillScreen:
 
         return is_wayland()
 
-    async def capture(self, display: int = 1, region: Optional[dict] = None):
+    async def capture(self, display: int = 1, region: Optional[dict] = None, dxcam: bool = False):
         """A PIL image (RGB) of monitor `display` (1 = the first, 0 = all), or
         of `region` ({"left", "top", "width", "height"}). Raises RuntimeError
-        with what the user has to do when the screen cannot be captured."""
+        with what the user has to do when the screen cannot be captured.
+        `dxcam` (Windows, one whole monitor) takes the shot through DirectX,
+        which can spare a game a stutter; it falls back to the standard
+        capture on its own."""
         import asyncio
 
         from services.screen_capture import capture
 
-        return await asyncio.to_thread(capture, display, region)
+        return await asyncio.to_thread(capture, display, region, dxcam)
 
 
 class SkillStarCitizen:
@@ -1780,6 +1783,15 @@ class SkillScTelemetry:
         return self._service().running
 
     @property
+    def released(self) -> bool:
+        """This build offers telemetry at all. False on a channel it has not
+        reached yet: then it is never available, and a skill should not
+        mention it or its setting to the user."""
+        from services.features import SC_TELEMETRY, released
+
+        return released(SC_TELEMETRY)
+
+    @property
     def answering(self) -> bool:
         """The game answers on the stream (live, or in a menu). False while
         the game is not running or runs without telemetry: then nothing
@@ -1826,15 +1838,17 @@ class SkillScTelemetry:
 class SkillSystemOne:
     """Typed decisions instead of generated text (`self.wingman.system_one`).
 
-    A System One model answers a fixed set of questions in one parallel pass
+    The decision model answers a fixed set of questions in one parallel pass
     and cannot answer outside the options it is given. Reach for it wherever a
     skill needs a *decision* rather than a sentence: which of these does the
     user mean, how bad is this, is it worth acting on. It answers in about
     300 ms — several times faster than `self.wingman.ai.generate()` — and
     costs a fraction of it.
 
-    This is a thin wrapper around TypeSafe's Jev, and it keeps their names so
-    that their documentation reads straight across:
+    Requests use TypeSafe's System One format, which every provider of the
+    decision model speaks (the Wingman Subscription, OpenRouter, a server of the user's).
+    This wrapper keeps TypeSafe's names so their documentation reads
+    straight across:
 
         TypeSafe SDK                      here
         ------------------------------    ----------------------------------
@@ -1874,8 +1888,9 @@ class SkillSystemOne:
     tokens for seven extra questions. One call with the questions you might
     need beats three calls with the ones you did.
 
-    **`available` is False when the user switched System One or its skills
-    switch off, or the plan has no access.** Check it. If you forget, nothing breaks:
+    **`available` is False when the user switched the decision model or its
+    skills switch off, or the chosen provider cannot be reached: no Wingman
+    Pro session or plan access, no OpenRouter key, no server address.** Check it. If you forget, nothing breaks:
     `decide()` returns an empty answer and every reader gives back None — but
     your skill then silently takes the None branch, which is rarely what you
     meant.
@@ -1921,7 +1936,7 @@ class SkillSystemOne:
         to go but onto the real options, and a confidence gate then lets the
         least wrong one through.
         """
-        from providers.typesafe_jev import choice as _choice
+        from providers.decision_model import choice as _choice
 
         return _choice(instructions, criteria, not_for=not_for, examples=examples)
 
@@ -1938,7 +1953,7 @@ class SkillSystemOne:
         Read it back with `level()` for the label, `score()` for the position
         between labels.
         """
-        from providers.typesafe_jev import score as _score
+        from providers.decision_model import score as _score
 
         return _score(instructions, criteria, not_for=not_for, examples=examples)
 
@@ -1952,7 +1967,7 @@ class SkillSystemOne:
         """A yes/no question. TypeSafe's name for it, and the answer is a
         probability rather than a boolean — `answers.noul(key)` gives the
         number, `answers.yes_no(key)` applies a threshold."""
-        from providers.typesafe_jev import noul as _noul
+        from providers.decision_model import noul as _noul
 
         return _noul(instructions, not_for=not_for, examples=examples)
 
@@ -1977,7 +1992,7 @@ class SkillSystemOne:
         Returns the plain string when there is nothing to add, so it is safe
         to route every description through here.
         """
-        from providers.typesafe_jev import guidance
+        from providers.decision_model import guidance
 
         return guidance(what, not_for=not_for, examples=examples)
 

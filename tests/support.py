@@ -11,8 +11,10 @@ import shutil
 from os import path
 from types import SimpleNamespace
 
+import requests
 import yaml
 
+from api.enums import DecisionModelProvider
 from hud_server.platform.base import HudBackend, Monitor
 from services.system_manager import LOCAL_VERSION
 
@@ -21,6 +23,59 @@ TEMPLATES = path.join(REPO_ROOT, "templates", "configs")
 FIXTURES = path.join(REPO_ROOT, "tests", "fixtures")
 # The config folder name of the version under test, e.g. "3_2_5".
 VERSION_DIR = LOCAL_VERSION.replace(".", "_")
+
+
+def decision_model_settings(
+    enabled: bool = True,
+    provider: DecisionModelProvider = DecisionModelProvider.WINGMAN_PRO,
+    endpoint: str = "",
+    model: str = "",
+    openrouter_model: str = "~typesafe/jev-latest",
+    **switches,
+) -> SimpleNamespace:
+    """Settings with only what the decision model reads: its switches, its
+    provider, and where Wingman Pro lives."""
+    places = {"commands": True, "wingman_choice": True, "vocabulary": True, "skills": True}
+    places.update(switches)
+    return SimpleNamespace(
+        decision_model=SimpleNamespace(
+            enabled=enabled,
+            provider=provider,
+            openrouter=SimpleNamespace(model=openrouter_model),
+            server=SimpleNamespace(endpoint=endpoint, model=model),
+            **places,
+        ),
+        wingman_pro=SimpleNamespace(base_url="https://pro.invalid"),
+    )
+
+
+def with_secrets(client, **secrets):
+    """The client reads its keys from the secret store on every call; this
+    gives it a store of its own instead of the user's."""
+    client._secret_keeper = SimpleNamespace(secrets=secrets)
+    return client
+
+
+class FakeDecisionSession:
+    """Records what the client would have sent and answers with ``body``."""
+
+    def __init__(self, body=None, status_code=200):
+        self.body = body if body is not None else {"answers": {}}
+        self.status_code = status_code
+        self.requests = []
+        self.closed = False
+
+    def post(self, url, **kwargs):
+        self.requests.append((url, kwargs))
+        return SimpleNamespace(
+            ok=self.status_code < 400,
+            status_code=self.status_code,
+            text="provider error",
+            json=lambda: self.body,
+        )
+
+    def close(self):
+        self.closed = True
 
 
 def read_yaml(file_path: str):
@@ -315,3 +370,41 @@ def overlay_errors(overlay) -> list:
         if isinstance(report, dict) and report.get("type") == "error":
             reports.append(report)
     return reports
+
+
+# A model download over a connection that breaks
+
+BODY = bytes(range(256)) * 40  # 10,240 bytes
+
+
+class FlakyServer:
+    """Serves BODY, honours Range, and breaks the connection after `cut`
+    bytes for the first `breaks` requests."""
+
+    def __init__(self, cut: int, breaks: int):
+        self.cut = cut
+        self.breaks = breaks
+        self.ranges: list[str | None] = []
+
+    def get(self, url, stream=True, timeout=None, headers=None):
+        start = 0
+        rng = (headers or {}).get("Range")
+        self.ranges.append(rng)
+        if rng:
+            start = int(rng.split("=")[1].rstrip("-"))
+        body = BODY[start:]
+        broken = self.breaks > 0
+        self.breaks -= 1
+
+        def iter_content(chunk_size):
+            if broken:
+                yield body[: self.cut]
+                raise requests.exceptions.ChunkedEncodingError("Connection broken")
+            yield body
+
+        return SimpleNamespace(
+            status_code=206 if start else 200,
+            headers={"content-length": str(len(body))},
+            raise_for_status=lambda: None,
+            iter_content=iter_content,
+        )

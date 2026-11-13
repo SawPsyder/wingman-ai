@@ -8,6 +8,10 @@ on:
       runner:
         type: string
         default: 'github'
+      channel:
+        description: "Update channel the build ships on: unstable or production. Decides which features Core offers (services/features.py) and where it is staged."
+        type: string
+        default: 'unstable'
     outputs:
       version:
         description: "Extracted version from system_manager.py"
@@ -54,6 +58,9 @@ jobs:
           # which would put Parakeet on the CPU without a word in the log.
           python scripts/check_onnxruntime_gpu.py
 
+      - name: Set build channel
+        run: python scripts/set_build_channel.py ${{ inputs.channel }}
+
       - name: Build with PyInstaller
         run: |
           .\venv\Scripts\Activate
@@ -90,6 +97,18 @@ jobs:
         with:
           path-to-binary: 'WingmanAiCore/WingmanAiCore.exe'
 
+      # Windows grants this one UIAccess only with a valid signature.
+      - name: Sign input helper
+        env:
+          CERTIFICATE_HOST: ${{ secrets.SM_HOST }}
+          CERTIFICATE_HOST_API_KEY: ${{ secrets.SM_API_KEY }}
+          CERTIFICATE_SHA1_HASH: ${{ secrets.SM_CODE_SIGNING_CERT_SHA1_HASH }}
+          CLIENT_CERTIFICATE: ${{ secrets.SM_CLIENT_CERT_FILE_B64 }}
+          CLIENT_CERTIFICATE_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
+        uses: ./.github/actions/code-sign
+        with:
+          path-to-binary: 'WingmanAiCore/WingmanAiInput.exe'
+
       - name: Set artifact name
         id: artifact
         shell: bash
@@ -115,35 +134,7 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION: auto
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
         run: |
           pip install awscli
-          aws s3 cp WingmanAiCore/ \
-            "s3://wingman-staging/core/${{ github.sha }}/windows-x86_64/" \
-            --recursive \
-            --endpoint-url "https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com"
-          echo "${{ github.sha }}" > latest-windows.txt
-          aws s3 cp latest-windows.txt \
-            "s3://wingman-staging/core/latest-windows.txt" \
-            --endpoint-url "https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com"
-
-      - name: Clean up old staging builds
-        shell: bash
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          AWS_DEFAULT_REGION: auto
-        run: |
-          R2_ENDPOINT="https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com"
-          CURRENT_SHA="${{ github.sha }}"
-
-          # List all SHA directories and delete any that aren't the current build
-          SHAS=$(aws s3 ls "s3://wingman-staging/core/" --endpoint-url "$R2_ENDPOINT" \
-            | grep 'PRE ' | awk '{print $2}' | sed 's|/||' | grep -v '^latest')
-
-          for SHA in $SHAS; do
-            if [ "$SHA" != "$CURRENT_SHA" ]; then
-              echo "Deleting old staging: core/$SHA/"
-              aws s3 rm "s3://wingman-staging/core/${SHA}/" \
-                --recursive --endpoint-url "$R2_ENDPOINT"
-            fi
-          done
+          bash .github/scripts/stage-core.sh "${{ inputs.channel }}" windows-x86_64 WingmanAiCore

@@ -296,6 +296,16 @@ datas += onnx_asr_datas
 binaries += onnx_asr_binaries
 hiddenimports += onnx_asr_hidden
 
+# dxcam (Vision AI's "Use DXCam capture", Windows only). Core imports it only
+# when the user switches it on, and dxcam loads its Cython kernel and its
+# backends through importlib, so name all of it. Missing, the capture falls
+# back to mss (services/screen_capture_dxcam.py).
+if sys.platform == 'win32':
+    dxcam_datas, dxcam_binaries, dxcam_hidden = collect_all('dxcam')
+    datas += dxcam_datas
+    binaries += dxcam_binaries
+    hiddenimports += dxcam_hidden + ['services.screen_capture_dxcam']
+
 # Config migration modules (services/migrations/migration_*.py) are discovered
 # from the filesystem and imported via importlib at runtime, so static analysis
 # never traces them — or anything only they import. 3.1.5 shipped without the
@@ -394,8 +404,34 @@ exe = EXE(
     icon='assets/wingman-ai.ico',
 )
 
+# Windows: the program that presses keys in a game running as administrator
+# (services/elevated_input.py). uac_uiaccess is the right it exists for; Windows
+# honours it only for a signed exe under Program Files. It gets an analysis of
+# its own so that none of Core's modules end up in it, and no console, so that
+# no window opens over the game. Its few binaries are already among Core's.
+helper = []
+if sys.platform == 'win32':
+    # printr is what Core's side of the module logs with; the helper never does.
+    helper_a = Analysis(['input_helper.py'], pathex=[SITE_PACKAGES], excludes=['services.printr'])
+    helper = [
+        EXE(
+            PYZ(helper_a.pure),
+            helper_a.scripts,
+            [],
+            exclude_binaries=True,
+            name='WingmanAiInput',
+            upx=True,
+            console=False,
+            uac_uiaccess=True,
+            icon='assets/wingman-ai.ico',
+        ),
+        helper_a.binaries,
+        helper_a.datas,
+    ]
+
 coll = COLLECT(
     exe,
+    *helper,
     a.binaries,
     a.datas,
     strip=False,

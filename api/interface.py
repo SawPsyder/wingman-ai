@@ -1,7 +1,15 @@
 from typing import Optional
 from typing_extensions import Annotated, TypedDict
-from pydantic import Base64Str, BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    Base64Str,
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 from api.enums import (
+    DecisionModelProvider,
     VoiceCloneState,
     ConversationProvider,
     CoreState,
@@ -938,6 +946,30 @@ class CustomProperty(BaseModel):
     """Marks the property as required in the UI."""
     options: Optional[list[LabelValuePair]] = None
     """If property_type is set to 'single_select', you can provide options here. May also hold meta information for other property types like "multiple" for voice_selection."""
+    group: Optional[str] = None
+    """The id of a group from the skill's `property_groups`. None shows the property above all groups."""
+    platforms: Optional[list[str]] = None
+    """The systems the property is offered on: 'windows', 'darwin' (macOS), 'linux'. Core drops it elsewhere. None offers it everywhere."""
+
+    @field_validator("group", mode="before")
+    @classmethod
+    def _group_id(cls, group):
+        # A typo in a manifest must not cost the skill: anything but an id
+        # shows the property ungrouped.
+        return group if isinstance(group, str) and group else None
+
+
+class CustomPropertyGroup(BaseModel):
+    """A heading in the UI that custom properties are grouped under."""
+
+    id: str
+    """Unique within the skill. Properties name it in their `group`."""
+    name: str
+    """The heading displayed in the UI."""
+    hint: Optional[str] = None
+    """A line below the heading."""
+    toggle: Optional[str] = None
+    """The id of a boolean property that turns the whole group on or off. The UI shows it as the switch in the heading."""
 
 
 class LocalizedMetadata(BaseModel):
@@ -956,6 +988,8 @@ class SkillConfig(CustomClassConfig):
     """An additional prompt that extends the system prompt of the Wingman."""
     custom_properties: Optional[list[CustomProperty]] = None
     """You can add custom properties here to use in your custom skill class."""
+    property_groups: Optional[list[CustomPropertyGroup]] = None
+    """Groups for the custom properties, in the order the UI shows them. None shows all properties ungrouped."""
     hint: Optional[LocalizedMetadata] = None
     examples: Optional[list[LocalizedMetadata]] = None
     platforms: Optional[list[str]] = None
@@ -994,6 +1028,37 @@ class SkillConfig(CustomClassConfig):
     without this field are treated as legacy (pre-v3) and are not loaded. Current: 3."""
     version: Optional[str] = None
     """Optional skill release version (free-form, e.g. '2.0.1'). Used for telemetry only."""
+
+    @field_validator("property_groups", mode="before")
+    @classmethod
+    def _usable_property_groups(cls, groups):
+        # A broken group must not cost the skill: it is left out, and its
+        # properties are shown ungrouped. The first of two equal ids wins.
+        if not isinstance(groups, list):
+            return None
+        usable = []
+        seen = set()
+        for group in groups:
+            if isinstance(group, CustomPropertyGroup):
+                group = group.model_dump()
+            if not isinstance(group, dict):
+                continue
+            group_id, name = group.get("id"), group.get("name")
+            hint, toggle = group.get("hint"), group.get("toggle")
+            if not (isinstance(group_id, str) and group_id and isinstance(name, str) and name):
+                continue
+            if group_id in seen:
+                continue
+            seen.add(group_id)
+            usable.append(
+                {
+                    "id": group_id,
+                    "name": name,
+                    "hint": hint if isinstance(hint, str) else None,
+                    "toggle": toggle if isinstance(toggle, str) and toggle else None,
+                }
+            )
+        return usable or None
 
 
 class SkillToolInfo(BaseModel):
@@ -1620,24 +1685,47 @@ class LlamaCppSettings(BaseModel):
         return self.mode != LocalAiMode.SERVER
 
 
-class SystemOneSettings(BaseModel):
-    """The System One model: a decision layer in front of the main model.
+class DecisionModelOpenRouterSettings(BaseModel):
+    model: str
+    """OpenRouter id of the decision model, e.g. `~typesafe/jev-latest` or
+    `cloudflare/clef-flash`. Its key is the secret `openrouter`, the same one
+    the main model uses."""
 
-    A System One model answers typed questions instead of writing text — which
+
+class DecisionModelServerSettings(BaseModel):
+    endpoint: str
+    """Where a server of the user's answers `/v1/systemone`, e.g.
+    `http://127.0.0.1:8000/v1` for oMLX. With or without the `/v1`. Empty
+    until the user fills it in; nothing is contacted before that."""
+    model: str
+    """The model name sent to that server. Its API key, if it needs one, is
+    the secret `decision_model_server`."""
+
+
+class DecisionModelSettings(BaseModel):
+    """The decision model: a layer in front of the main model.
+
+    A decision model answers typed questions instead of writing text — which
     command was asked for, which skills a turn needs, whether the microphone
     heard a request at all, whether a heard word is a game name. It answers in
     about 300 ms where a chat model takes over a second, and it cannot return
     a value outside the options it was given.
 
-    Which model that is comes from the subscription, not from here: it is a
-    fixed role like transcription and speech, so it can be changed in /admin
-    without a Wingman release. The user's choice is whether to use one at all.
+    Who answers is `provider`: the Wingman Subscription, where the plan picks
+    the model and /admin can change it without a Wingman release, or
+    OpenRouter or a server of the user's, where the user names it.
     """
 
-    enabled: bool
-    """Whether any of Core's decisions may go to the System One model.
+    provider: DecisionModelProvider
+    """Who answers. The Wingman Subscription unless the user picked another."""
 
-    The master switch over the four below, one per place Jev decides. Off
+    openrouter: DecisionModelOpenRouterSettings
+    server: DecisionModelServerSettings
+
+    enabled: bool
+    """Whether any of Core's decisions may go to the decision model.
+
+    The master switch over the four below, one per place it decides. Off
     means every one of those places decides the way it did before, which is
     always a working path and never an error."""
 
@@ -1669,7 +1757,7 @@ class SystemOneSettings(BaseModel):
     skills: bool
     """Whether skills may ask the model (`self.wingman.system_one`): UEX Corp
     matching a ship or place, Spotify a playlist, the HUD a panel. Off, each
-    skill decides the way it does without Jev."""
+    skill decides the way it does without it."""
 
 
 class OtherLanguageSetting(BaseModel):
@@ -1798,6 +1886,9 @@ class ScTelemetryStatus(BaseModel):
     """What Star Citizen's telemetry is doing, for the settings page."""
 
     state: ScTelemetryState
+    released: bool
+    """False on a channel the feature has not reached yet (services/features.py):
+    the client shows nothing of it then."""
     variable_managed: bool
     """Core can switch telemetry in the game itself (Windows)."""
     variable_set: Optional[bool] = None
@@ -1816,7 +1907,7 @@ class SettingsConfig(BaseModel):
     xvasynth: XVASynthSettings
     pocket_tts: PocketTTSSettings
     llama_cpp: LlamaCppSettings
-    system_one: SystemOneSettings
+    decision_model: DecisionModelSettings
     hud_server: HudServerSettings
     hud_profiles: list[HudProfile]
     star_citizen: StarCitizenSettings
